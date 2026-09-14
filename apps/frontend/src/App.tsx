@@ -7,7 +7,7 @@ export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
   return (
-    <main className="mx-auto max-w-4xl p-8">
+    <main className="mx-auto max-w-6xl p-8">
       {selectedProjectId ? (
         <ProjectDetail id={selectedProjectId} onBack={() => setSelectedProjectId(null)} />
       ) : (
