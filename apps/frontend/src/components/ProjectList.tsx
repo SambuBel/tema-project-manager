@@ -30,6 +30,12 @@ export function ProjectList() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['projects'] }),
   });
 
+  const updateStatus = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: ProjectStatus }) =>
+      api.updateProjectStatus(id, { status }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setFilters((prev) => ({ ...prev, name: searchInput || undefined }));
@@ -80,24 +86,47 @@ export function ProjectList() {
       )}
 
       {projects.isSuccess && projects.data.length > 0 && (
-        <ul className="space-y-2">
+        <ul className="space-y-4">
           {projects.data.map((p) => (
             <li
               key={p.id}
-              className="flex items-center justify-between rounded border border-gray-200 px-4 py-3"
+              className="flex flex-col gap-2 rounded border border-gray-200 px-4 py-3"
             >
-              <div>
+              <div className="flex items-center justify-between">
                 <div className="font-medium">{p.name}</div>
-                <div className="text-sm text-gray-500">
-                  {statusLabels[p.status]}
+                <div className="flex items-center gap-4">
+                  <select
+                    className="rounded border border-gray-300 px-2 py-1 text-sm"
+                    value={p.status}
+                    onChange={(e) =>
+                      updateStatus.mutate({
+                        id: p.id,
+                        status: e.target.value as ProjectStatus,
+                      })
+                    }
+                    disabled={updateStatus.isPending && updateStatus.variables?.id === p.id}
+                  >
+                    {Object.entries(statusLabels).map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="text-sm text-red-600 hover:underline"
+                    onClick={() => remove.mutate(p.id)}
+                  >
+                    Eliminar
+                  </button>
                 </div>
               </div>
-              <button
-                className="text-sm text-red-600 hover:underline"
-                onClick={() => remove.mutate(p.id)}
-              >
-                Eliminar
-              </button>
+              
+              {updateStatus.isError && updateStatus.variables?.id === p.id && (
+                <div className="text-xs text-red-600">
+                  {/* FIXME: DEPENDENCY BLOCKER */}
+                  Error al cambiar estado. Pendiente de integración con Auth (falta usuario en sesión).
+                </div>
+              )}
             </li>
           ))}
         </ul>

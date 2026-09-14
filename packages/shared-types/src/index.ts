@@ -36,6 +36,11 @@ export interface CreateProjectDto {
   estimatedEndDate?: string;
 }
 
+export interface UpdateProjectStatusDto {
+  status: ProjectStatus;
+  changedByUserId?: ID; // Optional for now, until Auth is available
+}
+
 export interface ListProjectsQuery {
   name?: string;
   status?: ProjectStatus;

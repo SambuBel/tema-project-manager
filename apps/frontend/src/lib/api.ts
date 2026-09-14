@@ -1,4 +1,4 @@
-import type { CreateProjectDto, Project, ListProjectsQuery } from '@tema/shared-types';
+import type { CreateProjectDto, Project, ListProjectsQuery, UpdateProjectStatusDto } from '@tema/shared-types';
 
 const BASE = '/api';
 
@@ -21,5 +21,7 @@ export const api = {
   },
   createProject: (dto: CreateProjectDto) =>
     request<Project>('/projects', { method: 'POST', body: JSON.stringify(dto) }),
+  updateProjectStatus: (id: string, dto: UpdateProjectStatusDto) =>
+    request<Project>(`/projects/${id}/status`, { method: 'PATCH', body: JSON.stringify(dto) }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
 };
