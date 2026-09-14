@@ -62,3 +62,9 @@ pnpm --filter @tema/backend migration:run
 ```
 
 Ver [docs/architecture.md](docs/architecture.md) para el detalle de decisiones.
+
+## Autenticación
+
+Login con Google (OAuth 2.0 / OIDC), sesión propia via JWT en cookie HttpOnly. Variables de
+entorno, cómo crear las credenciales en Google Cloud, cómo autorizar un dominio y el flujo
+completo: ver [docs/auth.md](docs/auth.md).

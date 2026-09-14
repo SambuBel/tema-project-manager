@@ -2,6 +2,8 @@ import { ProjectEntity } from '../../projects/project.entity';
 import { UserEntity } from './user.entity';
 import { RoleEntity } from './role.entity';
 import { UserRoleEntity } from './user-role.entity';
+import { ExternalAccountEntity } from './external-account.entity';
+import { AuthorizedDomainEntity } from './authorized-domain.entity';
 import { ProjectStatusHistoryEntity } from './project-status-history.entity';
 import { ResourceProfileEntity } from './resource-profile.entity';
 import { ProjectMemberEntity } from './project-member.entity';
@@ -25,6 +27,8 @@ import { AiMessageEntity } from './ai-message.entity';
 export * from './user.entity';
 export * from './role.entity';
 export * from './user-role.entity';
+export * from './external-account.entity';
+export * from './authorized-domain.entity';
 export * from './project-status-history.entity';
 export * from './resource-profile.entity';
 export * from './project-member.entity';
@@ -51,6 +55,8 @@ export const ALL_ENTITIES = [
   UserEntity,
   RoleEntity,
   UserRoleEntity,
+  ExternalAccountEntity,
+  AuthorizedDomainEntity,
   ProjectStatusHistoryEntity,
   ResourceProfileEntity,
   ProjectMemberEntity,

@@ -64,3 +64,8 @@ export enum AiMessageRole {
   TOOL = 'TOOL',
   SYSTEM = 'SYSTEM',
 }
+
+/** Proveedores de identidad externa soportados por external_accounts. Hoy solo Google. */
+export enum ExternalAccountProvider {
+  GOOGLE = 'GOOGLE',
+}
