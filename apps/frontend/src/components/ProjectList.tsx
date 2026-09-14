@@ -29,10 +29,6 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
     queryFn: () => api.listProjects(filters),
   });
 
-  const remove = useMutation({
-    mutationFn: (id: string) => api.deleteProject(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['projects'] }),
-  });
 
   const updateStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: ProjectStatus }) =>
