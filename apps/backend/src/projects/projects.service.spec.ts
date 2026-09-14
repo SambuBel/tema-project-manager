@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, IsNull, Not } from 'typeorm';
 import { ProjectsService } from './projects.service';
 import { ProjectEntity } from './project.entity';
 import { ProjectStatus } from '../database/enums';
@@ -81,5 +81,58 @@ describe('ProjectsService - archive', () => {
     const result = await service.archive('1');
     expect(result.archivedAt).toEqual(date);
     expect(mockRepo.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProjectsService - findAll (archived filters)', () => {
+  let service: ProjectsService;
+  let mockRepo: any;
+
+  beforeEach(async () => {
+    mockRepo = {
+      find: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ProjectsService,
+        {
+          provide: getRepositoryToken(ProjectEntity),
+          useValue: mockRepo,
+        },
+        {
+          provide: DataSource,
+          useValue: {},
+        },
+      ],
+    }).compile();
+
+    service = module.get<ProjectsService>(ProjectsService);
+  });
+
+  it('debería excluir proyectos archivados por defecto', async () => {
+    mockRepo.find.mockResolvedValue([]);
+    await service.findAll({});
+
+    expect(mockRepo.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          archivedAt: IsNull(),
+        }),
+      }),
+    );
+  });
+
+  it('debería incluir solo proyectos archivados cuando archived es true', async () => {
+    mockRepo.find.mockResolvedValue([]);
+    await service.findAll({ archived: true });
+
+    expect(mockRepo.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          archivedAt: Not(IsNull()),
+        }),
+      }),
+    );
   });
 });
