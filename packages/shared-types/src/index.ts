@@ -45,6 +45,24 @@ export interface CreateProjectDto {
   estimatedEndDate?: string;
 }
 
+export interface ProjectMember {
+  id: ID;
+  projectId: ID;
+  userId: ID;
+  user?: User;
+  projectRole: string;
+  joinedAt: string;
+}
+
+export interface AddProjectMemberDto {
+  userId: ID;
+  projectRole: string;
+}
+
+export interface UpdateProjectMemberRoleDto {
+  projectRole: string;
+}
+
 export interface UpdateProjectStatusDto {
   status: ProjectStatus;
   changedByUserId?: ID; // Optional for now, until Auth is available

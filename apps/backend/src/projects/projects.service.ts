@@ -1,18 +1,22 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, IsNull, Not, Repository, DataSource } from 'typeorm';
 import { ProjectEntity } from './project.entity';
+import { ProjectMemberEntity } from '../database/entities/project-member.entity';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
 import { ProjectStatus } from '../database/enums';
+import { AddProjectMemberDto, UpdateProjectMemberRoleDto } from '@tema/shared-types';
 
 @Injectable()
 export class ProjectsService {
   constructor(
     @InjectRepository(ProjectEntity)
     private readonly repo: Repository<ProjectEntity>,
+    @InjectRepository(ProjectMemberEntity)
+    private readonly memberRepo: Repository<ProjectMemberEntity>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -54,15 +58,11 @@ export class ProjectsService {
         return project;
       }
 
-      // FIXME: DEPENDENCY BLOCKER
-      // The `changedByUserId` is required by the entity/DB but there is no Auth module yet.
-      // We are leaving the logic prepared, but this will fail in DB until it is resolved.
-      // Do NOT invent users or hardcode UUIDs.
       const history = manager.create(ProjectStatusHistoryEntity, {
         projectId: project.id,
         previousStatus: project.status,
         newStatus: dto.status,
-        changedByUserId: dto.changedByUserId, // This will be undefined for now and will fail DB FK if not provided correctly by controller/auth
+        changedByUserId: dto.changedByUserId,
       });
 
       project.status = dto.status;
@@ -89,5 +89,53 @@ export class ProjectsService {
   async remove(id: string): Promise<void> {
     const result = await this.repo.delete({ id });
     if (!result.affected) throw new NotFoundException(`Project ${id} no encontrado`);
+  }
+
+  async getMembers(projectId: string): Promise<ProjectMemberEntity[]> {
+    await this.findOne(projectId); // Ensures project exists
+    return this.memberRepo.find({
+      where: { projectId, removedAt: IsNull() },
+      relations: ['user'],
+      order: { joinedAt: 'ASC' },
+    });
+  }
+
+  async addMember(projectId: string, dto: AddProjectMemberDto): Promise<ProjectMemberEntity> {
+    await this.findOne(projectId);
+    
+    const existing = await this.memberRepo.findOne({
+      where: { projectId, userId: dto.userId, removedAt: IsNull() }
+    });
+    
+    if (existing) {
+      throw new ConflictException(`El usuario ya es miembro activo de este proyecto`);
+    }
+
+    const member = this.memberRepo.create({
+      projectId,
+      userId: dto.userId,
+      projectRole: dto.projectRole,
+    });
+    
+    try {
+      return await this.memberRepo.save(member);
+    } catch (error: any) {
+      if (error.code === '23503') {
+        throw new NotFoundException(`El usuario con ID ${dto.userId} no existe`);
+      }
+      throw error;
+    }
+  }
+
+  async updateMemberRole(projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto): Promise<ProjectMemberEntity> {
+    const member = await this.memberRepo.findOne({
+      where: { id: memberId, projectId, removedAt: IsNull() }
+    });
+    if (!member) {
+      throw new NotFoundException(`Miembro ${memberId} no encontrado en este proyecto`);
+    }
+
+    member.projectRole = dto.projectRole;
+    return this.memberRepo.save(member);
   }
 }

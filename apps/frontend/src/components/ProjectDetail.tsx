@@ -5,6 +5,7 @@ import type { ProjectStatus } from '@tema/shared-types';
 interface ProjectDetailProps {
   id: string;
   onBack: () => void;
+  onManageTeam: () => void;
 }
 
 const statusLabels: Record<ProjectStatus, string> = {
@@ -27,7 +28,7 @@ function formatDate(dateStr: string | null | undefined): string {
   }
 }
 
-export function ProjectDetail({ id, onBack }: ProjectDetailProps) {
+export function ProjectDetail({ id, onBack, onManageTeam }: ProjectDetailProps) {
   const qc = useQueryClient();
   const { data: project, isLoading, isError } = useQuery({
     queryKey: ['project', id],
@@ -196,7 +197,10 @@ export function ProjectDetail({ id, onBack }: ProjectDetailProps) {
             </p>
           </div>
           
-          <button className="mt-auto w-full rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] opacity-50 cursor-not-allowed">
+          <button 
+            onClick={onManageTeam}
+            className="mt-auto w-full rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
+          >
             Gestionar equipo
           </button>
         </div>

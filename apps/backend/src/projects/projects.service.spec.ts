@@ -3,8 +3,9 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not } from 'typeorm';
 import { ProjectsService } from './projects.service';
 import { ProjectEntity } from './project.entity';
+import { ProjectMemberEntity } from '../database/entities/project-member.entity';
 import { ProjectStatus } from '../database/enums';
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 
 describe('ProjectsService - archive', () => {
   let service: ProjectsService;
@@ -27,6 +28,10 @@ describe('ProjectsService - archive', () => {
         {
           provide: getRepositoryToken(ProjectEntity),
           useValue: mockRepo,
+        },
+        {
+          provide: getRepositoryToken(ProjectMemberEntity),
+          useValue: {},
         },
         {
           provide: DataSource,
@@ -101,6 +106,10 @@ describe('ProjectsService - findAll (archived filters)', () => {
           useValue: mockRepo,
         },
         {
+          provide: getRepositoryToken(ProjectMemberEntity),
+          useValue: {},
+        },
+        {
           provide: DataSource,
           useValue: {},
         },
@@ -154,6 +163,10 @@ describe('ProjectsService - findOne', () => {
           useValue: mockRepo,
         },
         {
+          provide: getRepositoryToken(ProjectMemberEntity),
+          useValue: {},
+        },
+        {
           provide: DataSource,
           useValue: {},
         },
@@ -179,5 +192,80 @@ describe('ProjectsService - findOne', () => {
   it('debería arrojar NotFoundException si no existe', async () => {
     mockRepo.findOne.mockResolvedValue(null);
     await expect(service.findOne('1')).rejects.toThrow(NotFoundException);
+  });
+});
+
+describe('ProjectsService - Members', () => {
+  let service: ProjectsService;
+  let mockProjectRepo: any;
+  let mockMemberRepo: any;
+
+  beforeEach(async () => {
+    mockProjectRepo = {
+      findOne: jest.fn(),
+    };
+    mockMemberRepo = {
+      find: jest.fn(),
+      findOne: jest.fn(),
+      create: jest.fn(),
+      save: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ProjectsService,
+        {
+          provide: getRepositoryToken(ProjectEntity),
+          useValue: mockProjectRepo,
+        },
+        {
+          provide: getRepositoryToken(ProjectMemberEntity),
+          useValue: mockMemberRepo,
+        },
+        {
+          provide: DataSource,
+          useValue: {},
+        },
+      ],
+    }).compile();
+
+    service = module.get<ProjectsService>(ProjectsService);
+  });
+
+  it('debería listar miembros del proyecto', async () => {
+    mockProjectRepo.findOne.mockResolvedValue({ id: '1' });
+    mockMemberRepo.find.mockResolvedValue([{ id: 'm1' }]);
+
+    const result = await service.getMembers('1');
+    expect(result).toEqual([{ id: 'm1' }]);
+    expect(mockMemberRepo.find).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { projectId: '1', removedAt: IsNull() } })
+    );
+  });
+
+  it('debería agregar un miembro válido', async () => {
+    mockProjectRepo.findOne.mockResolvedValue({ id: '1' });
+    mockMemberRepo.findOne.mockResolvedValue(null);
+    mockMemberRepo.create.mockReturnValue({ userId: 'u1' });
+    mockMemberRepo.save.mockResolvedValue({ id: 'm1', userId: 'u1' });
+
+    const result = await service.addMember('1', { userId: 'u1', projectRole: 'Colaborador' });
+    expect(result.id).toBe('m1');
+    expect(mockMemberRepo.save).toHaveBeenCalled();
+  });
+
+  it('debería arrojar ConflictException si el miembro ya existe', async () => {
+    mockProjectRepo.findOne.mockResolvedValue({ id: '1' });
+    mockMemberRepo.findOne.mockResolvedValue({ id: 'm1' });
+
+    await expect(service.addMember('1', { userId: 'u1', projectRole: 'Colaborador' })).rejects.toThrow(ConflictException);
+  });
+
+  it('debería arrojar NotFoundException si el usuario no existe (FK error)', async () => {
+    mockProjectRepo.findOne.mockResolvedValue({ id: '1' });
+    mockMemberRepo.findOne.mockResolvedValue(null);
+    mockMemberRepo.save.mockRejectedValue({ code: '23503' });
+
+    await expect(service.addMember('1', { userId: 'u1', projectRole: 'Colaborador' })).rejects.toThrow(NotFoundException);
   });
 });
