@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, IsNull, Not, Repository, DataSource } from 'typeorm';
 import { ProjectEntity } from './project.entity';
 import { ProjectMemberEntity } from '../database/entities/project-member.entity';
+import { UserEntity } from '../database/entities/user.entity';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
@@ -17,6 +18,8 @@ export class ProjectsService {
     private readonly repo: Repository<ProjectEntity>,
     @InjectRepository(ProjectMemberEntity)
     private readonly memberRepo: Repository<ProjectMemberEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepo: Repository<UserEntity>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -103,6 +106,12 @@ export class ProjectsService {
   async addMember(projectId: string, dto: AddProjectMemberDto): Promise<ProjectMemberEntity> {
     await this.findOne(projectId);
     
+    // Validar usuario explícitamente mediante inyección directa del repositorio
+    const userExists = await this.userRepo.findOneBy({ id: dto.userId });
+    if (!userExists) {
+      throw new NotFoundException(`El usuario con ID ${dto.userId} no existe`);
+    }
+    
     const existing = await this.memberRepo.findOne({
       where: { projectId, userId: dto.userId, removedAt: IsNull() }
     });
@@ -111,20 +120,16 @@ export class ProjectsService {
       throw new ConflictException(`El usuario ya es miembro activo de este proyecto`);
     }
 
+    // FIXME / dependency blocker: Project roles catalog/policy not yet defined.
+    // Actualmente se acepta projectRole como string arbitrario porque no existe
+    // fuente de verdad validable en la arquitectura todavía.
     const member = this.memberRepo.create({
       projectId,
       userId: dto.userId,
       projectRole: dto.projectRole,
     });
     
-    try {
-      return await this.memberRepo.save(member);
-    } catch (error: any) {
-      if (error.code === '23503') {
-        throw new NotFoundException(`El usuario con ID ${dto.userId} no existe`);
-      }
-      throw error;
-    }
+    return this.memberRepo.save(member);
   }
 
   async updateMemberRole(projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto): Promise<ProjectMemberEntity> {
@@ -135,6 +140,8 @@ export class ProjectsService {
       throw new NotFoundException(`Miembro ${memberId} no encontrado en este proyecto`);
     }
 
+    // FIXME / dependency blocker: Project roles catalog/policy not yet defined.
+    // Queda pendiente la validación semántica contra roles reales cuando existan.
     member.projectRole = dto.projectRole;
     return this.memberRepo.save(member);
   }

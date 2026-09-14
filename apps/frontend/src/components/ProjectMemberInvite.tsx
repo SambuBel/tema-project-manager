@@ -8,16 +8,9 @@ interface ProjectMemberInviteProps {
   onBack: () => void;
 }
 
-const ROLES_DISPONIBLES = [
-  'Administrador',
-  'Líder de proyecto',
-  'Colaborador',
-  'Observador'
-];
-
 export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProps) {
   const qc = useQueryClient();
-  const [selectedRole, setSelectedRole] = useState(ROLES_DISPONIBLES[2]);
+  const [selectedRole, setSelectedRole] = useState('');
   
   const inviteMutation = useMutation({
     mutationFn: (dto: AddProjectMemberDto) => api.addProjectMember(project.id, dto),
@@ -29,9 +22,10 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Blocked by Auth/Users module: No users available to select
-    alert('Esta acción está bloqueada: El módulo de Usuarios aún no está integrado, por lo que no es posible seleccionar a quién invitar.');
+    // Cannot submit until dependencies are met.
   };
+
+  const isFormBlocked = true;
 
   return (
     <div className="flex flex-col gap-8 text-[#172B42]">
@@ -75,13 +69,12 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-[#172B42]">Rol *</label>
               <select 
+                disabled
                 value={selectedRole}
                 onChange={(e) => setSelectedRole(e.target.value)}
-                className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-3 text-sm text-[#172B42]"
+                className="rounded-lg border border-[#DEE5EC] bg-gray-50 px-4 py-3 text-sm text-[#172B42] opacity-70"
               >
-                {ROLES_DISPONIBLES.map(r => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
+                <option>Pendiente de definición/integración de roles de proyecto</option>
               </select>
             </div>
 
@@ -111,8 +104,8 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
               </button>
               <button 
                 type="submit"
-                disabled={inviteMutation.isPending}
-                className="rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:opacity-50"
+                disabled={isFormBlocked || inviteMutation.isPending}
+                className="rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {inviteMutation.isPending ? 'Enviando...' : 'Enviar invitación'}
               </button>
