@@ -13,6 +13,14 @@ export type ID = string;
 
 export type ProjectStatus = 'PLANNED' | 'IN_PROGRESS' | 'PAUSED' | 'FINISHED' | 'CANCELLED';
 
+export interface User {
+  id: ID;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  active: boolean;
+}
+
 export interface Project {
   id: ID;
   name: string;
@@ -21,6 +29,7 @@ export interface Project {
   estimatedEndDate: string | null;
   status: ProjectStatus;
   leaderId: ID;
+  leader?: User;
   createdBy: ID;
   createdAt: string;
   updatedAt: string;
@@ -34,6 +43,35 @@ export interface CreateProjectDto {
   createdBy?: ID;
   startDate?: string;
   estimatedEndDate?: string;
+}
+
+export interface ProjectMember {
+  id: ID;
+  projectId: ID;
+  userId: ID;
+  user?: User;
+  projectRole: string;
+  joinedAt: string;
+}
+
+export interface AddProjectMemberDto {
+  userId: ID;
+  projectRole: string;
+}
+
+export interface UpdateProjectMemberRoleDto {
+  projectRole: string;
+}
+
+export interface UpdateProjectStatusDto {
+  status: ProjectStatus;
+  changedByUserId?: ID; // Optional for now, until Auth is available
+}
+
+export interface ListProjectsQuery {
+  name?: string;
+  status?: ProjectStatus;
+  archived?: boolean;
 }
 
 export interface HealthResponse {
