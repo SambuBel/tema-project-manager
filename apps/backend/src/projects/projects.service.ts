@@ -1,11 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, IsNull, Repository, DataSource } from 'typeorm';
+import { ILike, IsNull, Not, Repository, DataSource } from 'typeorm';
 import { ProjectEntity } from './project.entity';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
+import { ProjectStatus } from '../database/enums';
 
 @Injectable()
 export class ProjectsService {
@@ -18,7 +19,7 @@ export class ProjectsService {
   findAll(query: ListProjectsDto = {}): Promise<ProjectEntity[]> {
     return this.repo.find({
       where: {
-        archivedAt: IsNull(),
+        archivedAt: query.archived ? Not(IsNull()) : IsNull(),
         ...(query.status ? { status: query.status } : {}),
         ...(query.name ? { name: ILike(`%${query.name}%`) } : {}),
       },
@@ -66,6 +67,20 @@ export class ProjectsService {
       await manager.save(history);
       return manager.save(project);
     });
+  }
+
+  async archive(id: string): Promise<ProjectEntity> {
+    const project = await this.repo.findOneBy({ id });
+    if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
+    
+    if (project.archivedAt) return project;
+
+    if (project.status !== ProjectStatus.FINISHED && project.status !== ProjectStatus.CANCELLED) {
+      throw new BadRequestException('Solo se pueden archivar proyectos FINALIZADOS o CANCELADOS');
+    }
+
+    project.archivedAt = new Date();
+    return this.repo.save(project);
   }
 
   async remove(id: string): Promise<void> {

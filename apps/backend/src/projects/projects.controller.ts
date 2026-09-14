@@ -23,6 +23,11 @@ export class ProjectsController {
     return this.projects.changeStatus(id, dto);
   }
 
+  @Patch(':id/archive')
+  archive(@Param('id') id: string) {
+    return this.projects.archive(id);
+  }
+
   @Post()
   create(@Body() dto: CreateProjectDto) {
     return this.projects.create(dto);

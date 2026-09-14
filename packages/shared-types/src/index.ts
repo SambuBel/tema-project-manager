@@ -44,6 +44,7 @@ export interface UpdateProjectStatusDto {
 export interface ListProjectsQuery {
   name?: string;
   status?: ProjectStatus;
+  archived?: boolean;
 }
 
 export interface HealthResponse {

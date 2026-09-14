@@ -16,6 +16,7 @@ export const api = {
     const params = new URLSearchParams();
     if (query?.name) params.append('name', query.name);
     if (query?.status) params.append('status', query.status);
+    if (query?.archived !== undefined) params.append('archived', String(query.archived));
     const qs = params.toString();
     return request<Project[]>(`/projects${qs ? `?${qs}` : ''}`);
   },
@@ -23,5 +24,7 @@ export const api = {
     request<Project>('/projects', { method: 'POST', body: JSON.stringify(dto) }),
   updateProjectStatus: (id: string, dto: UpdateProjectStatusDto) =>
     request<Project>(`/projects/${id}/status`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  archiveProject: (id: string) => 
+    request<Project>(`/projects/${id}/archive`, { method: 'PATCH' }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
 };
