@@ -1,4 +1,4 @@
-import type { CreateProjectDto, Project } from '@tema/shared-types';
+import type { CreateProjectDto, Project, ListProjectsQuery } from '@tema/shared-types';
 
 const BASE = '/api';
 
@@ -12,7 +12,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  listProjects: () => request<Project[]>('/projects'),
+  listProjects: (query?: ListProjectsQuery) => {
+    const params = new URLSearchParams();
+    if (query?.name) params.append('name', query.name);
+    if (query?.status) params.append('status', query.status);
+    const qs = params.toString();
+    return request<Project[]>(`/projects${qs ? `?${qs}` : ''}`);
+  },
   createProject: (dto: CreateProjectDto) =>
     request<Project>('/projects', { method: 'POST', body: JSON.stringify(dto) }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),

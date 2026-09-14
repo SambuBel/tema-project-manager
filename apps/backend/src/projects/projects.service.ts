@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ILike, IsNull, Repository } from 'typeorm';
 import { ProjectEntity } from './project.entity';
 import { CreateProjectDto } from './create-project.dto';
+import { ListProjectsDto } from './list-projects.dto';
 
 @Injectable()
 export class ProjectsService {
@@ -11,8 +12,15 @@ export class ProjectsService {
     private readonly repo: Repository<ProjectEntity>,
   ) {}
 
-  findAll(): Promise<ProjectEntity[]> {
-    return this.repo.find({ order: { createdAt: 'DESC' } });
+  findAll(query: ListProjectsDto = {}): Promise<ProjectEntity[]> {
+    return this.repo.find({
+      where: {
+        archivedAt: IsNull(),
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.name ? { name: ILike(`%${query.name}%`) } : {}),
+      },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   async findOne(id: string): Promise<ProjectEntity> {

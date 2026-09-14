@@ -36,6 +36,11 @@ export interface CreateProjectDto {
   estimatedEndDate?: string;
 }
 
+export interface ListProjectsQuery {
+  name?: string;
+  status?: ProjectStatus;
+}
+
 export interface HealthResponse {
   status: 'ok';
   uptime: number;

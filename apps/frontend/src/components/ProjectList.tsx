@@ -1,0 +1,107 @@
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '../lib/api';
+import type { ProjectStatus, ListProjectsQuery } from '@tema/shared-types';
+
+const statusLabels: Record<ProjectStatus, string> = {
+  PLANNED: 'Planificado',
+  IN_PROGRESS: 'En curso',
+  PAUSED: 'En pausa',
+  FINISHED: 'Finalizado',
+  CANCELLED: 'Cancelado',
+};
+
+export function ProjectList() {
+  const qc = useQueryClient();
+  const [filters, setFilters] = useState<ListProjectsQuery>({});
+  
+  // Use a separate state for the text input to debounce or apply on search/enter, 
+  // but to keep it simple and reactive we can just apply on change or submit.
+  // We'll use a form for the search bar to apply filters on submit.
+  const [searchInput, setSearchInput] = useState('');
+
+  const projects = useQuery({
+    queryKey: ['projects', filters],
+    queryFn: () => api.listProjects(filters),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteProject(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setFilters((prev) => ({ ...prev, name: searchInput || undefined }));
+  };
+
+  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value as ProjectStatus | '';
+    setFilters((prev) => ({ ...prev, status: value || undefined }));
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <form onSubmit={handleSearch} className="flex gap-2">
+        <input
+          className="flex-1 rounded border border-gray-300 px-3 py-2"
+          placeholder="Buscar proyecto"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+        />
+        <select
+          className="rounded border border-gray-300 px-3 py-2"
+          value={filters.status ?? ''}
+          onChange={handleStatusChange}
+        >
+          <option value="">Todos</option>
+          {Object.entries(statusLabels).map(([key, label]) => (
+            <option key={key} value={key}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <button
+          className="rounded bg-black px-4 py-2 text-white"
+          type="submit"
+        >
+          Buscar
+        </button>
+      </form>
+
+      {projects.isLoading && <p className="text-gray-500">Cargando proyectos...</p>}
+      
+      {projects.isError && (
+        <p className="text-red-600">Error al cargar el listado de proyectos.</p>
+      )}
+
+      {projects.isSuccess && projects.data.length === 0 && (
+        <p className="text-gray-500">No se encontraron proyectos con los filtros actuales.</p>
+      )}
+
+      {projects.isSuccess && projects.data.length > 0 && (
+        <ul className="space-y-2">
+          {projects.data.map((p) => (
+            <li
+              key={p.id}
+              className="flex items-center justify-between rounded border border-gray-200 px-4 py-3"
+            >
+              <div>
+                <div className="font-medium">{p.name}</div>
+                <div className="text-sm text-gray-500">
+                  {statusLabels[p.status]}
+                </div>
+              </div>
+              <button
+                className="text-sm text-red-600 hover:underline"
+                onClick={() => remove.mutate(p.id)}
+              >
+                Eliminar
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
