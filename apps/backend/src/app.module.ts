@@ -4,10 +4,18 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { HealthController } from './health/health.controller';
 import { ProjectsModule } from './projects/projects.module';
 import { DatabaseModule } from './database/database.module';
+import { AuthModule } from './auth/auth.module';
+import { UsersModule } from './users/users.module';
+import { envValidationSchema } from './config/env.validation';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }),
+  ConfigModule.forRoot({
+    isGlobal: true,
+    envFilePath: '.env',
+    validationSchema: envValidationSchema,
+    validationOptions: { abortEarly: false },
+  }),
     TypeOrmModule.forRoot({
       type: 'postgres',
       url: process.env.DATABASE_URL,
@@ -17,6 +25,8 @@ import { DatabaseModule } from './database/database.module';
       synchronize: false,
     }),
     DatabaseModule,
+    UsersModule,
+    AuthModule,
     ProjectsModule,
   ],
   controllers: [HealthController],
