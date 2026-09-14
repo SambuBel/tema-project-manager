@@ -28,7 +28,10 @@ export class ProjectsService {
   }
 
   async findOne(id: string): Promise<ProjectEntity> {
-    const project = await this.repo.findOneBy({ id });
+    const project = await this.repo.findOne({
+      where: { id },
+      relations: ['leader'],
+    });
     if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
     return project;
   }

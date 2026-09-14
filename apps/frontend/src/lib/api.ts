@@ -20,6 +20,7 @@ export const api = {
     const qs = params.toString();
     return request<Project[]>(`/projects${qs ? `?${qs}` : ''}`);
   },
+  getProject: (id: string) => request<Project>(`/projects/${id}`),
   createProject: (dto: CreateProjectDto) =>
     request<Project>('/projects', { method: 'POST', body: JSON.stringify(dto) }),
   updateProjectStatus: (id: string, dto: UpdateProjectStatusDto) =>

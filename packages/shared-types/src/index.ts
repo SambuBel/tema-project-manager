@@ -13,6 +13,14 @@ export type ID = string;
 
 export type ProjectStatus = 'PLANNED' | 'IN_PROGRESS' | 'PAUSED' | 'FINISHED' | 'CANCELLED';
 
+export interface User {
+  id: ID;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  active: boolean;
+}
+
 export interface Project {
   id: ID;
   name: string;
@@ -21,6 +29,7 @@ export interface Project {
   estimatedEndDate: string | null;
   status: ProjectStatus;
   leaderId: ID;
+  leader?: User;
   createdBy: ID;
   createdAt: string;
   updatedAt: string;

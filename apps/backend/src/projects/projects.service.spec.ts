@@ -136,3 +136,48 @@ describe('ProjectsService - findAll (archived filters)', () => {
     );
   });
 });
+
+describe('ProjectsService - findOne', () => {
+  let service: ProjectsService;
+  let mockRepo: any;
+
+  beforeEach(async () => {
+    mockRepo = {
+      findOne: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ProjectsService,
+        {
+          provide: getRepositoryToken(ProjectEntity),
+          useValue: mockRepo,
+        },
+        {
+          provide: DataSource,
+          useValue: {},
+        },
+      ],
+    }).compile();
+
+    service = module.get<ProjectsService>(ProjectsService);
+  });
+
+  it('debería devolver el proyecto con sus relaciones si existe', async () => {
+    const project = { id: '1', name: 'Test' };
+    mockRepo.findOne.mockResolvedValue(project);
+
+    const result = await service.findOne('1');
+
+    expect(result).toEqual(project);
+    expect(mockRepo.findOne).toHaveBeenCalledWith({
+      where: { id: '1' },
+      relations: ['leader'],
+    });
+  });
+
+  it('debería arrojar NotFoundException si no existe', async () => {
+    mockRepo.findOne.mockResolvedValue(null);
+    await expect(service.findOne('1')).rejects.toThrow(NotFoundException);
+  });
+});

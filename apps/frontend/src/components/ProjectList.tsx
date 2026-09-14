@@ -11,7 +11,11 @@ const statusLabels: Record<ProjectStatus, string> = {
   CANCELLED: 'Cancelado',
 };
 
-export function ProjectList() {
+interface ProjectListProps {
+  onSelectProject: (id: string) => void;
+}
+
+export function ProjectList({ onSelectProject }: ProjectListProps) {
   const qc = useQueryClient();
   const [filters, setFilters] = useState<ListProjectsQuery>({});
   
@@ -125,6 +129,12 @@ export function ProjectList() {
                 <div className="flex items-center justify-between">
                   <div className="font-medium">{p.name}</div>
                   <div className="flex items-center gap-4">
+                    <button
+                      className="text-sm font-medium text-blue-600 hover:underline"
+                      onClick={() => onSelectProject(p.id)}
+                    >
+                      Abrir proyecto
+                    </button>
                     <select
                       className="rounded border border-gray-300 px-2 py-1 text-sm"
                       value={p.status}
