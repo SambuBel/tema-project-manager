@@ -28,22 +28,16 @@ export function ProjectForm() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name.trim()) return;
     
     // FIXME: DEPENDENCY BLOCKER
-    // El backend requiere 'leaderId' pero no existe módulo de Usuarios/Auth para obtener uno.
-    // Se envía un string vacío temporalmente para satisfacer TypeScript, lo que resultará en un 400 Bad Request.
-    const payload: CreateProjectDto = {
-      name: formData.name.trim(),
-      leaderId: '', 
-    };
-    
-    if (formData.description.trim()) payload.description = formData.description.trim();
-    if (formData.startDate.trim()) payload.startDate = formData.startDate;
-    if (formData.estimatedEndDate.trim()) payload.estimatedEndDate = formData.estimatedEndDate;
-
-    create.mutate(payload);
+    // El formulario deberá obtener el 'leaderId' desde el usuario autenticado
+    // o desde el mecanismo definitivo que provea el módulo de Auth.
+    // Mientras tanto, evitamos enviar peticiones inválidas al backend.
+    return;
   };
+
+  // Por ahora, al no existir un leaderId valido, la creación está deshabilitada.
+  const isFormDisabled = true;
 
   return (
     <form onSubmit={handleSubmit} className="mb-6 flex flex-col gap-4 rounded border border-gray-200 p-4">
@@ -97,21 +91,21 @@ export function ProjectForm() {
       </div>
 
       <div className="rounded bg-yellow-50 p-3 text-sm text-yellow-800">
-        <strong>Bloqueo de desarrollo:</strong> La creación fallará porque aún no existe un módulo de Autenticación/Usuarios para asignar el Líder del proyecto.
+        <strong>Creación temporalmente deshabilitada:</strong> Pendiente de la integración con el módulo de Autenticación para asignar el Líder del proyecto.
       </div>
 
       {create.isError && (
         <p className="text-sm text-red-600">
-          Error al crear el proyecto (Falta leaderId válido).
+          Error al crear el proyecto.
         </p>
       )}
 
       <button
         className="self-start rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-        disabled={create.isPending || !formData.name.trim()}
+        disabled={isFormDisabled || create.isPending || !formData.name.trim()}
         type="submit"
       >
-        {create.isPending ? 'Creando...' : 'Crear Proyecto'}
+        Crear Proyecto
       </button>
     </form>
   );
