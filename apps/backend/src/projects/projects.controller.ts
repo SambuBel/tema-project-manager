@@ -1,4 +1,7 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { UserEntity } from '../database/entities/user.entity';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
@@ -6,6 +9,7 @@ import { UpdateProjectStatusDto } from './update-project-status.dto';
 
 import { AddProjectMemberDtoImpl, UpdateProjectMemberRoleDtoImpl } from './project-member.dto';
 
+@UseGuards(JwtAuthGuard)
 @Controller('projects')
 export class ProjectsController {
   constructor(private readonly projects: ProjectsService) {}
@@ -26,18 +30,18 @@ export class ProjectsController {
   }
 
   @Post(':id/members')
-  addMember(@Param('id') id: string, @Body() dto: AddProjectMemberDtoImpl) {
-    return this.projects.addMember(id, dto);
+  addMember(@Param('id') id: string, @Body() dto: AddProjectMemberDtoImpl, @CurrentUser() user: UserEntity) {
+    return this.projects.addMember(id, dto, user);
   }
 
   @Patch(':id/members/:memberId/role')
-  updateMemberRole(@Param('id') id: string, @Param('memberId') memberId: string, @Body() dto: UpdateProjectMemberRoleDtoImpl) {
-    return this.projects.updateMemberRole(id, memberId, dto);
+  updateMemberRole(@Param('id') id: string, @Param('memberId') memberId: string, @Body() dto: UpdateProjectMemberRoleDtoImpl, @CurrentUser() user: UserEntity) {
+    return this.projects.updateMemberRole(id, memberId, dto, user);
   }
 
   @Patch(':id/status')
-  changeStatus(@Param('id') id: string, @Body() dto: UpdateProjectStatusDto) {
-    return this.projects.changeStatus(id, dto);
+  changeStatus(@Param('id') id: string, @Body() dto: UpdateProjectStatusDto, @CurrentUser() user: UserEntity) {
+    return this.projects.changeStatus(id, dto, user);
   }
 
   @Patch(':id/archive')
@@ -46,8 +50,8 @@ export class ProjectsController {
   }
 
   @Post()
-  create(@Body() dto: CreateProjectDto) {
-    return this.projects.create(dto);
+  create(@Body() dto: CreateProjectDto, @CurrentUser() user: UserEntity) {
+    return this.projects.create(dto, user);
   }
 
   @Delete(':id')

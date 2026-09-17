@@ -5,7 +5,8 @@ import type {
   UpdateProjectStatusDto,
   ProjectMember,
   AddProjectMemberDto,
-  UpdateProjectMemberRoleDto
+  UpdateProjectMemberRoleDto,
+  User
 } from '@tema/shared-types';
 
 const BASE = '/api';
@@ -13,6 +14,7 @@ const BASE = '/api';
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     ...init,
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -20,6 +22,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getMe: () => request<User>('/auth/me'),
   listProjects: (query?: ListProjectsQuery) => {
     const params = new URLSearchParams();
     if (query?.name) params.append('name', query.name);

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import type { CreateProjectDto } from '@tema/shared-types';
 
@@ -26,18 +26,24 @@ export function ProjectForm() {
     },
   });
 
+  const { data: user } = useQuery({
+    queryKey: ['me'],
+    queryFn: api.getMe,
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
     
-    // FIXME: DEPENDENCY BLOCKER
-    // El formulario deberá obtener el 'leaderId' desde el usuario autenticado
-    // o desde el mecanismo definitivo que provea el módulo de Auth.
-    // Mientras tanto, evitamos enviar peticiones inválidas al backend.
-    return;
+    create.mutate({
+      ...formData,
+      leaderId: user.id,
+      startDate: formData.startDate || undefined,
+      estimatedEndDate: formData.estimatedEndDate || undefined,
+    });
   };
 
-  // Por ahora, al no existir un leaderId valido, la creación está deshabilitada.
-  const isFormDisabled = true;
+  const isFormDisabled = !user;
 
   return (
     <form onSubmit={handleSubmit} className="mb-6 flex flex-col gap-4 rounded border border-gray-200 p-4">
@@ -90,9 +96,6 @@ export function ProjectForm() {
         </div>
       </div>
 
-      <div className="rounded bg-yellow-50 p-3 text-sm text-yellow-800">
-        <strong>Creación temporalmente deshabilitada:</strong> Pendiente de la integración con el módulo de Autenticación para asignar el Líder del proyecto.
-      </div>
 
       {create.isError && (
         <p className="text-sm text-red-600">

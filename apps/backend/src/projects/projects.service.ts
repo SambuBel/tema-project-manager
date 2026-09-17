@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, IsNull, Not, Repository, DataSource } from 'typeorm';
 import { ProjectEntity } from './project.entity';
@@ -10,6 +10,7 @@ import { UpdateProjectStatusDto } from './update-project-status.dto';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
 import { ProjectStatus } from '../database/enums';
 import { AddProjectMemberDto, UpdateProjectMemberRoleDto } from '@tema/shared-types';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class ProjectsService {
@@ -18,8 +19,7 @@ export class ProjectsService {
     private readonly repo: Repository<ProjectEntity>,
     @InjectRepository(ProjectMemberEntity)
     private readonly memberRepo: Repository<ProjectMemberEntity>,
-    @InjectRepository(UserEntity)
-    private readonly userRepo: Repository<UserEntity>,
+    private readonly usersService: UsersService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -43,16 +43,16 @@ export class ProjectsService {
     return project;
   }
 
-  create(dto: CreateProjectDto): Promise<ProjectEntity> {
+  create(dto: CreateProjectDto, user: UserEntity): Promise<ProjectEntity> {
     const project = this.repo.create({
       ...dto,
       description: dto.description ?? null,
-      createdBy: dto.createdBy ?? dto.leaderId,
+      createdBy: user.id,
     });
     return this.repo.save(project);
   }
 
-  async changeStatus(id: string, dto: UpdateProjectStatusDto): Promise<ProjectEntity> {
+  async changeStatus(id: string, dto: UpdateProjectStatusDto, user: UserEntity): Promise<ProjectEntity> {
     return this.dataSource.transaction(async (manager) => {
       const project = await manager.findOneBy(ProjectEntity, { id });
       if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
@@ -65,7 +65,7 @@ export class ProjectsService {
         projectId: project.id,
         previousStatus: project.status,
         newStatus: dto.status,
-        changedByUserId: dto.changedByUserId,
+        changedByUserId: user.id,
       });
 
       project.status = dto.status;
@@ -103,11 +103,14 @@ export class ProjectsService {
     });
   }
 
-  async addMember(projectId: string, dto: AddProjectMemberDto): Promise<ProjectMemberEntity> {
-    await this.findOne(projectId);
+  async addMember(projectId: string, dto: AddProjectMemberDto, user: UserEntity): Promise<ProjectMemberEntity> {
+    const project = await this.findOne(projectId);
     
-    // Validar usuario explícitamente mediante inyección directa del repositorio
-    const userExists = await this.userRepo.findOneBy({ id: dto.userId });
+    if (project.leaderId !== user.id) {
+      throw new ForbiddenException('Solo el líder del proyecto puede agregar miembros');
+    }
+    
+    const userExists = await this.usersService.findById(dto.userId);
     if (!userExists) {
       throw new NotFoundException(`El usuario con ID ${dto.userId} no existe`);
     }
@@ -120,9 +123,6 @@ export class ProjectsService {
       throw new ConflictException(`El usuario ya es miembro activo de este proyecto`);
     }
 
-    // FIXME / dependency blocker: Project roles catalog/policy not yet defined.
-    // Actualmente se acepta projectRole como string arbitrario porque no existe
-    // fuente de verdad validable en la arquitectura todavía.
     const member = this.memberRepo.create({
       projectId,
       userId: dto.userId,
@@ -132,7 +132,12 @@ export class ProjectsService {
     return this.memberRepo.save(member);
   }
 
-  async updateMemberRole(projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto): Promise<ProjectMemberEntity> {
+  async updateMemberRole(projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto, user: UserEntity): Promise<ProjectMemberEntity> {
+    const project = await this.findOne(projectId);
+    if (project.leaderId !== user.id) {
+      throw new ForbiddenException('Solo el líder del proyecto puede modificar roles');
+    }
+
     const member = await this.memberRepo.findOne({
       where: { id: memberId, projectId, removedAt: IsNull() }
     });

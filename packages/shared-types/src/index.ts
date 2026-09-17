@@ -40,7 +40,6 @@ export interface CreateProjectDto {
   name: string;
   description?: string;
   leaderId: ID;
-  createdBy?: ID;
   startDate?: string;
   estimatedEndDate?: string;
 }
@@ -65,7 +64,6 @@ export interface UpdateProjectMemberRoleDto {
 
 export interface UpdateProjectStatusDto {
   status: ProjectStatus;
-  changedByUserId?: ID; // Optional for now, until Auth is available
 }
 
 export interface ListProjectsQuery {
