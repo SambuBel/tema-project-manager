@@ -37,7 +37,6 @@ export function ProjectForm() {
     
     create.mutate({
       ...formData,
-      leaderId: user.id,
       startDate: formData.startDate || undefined,
       estimatedEndDate: formData.estimatedEndDate || undefined,
     });

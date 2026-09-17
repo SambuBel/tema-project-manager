@@ -47,6 +47,7 @@ export class ProjectsService {
     const project = this.repo.create({
       ...dto,
       description: dto.description ?? null,
+      leaderId: user.id,
       createdBy: user.id,
     });
     return this.repo.save(project);

@@ -39,7 +39,6 @@ export interface Project {
 export interface CreateProjectDto {
   name: string;
   description?: string;
-  leaderId: ID;
   startDate?: string;
   estimatedEndDate?: string;
 }

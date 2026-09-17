@@ -500,3 +500,43 @@ describe('ProjectsService - Members', () => {
     await expect(service.updateMemberRole('1', 'm1', { projectRole: 'Role' }, { id: 'other' } as any)).rejects.toThrow(ForbiddenException);
   });
 });
+
+describe('ProjectsService - create', () => {
+  let service: ProjectsService;
+  let mockRepo: any;
+
+  beforeEach(async () => {
+    mockRepo = {
+      create: jest.fn(),
+      save: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ProjectsService,
+        { provide: getRepositoryToken(ProjectEntity), useValue: mockRepo },
+        { provide: getRepositoryToken(ProjectMemberEntity), useValue: {} },
+        { provide: UsersService, useValue: {} },
+        { provide: DataSource, useValue: {} },
+      ],
+    }).compile();
+
+    service = module.get<ProjectsService>(ProjectsService);
+  });
+
+  it('debería asignar leaderId y createdBy usando el usuario autenticado', async () => {
+    mockRepo.create.mockImplementation((dto: any) => dto);
+    mockRepo.save.mockImplementation((p: any) => Promise.resolve(p));
+
+    const result = await service.create({ name: 'Test' }, { id: 'user123' } as any);
+
+    expect(result.leaderId).toBe('user123');
+    expect(result.createdBy).toBe('user123');
+    expect(mockRepo.create).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Test',
+      leaderId: 'user123',
+      createdBy: 'user123'
+    }));
+  });
+});
+

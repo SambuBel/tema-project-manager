@@ -11,10 +11,6 @@ export class CreateProjectDto implements ICreateProjectDto {
   @IsString()
   description?: string;
 
-  // Un proyecto siempre tiene lider (regla de negocio: no puede quedar sin lider).
-  @IsUUID()
-  leaderId!: string;
-
   @IsOptional()
   @IsDateString()
   startDate?: string;
