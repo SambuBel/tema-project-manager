@@ -1,5 +1,5 @@
 import { IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
-import { TaskPriority, TaskStatus } from '@tema/shared-types';
+import { TaskPriority, TaskStatus } from '../../database/enums';
 
 export class CreateTaskDto {
   @IsUUID()
@@ -15,11 +15,11 @@ export class CreateTaskDto {
   description?: string | null;
 
   @IsOptional()
-  @IsEnum(TaskStatus as any)
+  @IsEnum(TaskStatus)
   status?: TaskStatus;
 
   @IsOptional()
-  @IsEnum(TaskPriority as any)
+  @IsEnum(TaskPriority)
   priority?: TaskPriority;
 
   @IsOptional()

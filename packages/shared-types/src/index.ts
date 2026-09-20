@@ -76,20 +76,10 @@ export interface HealthResponse {
   uptime: number;
   timestamp: string;
 }
-export enum TaskStatus {
-  PENDING = 'PENDING',
-  IN_PROGRESS = 'IN_PROGRESS',
-  IN_REVIEW = 'IN_REVIEW',
-  COMPLETED = 'COMPLETED',
-  BLOCKED = 'BLOCKED',
-}
 
-export enum TaskPriority {
-  LOW = 'LOW',
-  MEDIUM = 'MEDIUM',
-  HIGH = 'HIGH',
-  CRITICAL = 'CRITICAL',
-}
+export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
 
 export interface Task {
   id: ID;
