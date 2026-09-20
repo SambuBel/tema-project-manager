@@ -6,7 +6,7 @@ import type {
   ProjectMember,
   AddProjectMemberDto,
   UpdateProjectMemberRoleDto,
-  User
+  AuthenticatedUser
 } from '@tema/shared-types';
 
 const BASE = '/api';
@@ -22,7 +22,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getMe: () => request<User>('/auth/me'),
+  getMe: () => request<AuthenticatedUser>('/auth/me'),
   listProjects: (query?: ListProjectsQuery) => {
     const params = new URLSearchParams();
     if (query?.name) params.append('name', query.name);
