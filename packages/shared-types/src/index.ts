@@ -21,6 +21,17 @@ export interface User {
   active: boolean;
 }
 
+export type RoleName = 'ADMIN' | 'PROGRAM_MANAGER' | 'PROJECT_LEADER' | 'COLLABORATOR' | 'OBSERVER';
+
+/** Usuario devuelto por GET /auth/me. */
+export interface AuthenticatedUser {
+  id: ID;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  roles: RoleName[];
+}
+
 export interface Project {
   id: ID;
   name: string;
