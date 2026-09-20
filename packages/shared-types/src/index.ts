@@ -76,3 +76,59 @@ export interface HealthResponse {
   uptime: number;
   timestamp: string;
 }
+export enum TaskStatus {
+  PENDING = 'PENDING',
+  IN_PROGRESS = 'IN_PROGRESS',
+  IN_REVIEW = 'IN_REVIEW',
+  COMPLETED = 'COMPLETED',
+  BLOCKED = 'BLOCKED',
+}
+
+export enum TaskPriority {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+  CRITICAL = 'CRITICAL',
+}
+
+export interface Task {
+  id: ID;
+  projectId: ID;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  assignedToId: ID | null;
+  assignedTo?: User;
+  startDate: string | null;
+  dueDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTaskDto {
+  projectId: ID;
+  title: string;
+  description?: string;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  assignedToId?: ID;
+  startDate?: string;
+  dueDate?: string;
+}
+
+export interface UpdateTaskDto {
+  title?: string;
+  description?: string | null;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  assignedToId?: ID | null;
+  startDate?: string | null;
+  dueDate?: string | null;
+}
+
+export interface ListTasksQuery {
+  projectId: ID;
+  status?: TaskStatus;
+  assignedToId?: ID;
+}

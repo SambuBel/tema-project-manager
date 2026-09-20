@@ -6,6 +6,7 @@ import { ProjectsModule } from './projects/projects.module';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { TasksModule } from './tasks/tasks.module';
 import { envValidationSchema } from './config/env.validation';
 
 @Module({
@@ -28,7 +29,9 @@ import { envValidationSchema } from './config/env.validation';
     UsersModule,
     AuthModule,
     ProjectsModule,
+    TasksModule,
   ],
   controllers: [HealthController],
 })
 export class AppModule {}
+

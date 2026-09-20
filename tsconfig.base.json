@@ -15,6 +15,7 @@
     "sourceMap": true,
     "resolveJsonModule": true,
     "baseUrl": ".",
+    "ignoreDeprecations": "5.0",
     "paths": {
       "@tema/shared-types": ["packages/shared-types/src/index.ts"]
     }
