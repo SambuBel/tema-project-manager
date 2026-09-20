@@ -6,11 +6,12 @@ import { UserEntity } from '../database/entities/user.entity';
 import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
 import { UsersModule } from '../users/users.module';
+import { AuthModule } from 'src/auth/auth.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ProjectEntity, ProjectMemberEntity, UserEntity]),
-    UsersModule,
+    UsersModule, AuthModule,
   ],
   controllers: [ProjectsController],
   providers: [ProjectsService],

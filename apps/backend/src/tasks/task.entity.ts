@@ -10,21 +10,7 @@ import {
 } from 'typeorm';
 import { ProjectEntity } from '../projects/project.entity';
 import { UserEntity } from '../database/entities/user.entity';
-
-export enum TaskStatus {
-  PENDING = 'PENDING',
-  IN_PROGRESS = 'IN_PROGRESS',
-  IN_REVIEW = 'IN_REVIEW',
-  COMPLETED = 'COMPLETED',
-  BLOCKED = 'BLOCKED',
-}
-
-export enum TaskPriority {
-  LOW = 'LOW',
-  MEDIUM = 'MEDIUM',
-  HIGH = 'HIGH',
-  CRITICAL = 'CRITICAL',
-}
+import { TaskPriority, TaskStatus } from '../database/enums';
 
 @Entity('tasks')
 @Index('ix_tasks_project_id', ['projectId'])
