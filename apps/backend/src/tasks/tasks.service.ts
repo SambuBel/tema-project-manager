@@ -5,6 +5,7 @@ import { TaskEntity } from './task.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { FilterTasksDto } from './dto/filter-tasks.dto';
 
 @Injectable()
 export class TasksService {
@@ -27,12 +28,35 @@ export class TasksService {
     return this.repo.save(task);
   }
 
-  findAllByProject(projectId: string): Promise<TaskEntity[]> {
-    return this.repo.find({
-      where: { projectId },
-      relations: ['assignedTo', 'project'],
-      order: { createdAt: 'DESC' },
-    });
+  async findAllByProject(filters: FilterTasksDto): Promise<TaskEntity[]> {
+    const qb = this.repo
+      .createQueryBuilder('task')
+      .leftJoinAndSelect('task.assignedTo', 'assignedTo')
+      .leftJoinAndSelect('task.project', 'project')
+      .where('task.projectId = :projectId', { projectId: filters.projectId });
+ 
+    if (filters.status) {
+      qb.andWhere('task.status = :status', { status: filters.status });
+    }
+ 
+    if (filters.priority) {
+      qb.andWhere('task.priority = :priority', { priority: filters.priority });
+    }
+ 
+    if (filters.assignedToId) {
+      qb.andWhere('task.assignedToId = :assignedToId', {
+        assignedToId: filters.assignedToId,
+      });
+    }
+ 
+    if (filters.search) {
+      qb.andWhere(
+        '(task.title ILIKE :search OR task.description ILIKE :search)',
+        { search: `%${filters.search}%` },
+      );
+    }
+ 
+    return qb.orderBy('task.createdAt', 'DESC').getMany();
   }
 
   async findOne(id: string): Promise<TaskEntity> {
