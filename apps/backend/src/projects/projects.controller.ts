@@ -6,6 +6,7 @@ import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
+import { UpdateProjectDtoImpl } from './update-project.dto';
 
 import { AddProjectMemberDtoImpl, UpdateProjectMemberRoleDtoImpl } from './project-member.dto';
 
@@ -37,6 +38,11 @@ export class ProjectsController {
   @Patch(':id/members/:memberId/role')
   updateMemberRole(@Param('id') id: string, @Param('memberId') memberId: string, @Body() dto: UpdateProjectMemberRoleDtoImpl, @CurrentUser() user: UserEntity) {
     return this.projects.updateMemberRole(id, memberId, dto, user);
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdateProjectDtoImpl, @CurrentUser() user: UserEntity) {
+    return this.projects.update(id, dto, user);
   }
 
   @Patch(':id/status')
