@@ -3,6 +3,7 @@ import type {
   Project, 
   ListProjectsQuery, 
   UpdateProjectStatusDto,
+  UpdateProjectDto,
   ProjectMember,
   AddProjectMemberDto,
   UpdateProjectMemberRoleDto,
@@ -34,6 +35,8 @@ export const api = {
   getProject: (id: string) => request<Project>(`/projects/${id}`),
   createProject: (dto: CreateProjectDto) =>
     request<Project>('/projects', { method: 'POST', body: JSON.stringify(dto) }),
+  updateProject: (id: string, dto: UpdateProjectDto) =>
+    request<Project>(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
   updateProjectStatus: (id: string, dto: UpdateProjectStatusDto) =>
     request<Project>(`/projects/${id}/status`, { method: 'PATCH', body: JSON.stringify(dto) }),
   archiveProject: (id: string) => 

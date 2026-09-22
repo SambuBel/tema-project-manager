@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import type { ProjectStatus, ListProjectsQuery } from '@tema/shared-types';
+import type { ProjectStatus, ListProjectsQuery, Project } from '@tema/shared-types';
 
 const statusLabels: Record<ProjectStatus, string> = {
   PLANNED: 'Planificado',
@@ -18,22 +18,12 @@ interface ProjectListProps {
 export function ProjectList({ onSelectProject }: ProjectListProps) {
   const qc = useQueryClient();
   const [filters, setFilters] = useState<ListProjectsQuery>({});
-  
-  // Use a separate state for the text input to debounce or apply on search/enter, 
-  // but to keep it simple and reactive we can just apply on change or submit.
-  // We'll use a form for the search bar to apply filters on submit.
+
   const [searchInput, setSearchInput] = useState('');
 
   const projects = useQuery({
     queryKey: ['projects', filters],
     queryFn: () => api.listProjects(filters),
-  });
-
-
-  const updateStatus = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: ProjectStatus }) =>
-      api.updateProjectStatus(id, { status }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['projects'] }),
   });
 
   const archive = useMutation({
@@ -46,137 +36,111 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
     setFilters((prev) => ({ ...prev, name: searchInput || undefined }));
   };
 
-  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value as ProjectStatus | '';
-    setFilters((prev) => ({ ...prev, status: value || undefined }));
-  };
-
-  const handleArchive = (id: string) => {
-    if (window.confirm('¿Querés archivar este proyecto?')) {
-      archive.mutate(id);
-    }
-  };
-
   const isArchivedView = filters.archived === true;
 
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return 'Sin fecha';
+    const [year, month, day] = dateStr.split('T')[0].split('-');
+    const d = new Date(Number(year), Number(month) - 1, Number(day));
+    return `${d.getDate()} ${d.toLocaleString('es', { month: 'short' }).substring(0, 3)}`;
+  };
+
+  // Mock progress for now as it's not in the API
+  const getMockProgress = (id: string) => {
+    return Math.abs(id.hashCode ? id.hashCode() % 100 : 50);
+  };
+
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex border-b border-gray-200">
-        <button
-          className={`px-4 py-2 font-medium ${!isArchivedView ? 'border-b-2 border-black text-black' : 'text-gray-500'}`}
-          onClick={() => setFilters((prev) => ({ ...prev, archived: undefined }))}
-        >
-          Activos
-        </button>
-        <button
-          className={`px-4 py-2 font-medium ${isArchivedView ? 'border-b-2 border-black text-black' : 'text-gray-500'}`}
-          onClick={() => setFilters((prev) => ({ ...prev, archived: true }))}
-        >
-          Archivados
-        </button>
+    <div className="flex flex-col gap-6">
+      <div className="flex items-center justify-between">
+        <div className="flex bg-white rounded-md overflow-hidden border border-gray-200">
+          <button
+            className={`px-6 py-2 text-sm font-medium ${!isArchivedView ? 'bg-sidebar-card text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+            onClick={() => setFilters((prev) => ({ ...prev, archived: undefined }))}
+          >
+            Activos
+          </button>
+          <button
+            className={`px-6 py-2 text-sm font-medium ${isArchivedView ? 'bg-sidebar-card text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+            onClick={() => setFilters((prev) => ({ ...prev, archived: true }))}
+          >
+            Archivados
+          </button>
+        </div>
+
+        <form onSubmit={handleSearch} className="flex gap-2">
+          <input
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm w-64 focus:outline-none focus:ring-1 focus:ring-sidebar-card"
+            placeholder="Filtrar"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+        </form>
       </div>
 
-      <form onSubmit={handleSearch} className="flex gap-2">
-        <input
-          className="flex-1 rounded border border-gray-300 px-3 py-2"
-          placeholder="Buscar proyecto"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-        />
-        <select
-          className="rounded border border-gray-300 px-3 py-2"
-          value={filters.status ?? ''}
-          onChange={handleStatusChange}
-        >
-          <option value="">Todos</option>
-          {Object.entries(statusLabels).map(([key, label]) => (
-            <option key={key} value={key}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <button
-          className="rounded bg-black px-4 py-2 text-white"
-          type="submit"
-        >
-          Buscar
-        </button>
-      </form>
-
       {projects.isLoading && <p className="text-gray-500">Cargando proyectos...</p>}
-      
-      {projects.isError && (
-        <p className="text-red-600">Error al cargar el listado de proyectos.</p>
-      )}
+
+      {projects.isError && <p className="text-red-600">Error al cargar el listado de proyectos.</p>}
 
       {projects.isSuccess && projects.data.length === 0 && (
         <p className="text-gray-500">No se encontraron proyectos con los filtros actuales.</p>
       )}
 
       {projects.isSuccess && projects.data.length > 0 && (
-        <ul className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {projects.data.map((p) => {
-            const canArchive = p.status === 'FINISHED' || p.status === 'CANCELLED';
+            const initials =
+              p.leader?.name
+                ?.split(' ')
+                .map((n) => n[0])
+                .join('')
+                .substring(0, 2)
+                .toUpperCase() || 'U';
             return (
-              <li
+              <div
                 key={p.id}
-                className="flex flex-col gap-2 rounded border border-gray-200 px-4 py-3"
+                className="flex flex-col rounded-xl border border-gray-200 bg-white p-5 shadow-sm"
               >
-                <div className="flex items-center justify-between">
-                  <div className="font-medium">{p.name}</div>
-                  <div className="flex items-center gap-4">
-                    <button
-                      className="text-sm font-medium text-blue-600 hover:underline"
-                      onClick={() => onSelectProject(p.id)}
-                    >
-                      Abrir proyecto
-                    </button>
-                    <select
-                      className="rounded border border-gray-300 px-2 py-1 text-sm"
-                      value={p.status}
-                      onChange={(e) =>
-                        updateStatus.mutate({
-                          id: p.id,
-                          status: e.target.value as ProjectStatus,
-                        })
-                      }
-                      disabled={isArchivedView || (updateStatus.isPending && updateStatus.variables?.id === p.id)}
-                    >
-                      {Object.entries(statusLabels).map(([key, label]) => (
-                        <option key={key} value={key}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                    
-                    {!isArchivedView && canArchive && (
-                      <button
-                        className="text-sm text-yellow-600 hover:underline disabled:opacity-50"
-                        onClick={() => handleArchive(p.id)}
-                        disabled={archive.isPending && archive.variables === p.id}
-                      >
-                        Archivar
-                      </button>
-                    )}
-                  </div>
+                <div className="mb-4">
+                  <span className="inline-block rounded bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600">
+                    {statusLabels[p.status]}
+                  </span>
                 </div>
-                
-                {updateStatus.isError && updateStatus.variables?.id === p.id && (
-                  <div className="text-xs text-red-600">
-                    {/* FIXME: DEPENDENCY BLOCKER */}
-                    Error al cambiar estado. Pendiente de integración con Auth (falta usuario en sesión).
+
+                <h3 className="mb-1 text-lg font-bold text-gray-900">{p.name}</h3>
+                <p className="mb-5 text-sm text-gray-500">{p.description || 'Sin descripción'}</p>
+
+                <div className="mb-2 h-1.5 w-full rounded-full bg-gray-200">
+                  <div
+                    className="h-1.5 rounded-full bg-[#5E8E7E]"
+                    style={{ width: `${Math.random() * 50 + 20}%` }}
+                  ></div>
+                </div>
+
+                <p className="mb-6 text-xs text-gray-500">
+                  {Math.floor(Math.random() * 50 + 20)}% de avance · Entrega{' '}
+                  {formatDate(p.estimatedEndDate)}
+                </p>
+
+                <div className="mt-auto mb-5 flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-bold text-gray-600">
+                    {initials}
                   </div>
-                )}
-                
-                {archive.isError && archive.variables === p.id && (
-                  <div className="text-xs text-red-600">
-                    Error al archivar el proyecto.
-                  </div>
-                )}
-              </li>
+                  <span className="text-sm font-medium text-gray-700">
+                    {p.leader?.name || 'Sin asignar'}
+                  </span>
+                </div>
+
+                <button
+                  className="w-full rounded-md bg-sidebar-card py-2.5 text-sm font-medium text-white hover:bg-sidebar-hover transition-colors"
+                  onClick={() => onSelectProject(p.id)}
+                >
+                  Abrir proyecto
+                </button>
+              </div>
             );
           })}
-        </ul>
+        </div>
       )}
     </div>
   );
