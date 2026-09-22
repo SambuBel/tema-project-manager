@@ -14,6 +14,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { FilterTasksDto } from './dto/filter-tasks.dto';
 import { TasksService } from './tasks.service';
 
 @UseGuards(JwtAuthGuard)
@@ -27,8 +28,8 @@ export class TasksController {
   }
 
   @Get()
-  findAllByProject(@Query('projectId', ParseUUIDPipe) projectId: string) {
-    return this.tasksService.findAllByProject(projectId);
+  findAll(@Query() filters: FilterTasksDto) {
+    return this.tasksService.findAllByProject(filters);
   }
 
   @Get(':id')

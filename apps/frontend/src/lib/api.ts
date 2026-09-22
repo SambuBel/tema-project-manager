@@ -8,6 +8,7 @@ import type {
   UpdateProjectMemberRoleDto,
   AuthenticatedUser
 } from '@tema/shared-types';
+import type { Task, TaskFilters } from '../types/task'
 
 const BASE = '/api';
 
@@ -44,4 +45,16 @@ export const api = {
   updateProjectMemberRole: (projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto) =>
     request<ProjectMember>(`/projects/${projectId}/members/${memberId}/role`, { method: 'PATCH', body: JSON.stringify(dto) }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
+
+
+listTasks: (filters: TaskFilters) => {
+  const params = new URLSearchParams();
+  params.append('projectId', filters.projectId);
+  if (filters.status) params.append('status', filters.status);
+  if (filters.priority) params.append('priority', filters.priority);
+  if (filters.assignedToId) params.append('assignedToId', filters.assignedToId);
+  if (filters.search) params.append('search', filters.search);
+  return request<Task[]>(`/tasks?${params.toString()}`);
+},
+getTask: (id: string) => request<Task>(`/tasks/${id}`),
 };

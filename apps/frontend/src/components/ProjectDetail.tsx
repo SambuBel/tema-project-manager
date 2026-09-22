@@ -6,6 +6,7 @@ interface ProjectDetailProps {
   id: string;
   onBack: () => void;
   onManageTeam: () => void;
+  onViewTasks: () => void;
 }
 
 const statusLabels: Record<ProjectStatus, string> = {
@@ -28,7 +29,7 @@ function formatDate(dateStr: string | null | undefined): string {
   }
 }
 
-export function ProjectDetail({ id, onBack, onManageTeam }: ProjectDetailProps) {
+export function ProjectDetail({ id, onBack, onManageTeam, onViewTasks }: ProjectDetailProps) {
   const qc = useQueryClient();
   const { data: project, isLoading, isError } = useQuery({
     queryKey: ['project', id],
@@ -101,6 +102,11 @@ export function ProjectDetail({ id, onBack, onManageTeam }: ProjectDetailProps) 
         <div className="flex gap-2">
           <button className="rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white">
             Resumen
+          </button>
+          <button
+          onClick={onViewTasks}
+          className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-[#EAF2F7]">
+            Tareas
           </button>
           <button className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] opacity-50 cursor-not-allowed">
             Tablero
