@@ -54,6 +54,13 @@ export interface CreateProjectDto {
   estimatedEndDate?: string;
 }
 
+export interface UpdateProjectDto {
+  name?: string;
+  description?: string;
+  startDate?: string;
+  estimatedEndDate?: string;
+}
+
 export interface ProjectMember {
   id: ID;
   projectId: ID;

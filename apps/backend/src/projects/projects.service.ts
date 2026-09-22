@@ -6,6 +6,7 @@ import { ProjectMemberEntity } from '../database/entities/project-member.entity'
 import { UserEntity } from '../database/entities/user.entity';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
+import { UpdateProjectDtoImpl } from './update-project.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
 import { ProjectStatus } from '../database/enums';
@@ -50,6 +51,21 @@ export class ProjectsService {
       leaderId: user.id,
       createdBy: user.id,
     });
+    return this.repo.save(project);
+  }
+
+  async update(id: string, dto: UpdateProjectDtoImpl, user: UserEntity): Promise<ProjectEntity> {
+    const project = await this.findOne(id);
+
+    if (project.leaderId !== user.id) {
+      throw new ForbiddenException('Solo el líder del proyecto puede modificar el proyecto');
+    }
+
+    Object.assign(project, {
+      ...dto,
+      ...(dto.description !== undefined ? { description: dto.description ?? null } : {}),
+    });
+
     return this.repo.save(project);
   }
 

@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { TaskForm } from './TaskForm';
@@ -19,10 +20,9 @@ const statusLabels: Record<ProjectStatus, string> = {
 
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return 'No definida';
-  // simple formatting, e.g. "18 sep" or just ISO depending on what we have. 
-  // Let's use Date object for standard formatting
   try {
-    const d = new Date(dateStr);
+    const [year, month, day] = dateStr.split('T')[0].split('-');
+    const d = new Date(Number(year), Number(month) - 1, Number(day));
     return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
   } catch {
     return dateStr;
@@ -31,6 +31,7 @@ function formatDate(dateStr: string | null | undefined): string {
 
 export function ProjectDetail({ id, onBack, onManageTeam }: ProjectDetailProps) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const { data: project, isLoading, isError } = useQuery({
     queryKey: ['project', id],
     queryFn: () => api.getProject(id),
@@ -41,6 +42,13 @@ export function ProjectDetail({ id, onBack, onManageTeam }: ProjectDetailProps) 
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['project', id] });
       qc.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+
+  const updateStatus = useMutation({
+    mutationFn: (status: ProjectStatus) => api.updateProjectStatus(id, { status }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project', id] });
     },
   });
 
@@ -115,7 +123,10 @@ export function ProjectDetail({ id, onBack, onManageTeam }: ProjectDetailProps) 
         </div>
         
         <div className="flex gap-2">
-          <button className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] opacity-50 cursor-not-allowed">
+          <button 
+            className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
+            onClick={() => navigate(`/projects/${project.id}/edit`)}
+          >
             Editar proyecto
           </button>
           <button 
@@ -139,7 +150,7 @@ export function ProjectDetail({ id, onBack, onManageTeam }: ProjectDetailProps) 
         <div className="flex flex-col justify-center rounded-xl border border-[#DEE5EC] bg-white p-6">
           <h3 className="text-sm font-medium text-[#607185]">Entrega</h3>
           <p className="mt-2 text-3xl font-semibold">
-            {project.estimatedEndDate ? new Date(project.estimatedEndDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : '-'}
+            {project.estimatedEndDate ? formatDate(project.estimatedEndDate).split(' de 20')[0] : '-'}
           </p>
           <p className="mt-2 text-sm text-[#607185]">{project.estimatedEndDate ? 'Fecha estimada' : 'No definida'}</p>
         </div>
