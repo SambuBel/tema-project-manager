@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, IsNull, Not, Repository, DataSource } from 'typeorm';
+import { ILike, IsNull, Not, Repository, DataSource, EntityManager } from 'typeorm';
 import { ProjectEntity } from './project.entity';
 import { ProjectMemberEntity } from '../database/entities/project-member.entity';
 import { UserEntity } from '../database/entities/user.entity';
@@ -9,9 +9,10 @@ import { ListProjectsDto } from './list-projects.dto';
 import { UpdateProjectDtoImpl } from './update-project.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
-import { ProjectStatus } from '../database/enums';
+import { ProjectStatus, ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
 import { AddProjectMemberDto, UpdateProjectMemberRoleDto } from '@tema/shared-types';
 import { UsersService } from '../users/users.service';
+import { ProjectActivityService } from './project-activity.service';
 
 @Injectable()
 export class ProjectsService {
@@ -22,6 +23,7 @@ export class ProjectsService {
     private readonly memberRepo: Repository<ProjectMemberEntity>,
     private readonly usersService: UsersService,
     private readonly dataSource: DataSource,
+    private readonly activityService: ProjectActivityService,
   ) {}
 
   findAll(query: ListProjectsDto = {}): Promise<ProjectEntity[]> {
@@ -44,29 +46,83 @@ export class ProjectsService {
     return project;
   }
 
-  create(dto: CreateProjectDto, user: UserEntity): Promise<ProjectEntity> {
-    const project = this.repo.create({
-      ...dto,
-      description: dto.description ?? null,
-      leaderId: user.id,
-      createdBy: user.id,
+  async checkIsMemberOrLeader(projectId: string, userId: string): Promise<boolean> {
+    const project = await this.findOne(projectId);
+    if (project.leaderId === userId) return true;
+    
+    const isMember = await this.memberRepo.count({
+      where: { projectId, userId, removedAt: IsNull() }
     });
-    return this.repo.save(project);
+    return isMember > 0;
+  }
+
+  async create(dto: CreateProjectDto, user: UserEntity): Promise<ProjectEntity> {
+    return this.dataSource.transaction(async (manager) => {
+      const project = manager.create(ProjectEntity, {
+        ...dto,
+        description: dto.description ?? null,
+        leaderId: user.id,
+        createdBy: user.id,
+      });
+      const savedProject = await manager.save(project);
+
+      await this.activityService.logEvent({
+        projectId: savedProject.id,
+        actorId: user.id,
+        actionType: ProjectActivityAction.PROJECT_CREATED,
+        entityType: ProjectActivityEntityType.PROJECT,
+        entityId: savedProject.id,
+        metadata: { name: savedProject.name },
+      }, manager);
+
+      return savedProject;
+    });
   }
 
   async update(id: string, dto: UpdateProjectDtoImpl, user: UserEntity): Promise<ProjectEntity> {
-    const project = await this.findOne(id);
+    return this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOne(ProjectEntity, { where: { id } });
+      if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
 
-    if (project.leaderId !== user.id) {
-      throw new ForbiddenException('Solo el líder del proyecto puede modificar el proyecto');
-    }
+      if (project.leaderId !== user.id) {
+        throw new ForbiddenException('Solo el líder del proyecto puede modificar el proyecto');
+      }
 
-    Object.assign(project, {
-      ...dto,
-      ...(dto.description !== undefined ? { description: dto.description ?? null } : {}),
+      const changes: Record<string, { old: any, new: any }> = {};
+      if (dto.name !== undefined && dto.name !== project.name) {
+        changes.name = { old: project.name, new: dto.name };
+        project.name = dto.name;
+      }
+      if (dto.description !== undefined && dto.description !== project.description) {
+        changes.description = { old: project.description, new: dto.description };
+        project.description = dto.description ?? null;
+      }
+      if (dto.estimatedEndDate !== undefined && dto.estimatedEndDate !== project.estimatedEndDate) {
+        changes.estimatedEndDate = { old: project.estimatedEndDate, new: dto.estimatedEndDate };
+        project.estimatedEndDate = dto.estimatedEndDate;
+      }
+      if (dto.startDate !== undefined && dto.startDate !== project.startDate) {
+        changes.startDate = { old: project.startDate, new: dto.startDate };
+        project.startDate = dto.startDate;
+      }
+
+      if (Object.keys(changes).length === 0) {
+        return project; // No changes to log or save
+      }
+
+      const updatedProject = await manager.save(project);
+
+      await this.activityService.logEvent({
+        projectId: updatedProject.id,
+        actorId: user.id,
+        actionType: ProjectActivityAction.PROJECT_UPDATED,
+        entityType: ProjectActivityEntityType.PROJECT,
+        entityId: updatedProject.id,
+        metadata: { changes },
+      }, manager);
+
+      return updatedProject;
     });
-
-    return this.repo.save(project);
   }
 
   async changeStatus(id: string, dto: UpdateProjectStatusDto, user: UserEntity): Promise<ProjectEntity> {
@@ -92,23 +148,52 @@ export class ProjectsService {
     });
   }
 
-  async archive(id: string): Promise<ProjectEntity> {
-    const project = await this.repo.findOneBy({ id });
-    if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
-    
-    if (project.archivedAt) return project;
+  async archive(id: string, user: UserEntity): Promise<ProjectEntity> {
+    return this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOneBy(ProjectEntity, { id });
+      if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
+      
+      if (project.archivedAt) return project;
 
-    if (project.status !== ProjectStatus.FINISHED && project.status !== ProjectStatus.CANCELLED) {
-      throw new BadRequestException('Solo se pueden archivar proyectos FINALIZADOS o CANCELADOS');
-    }
+      if (project.status !== ProjectStatus.FINISHED && project.status !== ProjectStatus.CANCELLED) {
+        throw new BadRequestException('Solo se pueden archivar proyectos FINALIZADOS o CANCELADOS');
+      }
 
-    project.archivedAt = new Date();
-    return this.repo.save(project);
+      project.archivedAt = new Date();
+      const archivedProject = await manager.save(project);
+
+      await this.activityService.logEvent({
+        projectId: archivedProject.id,
+        actorId: user.id,
+        actionType: ProjectActivityAction.PROJECT_ARCHIVED,
+        entityType: ProjectActivityEntityType.PROJECT,
+        entityId: archivedProject.id,
+      }, manager);
+
+      return archivedProject;
+    });
   }
 
-  async remove(id: string): Promise<void> {
-    const result = await this.repo.delete({ id });
-    if (!result.affected) throw new NotFoundException(`Project ${id} no encontrado`);
+  async remove(id: string, user: UserEntity): Promise<void> {
+    // Para conservar el historial atómicamente, deberíamos ejecutar esto en transacción, 
+    // pero si el DELETE del proyecto hace CASCADE, el historial se borra igual en BD relacional. 
+    // Dejo la ejecución de ambos eventos. Se requiere decisión del equipo sobre Soft Delete vs CASCADE.
+    return this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOne(ProjectEntity, { where: { id } });
+      if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
+
+      await this.activityService.logEvent({
+        projectId: project.id,
+        actorId: user.id,
+        actionType: ProjectActivityAction.PROJECT_DELETED as any,
+        entityType: ProjectActivityEntityType.PROJECT,
+        entityId: project.id,
+        metadata: { name: project.name }
+      }, manager);
+
+      const result = await manager.delete(ProjectEntity, { id });
+      if (!result.affected) throw new NotFoundException(`Project ${id} no encontrado`);
+    });
   }
 
   async getMembers(projectId: string): Promise<ProjectMemberEntity[]> {
@@ -121,50 +206,79 @@ export class ProjectsService {
   }
 
   async addMember(projectId: string, dto: AddProjectMemberDto, user: UserEntity): Promise<ProjectMemberEntity> {
-    const project = await this.findOne(projectId);
-    
-    if (project.leaderId !== user.id) {
-      throw new ForbiddenException('Solo el líder del proyecto puede agregar miembros');
-    }
-    
-    const userExists = await this.usersService.findById(dto.userId);
-    if (!userExists) {
-      throw new NotFoundException(`El usuario con ID ${dto.userId} no existe`);
-    }
-    
-    const existing = await this.memberRepo.findOne({
-      where: { projectId, userId: dto.userId, removedAt: IsNull() }
-    });
-    
-    if (existing) {
-      throw new ConflictException(`El usuario ya es miembro activo de este proyecto`);
-    }
+    return this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
+      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+      
+      if (project.leaderId !== user.id) {
+        throw new ForbiddenException('Solo el líder del proyecto puede agregar miembros');
+      }
+      
+      const userExists = await this.usersService.findById(dto.userId);
+      if (!userExists) {
+        throw new NotFoundException(`El usuario con ID ${dto.userId} no existe`);
+      }
+      
+      const existing = await manager.findOne(ProjectMemberEntity, {
+        where: { projectId, userId: dto.userId, removedAt: IsNull() }
+      });
+      
+      if (existing) {
+        throw new ConflictException(`El usuario ya es miembro activo de este proyecto`);
+      }
 
-    const member = this.memberRepo.create({
-      projectId,
-      userId: dto.userId,
-      projectRole: dto.projectRole,
+      const member = manager.create(ProjectMemberEntity, {
+        projectId,
+        userId: dto.userId,
+        projectRole: dto.projectRole,
+      });
+      
+      const savedMember = await manager.save(member);
+
+      await this.activityService.logEvent({
+        projectId,
+        actorId: user.id,
+        actionType: ProjectActivityAction.MEMBER_ADDED,
+        entityType: ProjectActivityEntityType.MEMBER,
+        entityId: savedMember.id,
+        metadata: { userId: dto.userId, role: dto.projectRole, name: userExists.name },
+      }, manager);
+
+      return savedMember;
     });
-    
-    return this.memberRepo.save(member);
   }
 
   async updateMemberRole(projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto, user: UserEntity): Promise<ProjectMemberEntity> {
-    const project = await this.findOne(projectId);
-    if (project.leaderId !== user.id) {
-      throw new ForbiddenException('Solo el líder del proyecto puede modificar roles');
-    }
+    return this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
+      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
 
-    const member = await this.memberRepo.findOne({
-      where: { id: memberId, projectId, removedAt: IsNull() }
+      if (project.leaderId !== user.id) {
+        throw new ForbiddenException('Solo el líder del proyecto puede modificar roles');
+      }
+
+      const member = await manager.findOne(ProjectMemberEntity, {
+        where: { id: memberId, projectId, removedAt: IsNull() },
+        relations: ['user']
+      });
+      if (!member) {
+        throw new NotFoundException(`Miembro ${memberId} no encontrado en este proyecto`);
+      }
+
+      const previousRole = member.projectRole;
+      member.projectRole = dto.projectRole;
+      const savedMember = await manager.save(member);
+
+      await this.activityService.logEvent({
+        projectId,
+        actorId: user.id,
+        actionType: ProjectActivityAction.MEMBER_ROLE_CHANGED,
+        entityType: ProjectActivityEntityType.MEMBER,
+        entityId: savedMember.id,
+        metadata: { previousRole, newRole: dto.projectRole, userId: savedMember.userId, name: member.user?.name },
+      }, manager);
+
+      return savedMember;
     });
-    if (!member) {
-      throw new NotFoundException(`Miembro ${memberId} no encontrado en este proyecto`);
-    }
-
-    // FIXME / dependency blocker: Project roles catalog/policy not yet defined.
-    // Queda pendiente la validación semántica contra roles reales cuando existan.
-    member.projectRole = dto.projectRole;
-    return this.memberRepo.save(member);
   }
 }

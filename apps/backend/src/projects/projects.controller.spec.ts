@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
+import { ProjectActivityService } from './project-activity.service';
 import { UserEntity } from '../database/entities/user.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -28,7 +29,7 @@ describe('ProjectsController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ProjectsController],
-      providers: [
+      providers: [{ provide: ProjectActivityService, useValue: { getActivity: jest.fn() } },
         {
           provide: ProjectsService,
           useValue: mockProjectsService,
@@ -107,22 +108,24 @@ describe('ProjectsController', () => {
   describe('archive', () => {
     it('should call projectsService.archive with id', async () => {
       const id = 'project-id';
+      const user = { id: 'u1' } as any;
       mockProjectsService.archive.mockResolvedValue(undefined);
 
-      await controller.archive(id);
+      await controller.archive(id, user);
 
-      expect(service.archive).toHaveBeenCalledWith(id);
+      expect(service.archive).toHaveBeenCalledWith(id, user);
     });
   });
 
   describe('remove', () => {
     it('should call projectsService.remove with id', async () => {
       const id = 'project-id';
+      const user = { id: 'u1' } as any;
       mockProjectsService.remove.mockResolvedValue(undefined);
 
-      await controller.remove(id);
+      await controller.remove(id, user);
 
-      expect(service.remove).toHaveBeenCalledWith(id);
+      expect(service.remove).toHaveBeenCalledWith(id, user);
     });
   });
 });
