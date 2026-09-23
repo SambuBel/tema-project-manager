@@ -5,6 +5,13 @@ import { TaskEntity } from './task.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { BadRequestException } from '@nestjs/common';
+import { UpdateTaskStatusDto } from './dto/update-task-status.dto';
+import {
+  isValidTransition,
+  TASK_STATUS_LABELS,
+  VALID_TRANSITIONS,
+} from './task-transitions';
 
 @Injectable()
 export class TasksService {
@@ -50,6 +57,9 @@ export class TasksService {
 
   async update(id: string, dto: UpdateTaskDto): Promise<TaskEntity> {
     const task = await this.findOne(id);
+    if (dto.status !== undefined && dto.status !== task.status) {
+      this.validateTransition(task.status, dto.status);
+    }
 
     Object.assign(task, {
       ...(dto.title !== undefined ? { title: dto.title } : {}),
@@ -69,6 +79,44 @@ export class TasksService {
 
     if (!result.affected) {
       throw new NotFoundException(`Task ${id} no encontrada`);
+    }
+  }
+
+    /**
+   * Cambia el estado de una tarea validando la transición.
+   * Endpoint dedicado: PATCH /tasks/:id/status
+   */
+  async updateStatus(id: string, dto: UpdateTaskStatusDto): Promise<TaskEntity> {
+    const task = await this.findOne(id);
+
+    if (task.status === dto.status) {
+      return task;
+    }
+
+    this.validateTransition(task.status, dto.status);
+
+    task.status = dto.status;
+    return this.repo.save(task);
+  }
+
+  private validateTransition(from: TaskStatus, to: TaskStatus): void {
+    if (!isValidTransition(from, to)) {
+      const fromLabel = TASK_STATUS_LABELS[from];
+      const toLabel = TASK_STATUS_LABELS[to];
+      const allowed = VALID_TRANSITIONS[from];
+
+      if (allowed.length === 0) {
+        throw new BadRequestException(
+          `La tarea está en estado "${fromLabel}" y no permite transiciones. Es un estado final.`,
+        );
+      }
+
+      const allowedLabels = allowed.map((s) => TASK_STATUS_LABELS[s]).join(', ');
+
+      throw new BadRequestException(
+        `No se puede pasar de "${fromLabel}" a "${toLabel}". ` +
+          `Transiciones permitidas desde "${fromLabel}": ${allowedLabels}.`,
+      );
     }
   }
 }

@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TasksService } from './tasks.service';
+import { UpdateTaskStatusDto } from './dto/update-task-status.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('tasks')
@@ -39,6 +40,14 @@ export class TasksController {
   @Patch(':id')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTaskDto) {
     return this.tasksService.update(id, dto);
+  }
+
+  @Patch(':id/status')
+  updateStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateTaskStatusDto,
+  ) {
+    return this.tasksService.updateStatus(id, dto);
   }
 
   @Delete(':id')
