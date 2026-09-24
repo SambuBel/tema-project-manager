@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Query, UseGuards, DefaultValuePipe } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserEntity } from '../database/entities/user.entity';
 import { ProjectsService } from './projects.service';
+import { ProjectActivityService } from './project-activity.service';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
@@ -13,7 +14,10 @@ import { AddProjectMemberDtoImpl, UpdateProjectMemberRoleDtoImpl } from './proje
 @UseGuards(JwtAuthGuard)
 @Controller('projects')
 export class ProjectsController {
-  constructor(private readonly projects: ProjectsService) {}
+  constructor(
+    private readonly projects: ProjectsService,
+    private readonly activityService: ProjectActivityService,
+  ) {}
 
   @Get()
   findAll(@Query() query: ListProjectsDto) {
@@ -28,6 +32,24 @@ export class ProjectsController {
   @Get(':id/members')
   getMembers(@Param('id') id: string) {
     return this.projects.getMembers(id);
+  }
+
+  @Get(':id/activity')
+  async getActivity(
+    @Param('id') id: string,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+    @CurrentUser() user: UserEntity,
+  ) {
+    if (limit < 1 || limit > 100) throw new BadRequestException('El límite debe estar entre 1 y 100');
+    if (offset < 0) throw new BadRequestException('El offset no puede ser negativo');
+
+    const hasAccess = await this.projects.checkIsMemberOrLeader(id, user.id);
+    if (!hasAccess) {
+      throw new ForbiddenException('No tienes permisos para ver la actividad de este proyecto');
+    }
+    
+    return this.activityService.getActivity(id, limit, offset);
   }
 
   @Post(':id/members')
@@ -51,8 +73,8 @@ export class ProjectsController {
   }
 
   @Patch(':id/archive')
-  archive(@Param('id') id: string) {
-    return this.projects.archive(id);
+  archive(@Param('id') id: string, @CurrentUser() user: UserEntity) {
+    return this.projects.archive(id, user);
   }
 
   @Post()
@@ -62,7 +84,7 @@ export class ProjectsController {
 
   @Delete(':id')
   @HttpCode(204)
-  remove(@Param('id') id: string) {
-    return this.projects.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() user: UserEntity) {
+    return this.projects.remove(id, user);
   }
 }

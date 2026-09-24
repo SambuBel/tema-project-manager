@@ -33,6 +33,8 @@ export const api = {
     return request<Project[]>(`/projects${qs ? `?${qs}` : ''}`);
   },
   getProject: (id: string) => request<Project>(`/projects/${id}`),
+  getProjectActivity: (id: string, limit = 50, offset = 0) => 
+    request<any[]>(`/projects/${id}/activity?limit=${limit}&offset=${offset}`),
   createProject: (dto: CreateProjectDto) =>
     request<Project>('/projects', { method: 'POST', body: JSON.stringify(dto) }),
   updateProject: (id: string, dto: UpdateProjectDto) =>
