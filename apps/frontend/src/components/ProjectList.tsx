@@ -31,9 +31,10 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['projects'] }),
   });
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setFilters((prev) => ({ ...prev, name: searchInput || undefined }));
+  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchInput(value);
+    setFilters((prev) => ({ ...prev, name: value || undefined }));
   };
 
   const isArchivedView = filters.archived === true;
@@ -47,7 +48,11 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
 
   // Mock progress for now as it's not in the API
   const getMockProgress = (id: string) => {
-    return Math.abs(id.hashCode ? id.hashCode() % 100 : 50);
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+      hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return Math.abs(hash % 81) + 20; // returns 20 to 100
   };
 
   return (
@@ -68,14 +73,14 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
           </button>
         </div>
 
-        <form onSubmit={handleSearch} className="flex gap-2">
+        <div className="flex gap-2">
           <input
             className="rounded-md border border-gray-300 px-4 py-2 text-sm w-64 focus:outline-none focus:ring-1 focus:ring-sidebar-card"
             placeholder="Filtrar"
             value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
+            onChange={handleSearch}
           />
-        </form>
+        </div>
       </div>
 
       {projects.isLoading && <p className="text-gray-500">Cargando proyectos...</p>}
@@ -110,15 +115,15 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
                 <h3 className="mb-1 text-lg font-bold text-gray-900">{p.name}</h3>
                 <p className="mb-5 text-sm text-gray-500">{p.description || 'Sin descripción'}</p>
 
-                <div className="mb-2 h-1.5 w-full rounded-full bg-gray-200">
+                <div className="mb-2 h-1.5 w-full rounded-full bg-gray-100">
                   <div
                     className="h-1.5 rounded-full bg-[#5E8E7E]"
-                    style={{ width: `${Math.random() * 50 + 20}%` }}
+                    style={{ width: `${getMockProgress(p.id)}%` }}
                   ></div>
                 </div>
 
                 <p className="mb-6 text-xs text-gray-500">
-                  {Math.floor(Math.random() * 50 + 20)}% de avance · Entrega{' '}
+                  {getMockProgress(p.id)}% de avance • Entrega{' '}
                   {formatDate(p.estimatedEndDate)}
                 </p>
 
