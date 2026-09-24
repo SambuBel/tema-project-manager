@@ -66,9 +66,9 @@ describe('ProjectsService - archive', () => {
           if ((globalThis as any).mockRepo?.findOneBy) return (globalThis as any).mockRepo.findOneBy(opts);
           if (entity.name === 'ProjectMemberEntity') return null; return { id: '1', leaderId: 'leader1', name: 'Test' };
         },
-        delete: async (entity: any, opts: any) => {
-          if ((globalThis as any).mockProjectRepo?.delete) return (globalThis as any).mockProjectRepo.delete(opts);
-          if ((globalThis as any).mockRepo?.delete) return (globalThis as any).mockRepo.delete(opts);
+        softDelete: async (entity: any, opts: any) => {
+          if ((globalThis as any).mockProjectRepo?.softDelete) return (globalThis as any).mockProjectRepo.softDelete(opts);
+          if ((globalThis as any).mockRepo?.softDelete) return (globalThis as any).mockRepo.softDelete(opts);
           return { affected: 1 };
         }
       };
@@ -178,9 +178,9 @@ describe('ProjectsService - findAll (archived filters)', () => {
           if ((globalThis as any).mockRepo?.findOneBy) return (globalThis as any).mockRepo.findOneBy(opts);
           if (entity.name === 'ProjectMemberEntity') return null; return { id: '1', leaderId: 'leader1', name: 'Test' };
         },
-        delete: async (entity: any, opts: any) => {
-          if ((globalThis as any).mockProjectRepo?.delete) return (globalThis as any).mockProjectRepo.delete(opts);
-          if ((globalThis as any).mockRepo?.delete) return (globalThis as any).mockRepo.delete(opts);
+        softDelete: async (entity: any, opts: any) => {
+          if ((globalThis as any).mockProjectRepo?.softDelete) return (globalThis as any).mockProjectRepo.softDelete(opts);
+          if ((globalThis as any).mockRepo?.softDelete) return (globalThis as any).mockRepo.softDelete(opts);
           return { affected: 1 };
         }
       };
@@ -271,9 +271,9 @@ describe('ProjectsService - findOne', () => {
           if ((globalThis as any).mockRepo?.findOneBy) return (globalThis as any).mockRepo.findOneBy(opts);
           if (entity.name === 'ProjectMemberEntity') return null; return { id: '1', leaderId: 'leader1', name: 'Test' };
         },
-        delete: async (entity: any, opts: any) => {
-          if ((globalThis as any).mockProjectRepo?.delete) return (globalThis as any).mockProjectRepo.delete(opts);
-          if ((globalThis as any).mockRepo?.delete) return (globalThis as any).mockRepo.delete(opts);
+        softDelete: async (entity: any, opts: any) => {
+          if ((globalThis as any).mockProjectRepo?.softDelete) return (globalThis as any).mockProjectRepo.softDelete(opts);
+          if ((globalThis as any).mockRepo?.softDelete) return (globalThis as any).mockRepo.softDelete(opts);
           return { affected: 1 };
         }
       };
@@ -367,9 +367,9 @@ describe('ProjectsService - Members', () => {
           if ((globalThis as any).mockRepo?.findOneBy) return (globalThis as any).mockRepo.findOneBy(opts);
           if (entity.name === 'ProjectMemberEntity') return null; return { id: '1', leaderId: 'leader1', name: 'Test' };
         },
-        delete: async (entity: any, opts: any) => {
-          if ((globalThis as any).mockProjectRepo?.delete) return (globalThis as any).mockProjectRepo.delete(opts);
-          if ((globalThis as any).mockRepo?.delete) return (globalThis as any).mockRepo.delete(opts);
+        softDelete: async (entity: any, opts: any) => {
+          if ((globalThis as any).mockProjectRepo?.softDelete) return (globalThis as any).mockProjectRepo.softDelete(opts);
+          if ((globalThis as any).mockRepo?.softDelete) return (globalThis as any).mockRepo.softDelete(opts);
           return { affected: 1 };
         }
       };
@@ -472,9 +472,9 @@ describe('ProjectsService - findAll (archived filters)', () => {
           if ((globalThis as any).mockRepo?.findOneBy) return (globalThis as any).mockRepo.findOneBy(opts);
           if (entity.name === 'ProjectMemberEntity') return null; return { id: '1', leaderId: 'leader1', name: 'Test' };
         },
-        delete: async (entity: any, opts: any) => {
-          if ((globalThis as any).mockProjectRepo?.delete) return (globalThis as any).mockProjectRepo.delete(opts);
-          if ((globalThis as any).mockRepo?.delete) return (globalThis as any).mockRepo.delete(opts);
+        softDelete: async (entity: any, opts: any) => {
+          if ((globalThis as any).mockProjectRepo?.softDelete) return (globalThis as any).mockProjectRepo.softDelete(opts);
+          if ((globalThis as any).mockRepo?.softDelete) return (globalThis as any).mockRepo.softDelete(opts);
           return { affected: 1 };
         }
       };
@@ -565,9 +565,9 @@ describe('ProjectsService - findOne', () => {
           if ((globalThis as any).mockRepo?.findOneBy) return (globalThis as any).mockRepo.findOneBy(opts);
           if (entity.name === 'ProjectMemberEntity') return null; return { id: '1', leaderId: 'leader1', name: 'Test' };
         },
-        delete: async (entity: any, opts: any) => {
-          if ((globalThis as any).mockProjectRepo?.delete) return (globalThis as any).mockProjectRepo.delete(opts);
-          if ((globalThis as any).mockRepo?.delete) return (globalThis as any).mockRepo.delete(opts);
+        softDelete: async (entity: any, opts: any) => {
+          if ((globalThis as any).mockProjectRepo?.softDelete) return (globalThis as any).mockProjectRepo.softDelete(opts);
+          if ((globalThis as any).mockRepo?.softDelete) return (globalThis as any).mockRepo.softDelete(opts);
           return { affected: 1 };
         }
       };
@@ -661,9 +661,9 @@ describe('ProjectsService - Members', () => {
           if ((globalThis as any).mockRepo?.findOneBy) return (globalThis as any).mockRepo.findOneBy(opts);
           if (entity.name === 'ProjectMemberEntity') return null; return { id: '1', leaderId: 'leader1', name: 'Test' };
         },
-        delete: async (entity: any, opts: any) => {
-          if ((globalThis as any).mockProjectRepo?.delete) return (globalThis as any).mockProjectRepo.delete(opts);
-          if ((globalThis as any).mockRepo?.delete) return (globalThis as any).mockRepo.delete(opts);
+        softDelete: async (entity: any, opts: any) => {
+          if ((globalThis as any).mockProjectRepo?.softDelete) return (globalThis as any).mockProjectRepo.softDelete(opts);
+          if ((globalThis as any).mockRepo?.softDelete) return (globalThis as any).mockRepo.softDelete(opts);
           return { affected: 1 };
         }
       };
@@ -768,9 +768,9 @@ describe('ProjectsService - create', () => {
           if ((globalThis as any).mockRepo?.findOneBy) return (globalThis as any).mockRepo.findOneBy(opts);
           if (entity.name === 'ProjectMemberEntity') return null; return { id: '1', leaderId: 'leader1', name: 'Test' };
         },
-        delete: async (entity: any, opts: any) => {
-          if ((globalThis as any).mockProjectRepo?.delete) return (globalThis as any).mockProjectRepo.delete(opts);
-          if ((globalThis as any).mockRepo?.delete) return (globalThis as any).mockRepo.delete(opts);
+        softDelete: async (entity: any, opts: any) => {
+          if ((globalThis as any).mockProjectRepo?.softDelete) return (globalThis as any).mockProjectRepo.softDelete(opts);
+          if ((globalThis as any).mockRepo?.softDelete) return (globalThis as any).mockRepo.softDelete(opts);
           return { affected: 1 };
         }
       };
@@ -799,4 +799,51 @@ describe('ProjectsService - create', () => {
     }));
   });
 });
+  describe('ProjectsService - remove', () => {
+  let service: ProjectsService;
+  let mockProjectRepo: any;
+  let mockActivityService: any;
+  beforeEach(async () => {
+    mockProjectRepo = { findOne: jest.fn(), softDelete: jest.fn() };
+    mockActivityService = { logEvent: jest.fn() };
+    const module = await Test.createTestingModule({
+      providers: [
+        ProjectsService,
+        { provide: getRepositoryToken(ProjectEntity), useValue: mockProjectRepo },
+        { provide: getRepositoryToken(ProjectMemberEntity), useValue: {} },
+        
+        { provide: UsersService, useValue: {} },
+        { provide: ProjectActivityService, useValue: mockActivityService },
+        { provide: DataSource, useValue: { transaction: (cb: any) => cb(mockProjectRepo) } }
+      ]
+    }).compile();
+    service = module.get(ProjectsService);
+  });
+    it('deberia arrojar ForbiddenException si el usuario no es el lider', async () => {
+      mockProjectRepo.findOne.mockResolvedValue({ id: '1', leaderId: 'leader1' });
+      await expect(service.remove('1', { id: 'other' } as any)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('deberia arrojar NotFoundException si el proyecto no existe', async () => {
+      mockProjectRepo.findOne.mockResolvedValue(null);
+      await expect(service.remove('999', { id: 'u1' } as any)).rejects.toThrow(NotFoundException);
+    });
+
+    it('deberia ejecutar softDelete en lugar de delete fisico y registrar el evento', async () => {
+      mockProjectRepo.findOne.mockResolvedValue({ id: '1', name: 'Test', leaderId: 'u1' });
+      mockProjectRepo.softDelete = jest.fn().mockResolvedValue({ affected: 1 });
+      
+      await service.remove('1', { id: 'u1' } as any);
+
+      expect(mockProjectRepo.softDelete).toHaveBeenCalledWith(ProjectEntity, { id: '1' });
+      expect(mockActivityService.logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ actionType: 'PROJECT_DELETED' }),
+        expect.anything()
+      );
+    });
+  });
+
+
+
+
 

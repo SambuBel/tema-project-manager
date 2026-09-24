@@ -85,6 +85,10 @@ export class ProjectsService {
       if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
 
       if (project.leaderId !== user.id) {
+        throw new ForbiddenException('Solo el lider del proyecto puede eliminarlo');
+      }
+
+      if (project.leaderId !== user.id) {
         throw new ForbiddenException('Solo el líder del proyecto puede modificar el proyecto');
       }
 
@@ -129,6 +133,10 @@ export class ProjectsService {
     return this.dataSource.transaction(async (manager) => {
       const project = await manager.findOneBy(ProjectEntity, { id });
       if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
+
+      if (project.leaderId !== user.id) {
+        throw new ForbiddenException('Solo el lider del proyecto puede eliminarlo');
+      }
 
       if (project.status === dto.status) {
         return project;
@@ -182,16 +190,20 @@ export class ProjectsService {
       const project = await manager.findOne(ProjectEntity, { where: { id } });
       if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
 
+      if (project.leaderId !== user.id) {
+        throw new ForbiddenException('Solo el lider del proyecto puede eliminarlo');
+      }
+
       await this.activityService.logEvent({
         projectId: project.id,
         actorId: user.id,
-        actionType: ProjectActivityAction.PROJECT_DELETED as any,
+        actionType: ProjectActivityAction.PROJECT_DELETED,
         entityType: ProjectActivityEntityType.PROJECT,
         entityId: project.id,
         metadata: { name: project.name }
       }, manager);
 
-      const result = await manager.delete(ProjectEntity, { id });
+      const result = await manager.softDelete(ProjectEntity, { id });
       if (!result.affected) throw new NotFoundException(`Project ${id} no encontrado`);
     });
   }
@@ -282,3 +294,9 @@ export class ProjectsService {
     });
   }
 }
+
+
+
+
+
+
