@@ -12,6 +12,12 @@ import { ProjectEntity } from '../projects/project.entity';
 import { UserEntity } from '../database/entities/user.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 
+/**
+ * Mapea la tabla `tasks` creada por la migration InitialSchema. Los nombres de propiedad
+ * (assignedToId, startDate) son los de la API; las columnas reales son responsible_user_id
+ * y planned_start_date, por eso van con `name` explicito. No cubre subtareas ni costos
+ * (parent_task_id, estimated_cost, ...): quedan fuera de "Crear tarea".
+ */
 @Entity('tasks')
 @Index('ix_tasks_project_id', ['projectId'])
 export class TaskEntity {
@@ -50,19 +56,27 @@ export class TaskEntity {
   })
   priority!: TaskPriority;
 
-  @Index('ix_tasks_assigned_to_id')
-  @Column({ name: 'assigned_to_id', type: 'uuid', nullable: true })
+  @Index('ix_tasks_responsible_user_id')
+  @Column({ name: 'responsible_user_id', type: 'uuid', nullable: true })
   assignedToId!: string | null;
 
   @ManyToOne(() => UserEntity, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'assigned_to_id' })
+  @JoinColumn({ name: 'responsible_user_id' })
   assignedTo!: UserEntity | null;
 
-  @Column({ name: 'start_date', type: 'date', nullable: true })
+  @Column({ name: 'planned_start_date', type: 'date', nullable: true })
   startDate!: string | null;
 
   @Column({ name: 'due_date', type: 'date', nullable: true })
   dueDate!: string | null;
+
+  /** Quien creo la tarea (created_by NOT NULL en la base): siempre el usuario autenticado. */
+  @Column({ name: 'created_by', type: 'uuid' })
+  createdBy!: string;
+
+  @ManyToOne(() => UserEntity, { onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'created_by' })
+  creator!: UserEntity;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

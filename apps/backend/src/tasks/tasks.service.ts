@@ -2,7 +2,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TaskEntity } from './task.entity';
+import { ProjectEntity } from '../projects/project.entity';
+import { UserEntity } from '../database/entities/user.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
+import { UsersService } from '../users/users.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 
@@ -11,9 +14,29 @@ export class TasksService {
   constructor(
     @InjectRepository(TaskEntity)
     private readonly repo: Repository<TaskEntity>,
+    @InjectRepository(ProjectEntity)
+    private readonly projectRepo: Repository<ProjectEntity>,
+    private readonly usersService: UsersService,
   ) {}
 
-  create(dto: CreateTaskDto): Promise<TaskEntity> {
+  /**
+   * Crea una tarea dentro de un proyecto. El proyecto tiene que existir (404 si no) y, si se
+   * indica responsable, ese usuario tambien (404 si no): asi el cliente recibe un error claro
+   * en vez de un 500 por violacion de foreign key. `createdBy` sale del usuario autenticado.
+   */
+  async create(dto: CreateTaskDto, user: UserEntity): Promise<TaskEntity> {
+    const projectExists = await this.projectRepo.existsBy({ id: dto.projectId });
+    if (!projectExists) {
+      throw new NotFoundException(`Project ${dto.projectId} no encontrado`);
+    }
+
+    if (dto.assignedToId) {
+      const assignee = await this.usersService.findById(dto.assignedToId);
+      if (!assignee) {
+        throw new NotFoundException(`El usuario responsable ${dto.assignedToId} no existe`);
+      }
+    }
+
     const task = new TaskEntity();
     task.projectId = dto.projectId;
     task.title = dto.title;
@@ -23,6 +46,7 @@ export class TasksService {
     task.assignedToId = dto.assignedToId ?? null;
     task.startDate = dto.startDate ?? null;
     task.dueDate = dto.dueDate ?? null;
+    task.createdBy = user.id;
 
     return this.repo.save(task);
   }

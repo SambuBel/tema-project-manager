@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { TaskForm } from './TaskForm';
 import type { ProjectStatus } from '@tema/shared-types';
 
 interface ProjectDetailProps {
@@ -224,6 +225,9 @@ export function ProjectDetail({ id, onBack, onManageTeam }: ProjectDetailProps) 
           No hay hitos disponibles todavía.
         </p>
       </div>
+
+      {/* Alta de tareas */}
+      <TaskForm projectId={project.id} />
 
     </div>
   );
