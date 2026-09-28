@@ -13,10 +13,13 @@ import { UserEntity } from '../database/entities/user.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 
 /**
- * Mapea la tabla `tasks` creada por la migration InitialSchema. Los nombres de propiedad
- * (assignedToId, startDate) son los de la API; las columnas reales son responsible_user_id
- * y planned_start_date, por eso van con `name` explicito. No cubre subtareas ni costos
- * (parent_task_id, estimated_cost, ...): quedan fuera de "Crear tarea".
+ * Entidad canonica de la tabla `tasks` creada por la migration InitialSchema (unica
+ * TaskEntity del proyecto: comment/attachment/cost/notification/task-dependency/task-tag
+ * la referencian desde aca). Los nombres de propiedad (assignedToId, startDate) son los
+ * de la API; las columnas reales son responsible_user_id y planned_start_date, por eso
+ * van con `name` explicito. No mapea subtareas ni costos (parent_task_id, estimated_cost,
+ * actual_cost, deleted_at): esas columnas existen en la tabla pero quedan fuera de alcance
+ * hasta que haya un ticket que las necesite.
  */
 @Entity('tasks')
 @Index('ix_tasks_project_id', ['projectId'])
