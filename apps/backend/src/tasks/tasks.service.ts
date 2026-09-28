@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { TaskEntity } from './task.entity';
@@ -22,42 +22,57 @@ export class TasksService {
     private readonly usersService: UsersService,
   ) {}
 
+  /** Lider del proyecto, o miembro activo (project_members sin removedAt). */
+  private async isProjectMember(project: ProjectEntity, userId: string): Promise<boolean> {
+    if (project.leaderId === userId) {
+      return true;
+    }
+    return this.projectMemberRepo.existsBy({ projectId: project.id, userId, removedAt: IsNull() });
+  }
+
   /**
    * El lider del proyecto siempre puede tocar sus tareas; cualquier otro usuario necesita
-   * ser miembro activo (project_members sin removedAt). Mismo criterio que ya usa
-   * ProjectsService para las acciones restringidas al lider. 404 si el proyecto no existe
-   * (evita filtrar existencia con un 403 distinto para proyectos inexistentes).
+   * ser miembro activo. Mismo criterio que ya usa ProjectsService para las acciones
+   * restringidas al lider. 404 si el proyecto no existe (evita filtrar existencia con un
+   * 403 distinto para proyectos inexistentes).
    */
   private async assertProjectMember(projectId: string, userId: string): Promise<ProjectEntity> {
     const project = await this.projectRepo.findOneBy({ id: projectId });
     if (!project) {
       throw new NotFoundException(`Project ${projectId} no encontrado`);
     }
-    if (project.leaderId === userId) {
-      return project;
-    }
-
-    const isMember = await this.projectMemberRepo.existsBy({ projectId, userId, removedAt: IsNull() });
-    if (!isMember) {
+    if (!(await this.isProjectMember(project, userId))) {
       throw new ForbiddenException('No sos miembro de este proyecto');
     }
     return project;
   }
 
   /**
+   * El responsable de una tarea tiene que existir (404 si no, evita un 500 por FK) y ser
+   * lider o miembro activo del MISMO proyecto de la tarea (400 si no: a diferencia de
+   * "no sos miembro", esto no es sobre quien hace el pedido sino sobre a quien se asigna).
+   */
+  private async assertAssigneeIsProjectMember(project: ProjectEntity, assigneeId: string): Promise<void> {
+    const assignee = await this.usersService.findById(assigneeId);
+    if (!assignee) {
+      throw new NotFoundException(`El usuario responsable ${assigneeId} no existe`);
+    }
+    if (!(await this.isProjectMember(project, assigneeId))) {
+      throw new BadRequestException('El responsable debe ser miembro del proyecto');
+    }
+  }
+
+  /**
    * Crea una tarea dentro de un proyecto. El usuario tiene que ser lider o miembro activo
    * del proyecto (404 si el proyecto no existe) y, si se indica responsable, ese usuario
-   * tambien tiene que existir (404 si no): asi el cliente recibe un error claro en vez de
-   * un 500 por violacion de foreign key. `createdBy` sale del usuario autenticado.
+   * tambien tiene que existir y pertenecer al mismo proyecto. `createdBy` sale del usuario
+   * autenticado.
    */
   async create(dto: CreateTaskDto, user: UserEntity): Promise<TaskEntity> {
-    await this.assertProjectMember(dto.projectId, user.id);
+    const project = await this.assertProjectMember(dto.projectId, user.id);
 
     if (dto.assignedToId) {
-      const assignee = await this.usersService.findById(dto.assignedToId);
-      if (!assignee) {
-        throw new NotFoundException(`El usuario responsable ${dto.assignedToId} no existe`);
-      }
+      await this.assertAssigneeIsProjectMember(project, dto.assignedToId);
     }
 
     const task = new TaskEntity();
@@ -97,7 +112,11 @@ export class TasksService {
 
   async update(id: string, dto: UpdateTaskDto, user: UserEntity): Promise<TaskEntity> {
     const task = await this.findOne(id);
-    await this.assertProjectMember(task.projectId, user.id);
+    const project = await this.assertProjectMember(task.projectId, user.id);
+
+    if (dto.assignedToId) {
+      await this.assertAssigneeIsProjectMember(project, dto.assignedToId);
+    }
 
     Object.assign(task, {
       ...(dto.title !== undefined ? { title: dto.title } : {}),
@@ -117,5 +136,18 @@ export class TasksService {
     await this.assertProjectMember(task.projectId, user.id);
 
     await this.repo.delete({ id: task.id });
+  }
+
+  /** Idempotente: archivar una tarea ya archivada no hace nada (mismo criterio que ProjectsService.archive). */
+  async archive(id: string, user: UserEntity): Promise<TaskEntity> {
+    const task = await this.findOne(id);
+    await this.assertProjectMember(task.projectId, user.id);
+
+    if (task.archivedAt) {
+      return task;
+    }
+
+    task.archivedAt = new Date();
+    return this.repo.save(task);
   }
 }

@@ -20,6 +20,9 @@ import { TaskPriority, TaskStatus } from '../database/enums';
  * van con `name` explicito. No mapea subtareas ni costos (parent_task_id, estimated_cost,
  * actual_cost, deleted_at): esas columnas existen en la tabla pero quedan fuera de alcance
  * hasta que haya un ticket que las necesite.
+ *
+ * `archivedAt` es distinto de `deleted_at`: archivar no borra la tarea (sigue existiendo,
+ * solo se oculta), mismo criterio que ya usa ProjectEntity.archivedAt.
  */
 @Entity('tasks')
 @Index('ix_tasks_project_id', ['projectId'])
@@ -86,4 +89,7 @@ export class TaskEntity {
 
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt!: Date;
+
+  @Column({ name: 'archived_at', type: 'timestamptz', nullable: true })
+  archivedAt!: Date | null;
 }
