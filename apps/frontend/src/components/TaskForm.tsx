@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../lib/api';
-import type { CreateTaskDto, Task, TaskPriority, TaskStatus, User } from '@tema/shared-types';
+import type { CreateTaskDto, Task, TaskPriority, TaskStatus, UpdateTaskDto, User } from '@tema/shared-types';
 
 interface TaskFormProps {
   projectId: string;
+  /** Si viene, el form edita esta tarea en vez de crear una nueva. */
+  initialData?: Task;
 }
 
 const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
@@ -39,18 +42,34 @@ const inputClass = 'rounded-lg border border-[#DEE5EC] bg-white px-4 py-3 text-s
 const labelClass = 'text-sm font-medium text-[#172B42]';
 
 /** Texto de error para el usuario a partir de lo que devolvio la API. */
-function errorMessages(error: unknown): string[] {
+function errorMessages(error: unknown, isEditing: boolean): string[] {
   if (error instanceof ApiRequestError) {
     if (error.status === 401) return ['Tu sesión expiró. Volvé a iniciar sesión.'];
     if (error.details.length > 0) return error.details;
   }
-  return ['No se pudo crear la tarea. Intentá de nuevo.'];
+  return [isEditing ? 'No se pudo guardar la tarea. Intentá de nuevo.' : 'No se pudo crear la tarea. Intentá de nuevo.'];
 }
 
-export function TaskForm({ projectId }: TaskFormProps) {
+export function TaskForm({ projectId, initialData }: TaskFormProps) {
+  const isEditing = !!initialData;
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [form, setForm] = useState(EMPTY_FORM);
   const [createdTask, setCreatedTask] = useState<Task | null>(null);
+
+  useEffect(() => {
+    if (!initialData) return;
+    setForm({
+      title: initialData.title,
+      description: initialData.description ?? '',
+      status: initialData.status,
+      priority: initialData.priority,
+      assignedToId: initialData.assignedToId ?? '',
+      startDate: initialData.startDate ?? '',
+      dueDate: initialData.dueDate ?? '',
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialData?.id]);
 
   // Mismas query keys que ProjectDetail / ProjectMembers: comparten cache, no piden dos veces.
   const { data: project } = useQuery({
@@ -78,12 +97,39 @@ export function TaskForm({ projectId }: TaskFormProps) {
     },
   });
 
+  const update = useMutation({
+    mutationFn: (dto: UpdateTaskDto) => api.updateTask(initialData!.id, dto),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['tasks', projectId] });
+      void qc.invalidateQueries({ queryKey: ['task', initialData!.id] });
+      navigate(`/projects/${projectId}`);
+    },
+  });
+
+  const isPending = create.isPending || update.isPending;
+  const isError = create.isError || update.isError;
+  const currentError = create.error ?? update.error;
+
   const datesInvalid = !!form.startDate && !!form.dueDate && form.dueDate < form.startDate;
-  const canSubmit = form.title.trim().length > 0 && !datesInvalid && !create.isPending;
+  const canSubmit = form.title.trim().length > 0 && !datesInvalid && !isPending;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
+
+    if (isEditing) {
+      update.mutate({
+        title: form.title.trim(),
+        description: form.description.trim() || null,
+        status: form.status,
+        priority: form.priority,
+        assignedToId: form.assignedToId || null,
+        startDate: form.startDate || null,
+        dueDate: form.dueDate || null,
+      });
+      return;
+    }
+
     setCreatedTask(null);
     create.mutate({
       projectId,
@@ -101,10 +147,12 @@ export function TaskForm({ projectId }: TaskFormProps) {
 
   return (
     <div className="flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-6 text-[#172B42]">
-      <h3 className="text-lg font-semibold">Nueva tarea</h3>
-      <p className="mt-1 text-sm text-[#607185]">Agregá una tarea a este proyecto.</p>
+      <h3 className="text-lg font-semibold">{isEditing ? 'Editar tarea' : 'Nueva tarea'}</h3>
+      <p className="mt-1 text-sm text-[#607185]">
+        {isEditing ? 'Actualizá los datos de la tarea.' : 'Agregá una tarea a este proyecto.'}
+      </p>
 
-      {createdTask && (
+      {!isEditing && createdTask && (
         <div role="status" className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
           <p className="font-medium">Tarea creada: «{createdTask.title}»</p>
           <p className="mt-1">
@@ -112,6 +160,9 @@ export function TaskForm({ projectId }: TaskFormProps) {
             {labelOf(PRIORITY_OPTIONS, createdTask.priority)}
             {createdAssignee ? ` · Responsable: ${createdAssignee.name}` : ''}
           </p>
+          <Link to={`/tasks/${createdTask.id}/edit`} className="mt-2 inline-block text-sm font-medium underline">
+            Editar esta tarea
+          </Link>
         </div>
       )}
 
@@ -217,9 +268,9 @@ export function TaskForm({ projectId }: TaskFormProps) {
           </p>
         )}
 
-        {create.isError && (
+        {isError && (
           <div role="alert" className="text-sm font-medium text-red-600">
-            {errorMessages(create.error).map((message) => (
+            {errorMessages(currentError, isEditing).map((message) => (
               <p key={message}>{message}</p>
             ))}
           </div>
@@ -230,7 +281,7 @@ export function TaskForm({ projectId }: TaskFormProps) {
           disabled={!canSubmit}
           className="self-start rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {create.isPending ? 'Creando...' : 'Crear tarea'}
+          {isPending ? 'Guardando...' : isEditing ? 'Guardar cambios' : 'Crear tarea'}
         </button>
       </form>
     </div>
