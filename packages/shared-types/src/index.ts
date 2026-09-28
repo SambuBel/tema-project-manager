@@ -113,6 +113,7 @@ export interface Task {
   createdBy: ID;
   createdAt: string;
   updatedAt: string;
+  archivedAt: string | null;
 }
 
 export interface CreateTaskDto {
