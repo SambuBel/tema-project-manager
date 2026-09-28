@@ -9,6 +9,7 @@ import type {
   UpdateProjectMemberRoleDto,
   AuthenticatedUser,
   CreateTaskDto,
+  UpdateTaskDto,
   Task
 } from '@tema/shared-types';
 
@@ -77,4 +78,7 @@ export const api = {
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
   createTask: (dto: CreateTaskDto) =>
     request<Task>('/tasks', { method: 'POST', body: JSON.stringify(dto) }),
+  getTask: (id: string) => request<Task>(`/tasks/${id}`),
+  updateTask: (id: string, dto: UpdateTaskDto) =>
+    request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
 };
