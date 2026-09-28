@@ -8,6 +8,8 @@ interface TaskFormProps {
   projectId: string;
   /** Si viene, el form edita esta tarea en vez de crear una nueva. */
   initialData?: Task;
+  /** Si viene (y no es edición), la tarea creada queda como subtarea de esta. */
+  parentTaskId?: string;
 }
 
 const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
@@ -50,7 +52,7 @@ function errorMessages(error: unknown, isEditing: boolean): string[] {
   return [isEditing ? 'No se pudo guardar la tarea. Intentá de nuevo.' : 'No se pudo crear la tarea. Intentá de nuevo.'];
 }
 
-export function TaskForm({ projectId, initialData }: TaskFormProps) {
+export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps) {
   const isEditing = !!initialData;
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -94,6 +96,9 @@ export function TaskForm({ projectId, initialData }: TaskFormProps) {
       setCreatedTask(task);
       setForm(EMPTY_FORM);
       void qc.invalidateQueries({ queryKey: ['tasks', projectId] });
+      if (parentTaskId) {
+        void qc.invalidateQueries({ queryKey: ['subtasks', parentTaskId] });
+      }
     },
   });
 
@@ -133,6 +138,7 @@ export function TaskForm({ projectId, initialData }: TaskFormProps) {
     setCreatedTask(null);
     create.mutate({
       projectId,
+      parentTaskId,
       title: form.title.trim(),
       description: form.description.trim() || undefined,
       status: form.status,
@@ -147,9 +153,15 @@ export function TaskForm({ projectId, initialData }: TaskFormProps) {
 
   return (
     <div className="flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-6 text-[#172B42]">
-      <h3 className="text-lg font-semibold">{isEditing ? 'Editar tarea' : 'Nueva tarea'}</h3>
+      <h3 className="text-lg font-semibold">
+        {isEditing ? 'Editar tarea' : parentTaskId ? 'Nueva subtarea' : 'Nueva tarea'}
+      </h3>
       <p className="mt-1 text-sm text-[#607185]">
-        {isEditing ? 'Actualizá los datos de la tarea.' : 'Agregá una tarea a este proyecto.'}
+        {isEditing
+          ? 'Actualizá los datos de la tarea.'
+          : parentTaskId
+            ? 'Agregá una subtarea.'
+            : 'Agregá una tarea a este proyecto.'}
       </p>
 
       {!isEditing && createdTask && (

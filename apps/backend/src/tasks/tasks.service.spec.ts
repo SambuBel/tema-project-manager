@@ -16,7 +16,7 @@ const currentUser = { id: '33333333-3333-4333-8333-333333333333' } as UserEntity
 
 describe('TasksService - create', () => {
   let service: TasksService;
-  let mockRepo: { save: jest.Mock };
+  let mockRepo: { save: jest.Mock; findOneBy: jest.Mock };
   let mockProjectRepo: { findOneBy: jest.Mock };
   let mockProjectMemberRepo: { existsBy: jest.Mock };
   let mockUsersService: { findById: jest.Mock };
@@ -24,6 +24,7 @@ describe('TasksService - create', () => {
   beforeEach(async () => {
     mockRepo = {
       save: jest.fn().mockImplementation((t: TaskEntity) => Promise.resolve({ ...t, id: 'task-1' })),
+      findOneBy: jest.fn(),
     };
     // Por defecto el usuario autenticado es el lider del proyecto: no interfiere con los
     // tests que no estan probando especificamente la regla de membresia.
@@ -152,11 +153,108 @@ describe('TasksService - create', () => {
     });
     expect(result).toMatchObject({ id: 'task-1' });
   });
+
+  describe('subtareas', () => {
+    const PARENT_ID = '44444444-4444-4444-8444-444444444444';
+
+    it('crea la subtarea si la tarea padre existe, es del mismo proyecto y no es a su vez una subtarea', async () => {
+      mockRepo.findOneBy.mockResolvedValue({
+        id: PARENT_ID,
+        projectId: PROJECT_ID,
+        parentTaskId: null,
+      } as TaskEntity);
+
+      const result = await service.create(
+        { projectId: PROJECT_ID, title: 'Subtarea', parentTaskId: PARENT_ID },
+        currentUser,
+      );
+
+      expect(mockRepo.findOneBy).toHaveBeenCalledWith({ id: PARENT_ID });
+      const saved = mockRepo.save.mock.calls[0]?.[0] as TaskEntity;
+      expect(saved.parentTaskId).toBe(PARENT_ID);
+      expect(result).toMatchObject({ id: 'task-1' });
+    });
+
+    it('lanza NotFoundException (404) si la tarea padre no existe, y no guarda nada', async () => {
+      mockRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.create({ projectId: PROJECT_ID, title: 'x', parentTaskId: PARENT_ID }, currentUser),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza BadRequestException (400) si la tarea padre es de otro proyecto, y no guarda nada', async () => {
+      mockRepo.findOneBy.mockResolvedValue({
+        id: PARENT_ID,
+        projectId: 'otro-proyecto',
+        parentTaskId: null,
+      } as TaskEntity);
+
+      await expect(
+        service.create({ projectId: PROJECT_ID, title: 'x', parentTaskId: PARENT_ID }, currentUser),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza BadRequestException (400) si se intenta anidar una subtarea dentro de otra subtarea', async () => {
+      mockRepo.findOneBy.mockResolvedValue({
+        id: PARENT_ID,
+        projectId: PROJECT_ID,
+        parentTaskId: 'abuelo-task-id',
+      } as TaskEntity);
+
+      await expect(
+        service.create({ projectId: PROJECT_ID, title: 'x', parentTaskId: PARENT_ID }, currentUser),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockRepo.save).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('TasksService - findSubtasks', () => {
+  let service: TasksService;
+  let mockRepo: { findOne: jest.Mock; find: jest.Mock };
+
+  beforeEach(async () => {
+    mockRepo = {
+      findOne: jest.fn().mockResolvedValue({ id: 'parent-1', projectId: PROJECT_ID } as TaskEntity),
+      find: jest.fn().mockResolvedValue([{ id: 'sub-1' }, { id: 'sub-2' }]),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        TasksService,
+        { provide: getRepositoryToken(TaskEntity), useValue: mockRepo },
+        { provide: getRepositoryToken(ProjectEntity), useValue: {} },
+        { provide: getRepositoryToken(ProjectMemberEntity), useValue: {} },
+        { provide: UsersService, useValue: {} },
+      ],
+    }).compile();
+
+    service = module.get<TasksService>(TasksService);
+  });
+
+  it('devuelve las subtareas de una tarea existente', async () => {
+    const result = await service.findSubtasks('parent-1');
+
+    expect(mockRepo.find).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { parentTaskId: 'parent-1' } }),
+    );
+    expect(result).toEqual([{ id: 'sub-1' }, { id: 'sub-2' }]);
+  });
+
+  it('lanza NotFoundException (404) si la tarea padre no existe', async () => {
+    mockRepo.findOne.mockResolvedValue(null);
+
+    await expect(service.findSubtasks('parent-1')).rejects.toThrow(NotFoundException);
+    expect(mockRepo.find).not.toHaveBeenCalled();
+  });
 });
 
 describe('TasksService - update / remove (membresia del proyecto)', () => {
   let service: TasksService;
-  let mockRepo: { findOne: jest.Mock; save: jest.Mock; delete: jest.Mock };
+  let mockRepo: { findOne: jest.Mock; save: jest.Mock; delete: jest.Mock; count: jest.Mock };
   let mockProjectRepo: { findOneBy: jest.Mock };
   let mockProjectMemberRepo: { existsBy: jest.Mock };
   let mockUsersService: { findById: jest.Mock };
@@ -168,6 +266,7 @@ describe('TasksService - update / remove (membresia del proyecto)', () => {
       findOne: jest.fn().mockResolvedValue(existingTask),
       save: jest.fn().mockImplementation((t: TaskEntity) => Promise.resolve(t)),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
+      count: jest.fn().mockResolvedValue(0),
     };
     mockProjectRepo = {
       findOneBy: jest.fn().mockResolvedValue({ id: PROJECT_ID, leaderId: currentUser.id } as ProjectEntity),
@@ -260,5 +359,38 @@ describe('TasksService - update / remove (membresia del proyecto)', () => {
 
     await expect(service.archive('task-1', currentUser)).rejects.toThrow(ForbiddenException);
     expect(mockRepo.save).not.toHaveBeenCalled();
+  });
+
+  describe('RN-04: no completar con subtareas pendientes', () => {
+    it('permite completar si no tiene subtareas (count = 0)', async () => {
+      mockRepo.count.mockResolvedValue(0);
+
+      await expect(
+        service.update('task-1', { status: TaskStatus.COMPLETED }, currentUser),
+      ).resolves.toMatchObject({ status: TaskStatus.COMPLETED });
+    });
+
+    it('lanza BadRequestException (400) si tiene subtareas sin completar, y no guarda nada', async () => {
+      mockRepo.count.mockResolvedValue(2);
+
+      await expect(
+        service.update('task-1', { status: TaskStatus.COMPLETED }, currentUser),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('consulta subtareas pendientes de ESTA tarea (parentTaskId = task.id, status != COMPLETED)', async () => {
+      await service.update('task-1', { status: TaskStatus.COMPLETED }, currentUser);
+
+      expect(mockRepo.count).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { parentTaskId: 'task-1', status: expect.anything() } }),
+      );
+    });
+
+    it('no chequea subtareas si el update no cambia el status a COMPLETED', async () => {
+      await service.update('task-1', { title: 'nuevo' }, currentUser);
+
+      expect(mockRepo.count).not.toHaveBeenCalled();
+    });
   });
 });
