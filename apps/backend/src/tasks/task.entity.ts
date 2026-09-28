@@ -17,12 +17,17 @@ import { TaskPriority, TaskStatus } from '../database/enums';
  * TaskEntity del proyecto: comment/attachment/cost/notification/task-dependency/task-tag
  * la referencian desde aca). Los nombres de propiedad (assignedToId, startDate) son los
  * de la API; las columnas reales son responsible_user_id y planned_start_date, por eso
- * van con `name` explicito. No mapea subtareas ni costos (parent_task_id, estimated_cost,
- * actual_cost, deleted_at): esas columnas existen en la tabla pero quedan fuera de alcance
- * hasta que haya un ticket que las necesite.
+ * van con `name` explicito. No mapea costos (estimated_cost, actual_cost, deleted_at):
+ * esas columnas existen en la tabla pero quedan fuera de alcance hasta que haya un ticket
+ * que las necesite.
  *
  * `archivedAt` es distinto de `deleted_at`: archivar no borra la tarea (sigue existiendo,
  * solo se oculta), mismo criterio que ya usa ProjectEntity.archivedAt.
+ *
+ * Subtareas: no hay tabla separada, son filas de `tasks` con `parentTaskId` seteado
+ * (jerarquia de un solo nivel: una subtarea no puede tener sus propias subtareas,
+ * se valida en TasksService). `parentTaskId` solo se define al crear, no se puede
+ * reasignar via update — evita tener que resolver ciclos.
  */
 @Entity('tasks')
 @Index('ix_tasks_project_id', ['projectId'])
@@ -36,6 +41,14 @@ export class TaskEntity {
   @ManyToOne(() => ProjectEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'project_id' })
   project!: ProjectEntity;
+
+  @Index('ix_tasks_parent_task_id')
+  @Column({ name: 'parent_task_id', type: 'uuid', nullable: true })
+  parentTaskId!: string | null;
+
+  @ManyToOne(() => TaskEntity, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'parent_task_id' })
+  parentTask!: TaskEntity | null;
 
   @Column({ name: 'title', type: 'varchar', length: 200 })
   title!: string;

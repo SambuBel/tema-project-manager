@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { TaskEntity } from './task.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { ProjectMemberEntity } from '../database/entities/project-member.entity';
@@ -63,10 +63,28 @@ export class TasksService {
   }
 
   /**
-   * Crea una tarea dentro de un proyecto. El usuario tiene que ser lider o miembro activo
-   * del proyecto (404 si el proyecto no existe) y, si se indica responsable, ese usuario
-   * tambien tiene que existir y pertenecer al mismo proyecto. `createdBy` sale del usuario
-   * autenticado.
+   * Una subtarea tiene que apuntar a una tarea que exista, del MISMO proyecto, y que no
+   * sea a su vez una subtarea (jerarquia de un solo nivel: evita tener que resolver ciclos
+   * y anidamientos arbitrarios).
+   */
+  private async assertValidParentTask(projectId: string, parentTaskId: string): Promise<void> {
+    const parent = await this.repo.findOneBy({ id: parentTaskId });
+    if (!parent) {
+      throw new NotFoundException(`Task ${parentTaskId} no encontrada`);
+    }
+    if (parent.projectId !== projectId) {
+      throw new BadRequestException('La tarea padre debe pertenecer al mismo proyecto');
+    }
+    if (parent.parentTaskId) {
+      throw new BadRequestException('No se pueden anidar subtareas: la tarea padre ya es una subtarea');
+    }
+  }
+
+  /**
+   * Crea una tarea (o subtarea, si viene parentTaskId) dentro de un proyecto. El usuario
+   * tiene que ser lider o miembro activo del proyecto (404 si el proyecto no existe) y, si
+   * se indica responsable, ese usuario tambien tiene que existir y pertenecer al mismo
+   * proyecto. `createdBy` sale del usuario autenticado.
    */
   async create(dto: CreateTaskDto, user: UserEntity): Promise<TaskEntity> {
     const project = await this.assertProjectMember(dto.projectId, user.id);
@@ -75,8 +93,13 @@ export class TasksService {
       await this.assertAssigneeIsProjectMember(project, dto.assignedToId);
     }
 
+    if (dto.parentTaskId) {
+      await this.assertValidParentTask(dto.projectId, dto.parentTaskId);
+    }
+
     const task = new TaskEntity();
     task.projectId = dto.projectId;
+    task.parentTaskId = dto.parentTaskId ?? null;
     task.title = dto.title;
     task.description = dto.description ?? null;
     task.status = dto.status ?? TaskStatus.PENDING;
@@ -87,6 +110,17 @@ export class TasksService {
     task.createdBy = user.id;
 
     return this.repo.save(task);
+  }
+
+  /** Subtareas de una tarea (404 si la tarea padre no existe). */
+  async findSubtasks(parentTaskId: string): Promise<TaskEntity[]> {
+    await this.findOne(parentTaskId);
+
+    return this.repo.find({
+      where: { parentTaskId },
+      relations: ['assignedTo'],
+      order: { createdAt: 'ASC' },
+    });
   }
 
   findAllByProject(projectId: string): Promise<TaskEntity[]> {
@@ -116,6 +150,16 @@ export class TasksService {
 
     if (dto.assignedToId) {
       await this.assertAssigneeIsProjectMember(project, dto.assignedToId);
+    }
+
+    // RN-04: no se puede completar una tarea si tiene subtareas sin completar.
+    if (dto.status === TaskStatus.COMPLETED) {
+      const pendingSubtasks = await this.repo.count({
+        where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED) },
+      });
+      if (pendingSubtasks > 0) {
+        throw new BadRequestException('No se puede completar una tarea con subtareas pendientes');
+      }
     }
 
     Object.assign(task, {
