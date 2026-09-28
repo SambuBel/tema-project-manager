@@ -1,9 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { TaskEntity } from './task.entity';
 import { ProjectEntity } from '../projects/project.entity';
+import { ProjectMemberEntity } from '../database/entities/project-member.entity';
 import { UserEntity } from '../database/entities/user.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 import { UsersService } from '../users/users.service';
@@ -16,14 +17,20 @@ const currentUser = { id: '33333333-3333-4333-8333-333333333333' } as UserEntity
 describe('TasksService - create', () => {
   let service: TasksService;
   let mockRepo: { save: jest.Mock };
-  let mockProjectRepo: { existsBy: jest.Mock };
+  let mockProjectRepo: { findOneBy: jest.Mock };
+  let mockProjectMemberRepo: { existsBy: jest.Mock };
   let mockUsersService: { findById: jest.Mock };
 
   beforeEach(async () => {
     mockRepo = {
       save: jest.fn().mockImplementation((t: TaskEntity) => Promise.resolve({ ...t, id: 'task-1' })),
     };
-    mockProjectRepo = { existsBy: jest.fn().mockResolvedValue(true) };
+    // Por defecto el usuario autenticado es el lider del proyecto: no interfiere con los
+    // tests que no estan probando especificamente la regla de membresia.
+    mockProjectRepo = {
+      findOneBy: jest.fn().mockResolvedValue({ id: PROJECT_ID, leaderId: currentUser.id } as ProjectEntity),
+    };
+    mockProjectMemberRepo = { existsBy: jest.fn().mockResolvedValue(false) };
     mockUsersService = { findById: jest.fn().mockResolvedValue({ id: ASSIGNEE_ID }) };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -31,6 +38,7 @@ describe('TasksService - create', () => {
         TasksService,
         { provide: getRepositoryToken(TaskEntity), useValue: mockRepo },
         { provide: getRepositoryToken(ProjectEntity), useValue: mockProjectRepo },
+        { provide: getRepositoryToken(ProjectMemberEntity), useValue: mockProjectMemberRepo },
         { provide: UsersService, useValue: mockUsersService },
       ],
     }).compile();
@@ -43,7 +51,7 @@ describe('TasksService - create', () => {
 
     const result = await service.create(dto, currentUser);
 
-    expect(mockProjectRepo.existsBy).toHaveBeenCalledWith({ id: PROJECT_ID });
+    expect(mockProjectRepo.findOneBy).toHaveBeenCalledWith({ id: PROJECT_ID });
     expect(mockRepo.save).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
       id: 'task-1',
@@ -91,7 +99,7 @@ describe('TasksService - create', () => {
   });
 
   it('lanza NotFoundException (404) si el proyecto no existe y no guarda nada', async () => {
-    mockProjectRepo.existsBy.mockResolvedValue(false);
+    mockProjectRepo.findOneBy.mockResolvedValue(null);
 
     await expect(service.create({ projectId: PROJECT_ID, title: 'x' }, currentUser)).rejects.toThrow(NotFoundException);
     expect(mockRepo.save).not.toHaveBeenCalled();
@@ -110,5 +118,95 @@ describe('TasksService - create', () => {
     await service.create({ projectId: PROJECT_ID, title: 'x' }, currentUser);
 
     expect(mockUsersService.findById).not.toHaveBeenCalled();
+  });
+
+  it('lanza ForbiddenException (403) si el usuario no es lider ni miembro del proyecto, y no guarda nada', async () => {
+    mockProjectRepo.findOneBy.mockResolvedValue({ id: PROJECT_ID, leaderId: 'otro-usuario' } as ProjectEntity);
+    mockProjectMemberRepo.existsBy.mockResolvedValue(false);
+
+    await expect(service.create({ projectId: PROJECT_ID, title: 'x' }, currentUser)).rejects.toThrow(ForbiddenException);
+    expect(mockRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('permite crear si el usuario es miembro activo del proyecto (sin ser el lider)', async () => {
+    mockProjectRepo.findOneBy.mockResolvedValue({ id: PROJECT_ID, leaderId: 'otro-usuario' } as ProjectEntity);
+    mockProjectMemberRepo.existsBy.mockResolvedValue(true);
+
+    const result = await service.create({ projectId: PROJECT_ID, title: 'x' }, currentUser);
+
+    expect(mockProjectMemberRepo.existsBy).toHaveBeenCalledWith({
+      projectId: PROJECT_ID,
+      userId: currentUser.id,
+      removedAt: expect.anything(),
+    });
+    expect(result).toMatchObject({ id: 'task-1' });
+  });
+});
+
+describe('TasksService - update / remove (membresia del proyecto)', () => {
+  let service: TasksService;
+  let mockRepo: { findOne: jest.Mock; save: jest.Mock; delete: jest.Mock };
+  let mockProjectRepo: { findOneBy: jest.Mock };
+  let mockProjectMemberRepo: { existsBy: jest.Mock };
+  let existingTask: TaskEntity;
+
+  beforeEach(async () => {
+    existingTask = { id: 'task-1', projectId: PROJECT_ID, title: 'x' } as TaskEntity;
+    mockRepo = {
+      findOne: jest.fn().mockResolvedValue(existingTask),
+      save: jest.fn().mockImplementation((t: TaskEntity) => Promise.resolve(t)),
+      delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
+    mockProjectRepo = {
+      findOneBy: jest.fn().mockResolvedValue({ id: PROJECT_ID, leaderId: currentUser.id } as ProjectEntity),
+    };
+    mockProjectMemberRepo = { existsBy: jest.fn().mockResolvedValue(false) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        TasksService,
+        { provide: getRepositoryToken(TaskEntity), useValue: mockRepo },
+        { provide: getRepositoryToken(ProjectEntity), useValue: mockProjectRepo },
+        { provide: getRepositoryToken(ProjectMemberEntity), useValue: mockProjectMemberRepo },
+        { provide: UsersService, useValue: { findById: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<TasksService>(TasksService);
+  });
+
+  it('update: permite al lider del proyecto editar la tarea', async () => {
+    await expect(service.update('task-1', { title: 'nuevo' }, currentUser)).resolves.toMatchObject({
+      title: 'nuevo',
+    });
+  });
+
+  it('update: lanza ForbiddenException (403) si no es lider ni miembro', async () => {
+    mockProjectRepo.findOneBy.mockResolvedValue({ id: PROJECT_ID, leaderId: 'otro-usuario' } as ProjectEntity);
+
+    await expect(service.update('task-1', { title: 'nuevo' }, currentUser)).rejects.toThrow(ForbiddenException);
+    expect(mockRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('update: permite editar si es miembro activo (sin ser lider)', async () => {
+    mockProjectRepo.findOneBy.mockResolvedValue({ id: PROJECT_ID, leaderId: 'otro-usuario' } as ProjectEntity);
+    mockProjectMemberRepo.existsBy.mockResolvedValue(true);
+
+    await expect(service.update('task-1', { title: 'nuevo' }, currentUser)).resolves.toMatchObject({
+      title: 'nuevo',
+    });
+  });
+
+  it('remove: permite al lider del proyecto borrar la tarea', async () => {
+    await service.remove('task-1', currentUser);
+
+    expect(mockRepo.delete).toHaveBeenCalledWith({ id: 'task-1' });
+  });
+
+  it('remove: lanza ForbiddenException (403) si no es lider ni miembro, y no borra nada', async () => {
+    mockProjectRepo.findOneBy.mockResolvedValue({ id: PROJECT_ID, leaderId: 'otro-usuario' } as ProjectEntity);
+
+    await expect(service.remove('task-1', currentUser)).rejects.toThrow(ForbiddenException);
+    expect(mockRepo.delete).not.toHaveBeenCalled();
   });
 });
