@@ -10,7 +10,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { ProjectEntity } from '../../projects/project.entity';
-import { TaskEntity } from './task.entity';
+import { TaskEntity } from '../../tasks/task.entity';
 import { CostCategoryEntity } from './cost-category.entity';
 import { UserEntity } from './user.entity';
 

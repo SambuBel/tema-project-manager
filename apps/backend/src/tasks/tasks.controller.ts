@@ -39,13 +39,13 @@ export class TasksController {
   }
 
   @Patch(':id')
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTaskDto) {
-    return this.tasksService.update(id, dto);
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTaskDto, @CurrentUser() user: UserEntity) {
+    return this.tasksService.update(id, dto, user);
   }
 
   @Delete(':id')
   @HttpCode(204)
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.tasksService.remove(id);
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: UserEntity) {
+    return this.tasksService.remove(id, user);
   }
 }

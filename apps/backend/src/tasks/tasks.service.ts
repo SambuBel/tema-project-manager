@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { TaskEntity } from './task.entity';
 import { ProjectEntity } from '../projects/project.entity';
+import { ProjectMemberEntity } from '../database/entities/project-member.entity';
 import { UserEntity } from '../database/entities/user.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 import { UsersService } from '../users/users.service';
@@ -16,19 +17,41 @@ export class TasksService {
     private readonly repo: Repository<TaskEntity>,
     @InjectRepository(ProjectEntity)
     private readonly projectRepo: Repository<ProjectEntity>,
+    @InjectRepository(ProjectMemberEntity)
+    private readonly projectMemberRepo: Repository<ProjectMemberEntity>,
     private readonly usersService: UsersService,
   ) {}
 
   /**
-   * Crea una tarea dentro de un proyecto. El proyecto tiene que existir (404 si no) y, si se
-   * indica responsable, ese usuario tambien (404 si no): asi el cliente recibe un error claro
-   * en vez de un 500 por violacion de foreign key. `createdBy` sale del usuario autenticado.
+   * El lider del proyecto siempre puede tocar sus tareas; cualquier otro usuario necesita
+   * ser miembro activo (project_members sin removedAt). Mismo criterio que ya usa
+   * ProjectsService para las acciones restringidas al lider. 404 si el proyecto no existe
+   * (evita filtrar existencia con un 403 distinto para proyectos inexistentes).
+   */
+  private async assertProjectMember(projectId: string, userId: string): Promise<ProjectEntity> {
+    const project = await this.projectRepo.findOneBy({ id: projectId });
+    if (!project) {
+      throw new NotFoundException(`Project ${projectId} no encontrado`);
+    }
+    if (project.leaderId === userId) {
+      return project;
+    }
+
+    const isMember = await this.projectMemberRepo.existsBy({ projectId, userId, removedAt: IsNull() });
+    if (!isMember) {
+      throw new ForbiddenException('No sos miembro de este proyecto');
+    }
+    return project;
+  }
+
+  /**
+   * Crea una tarea dentro de un proyecto. El usuario tiene que ser lider o miembro activo
+   * del proyecto (404 si el proyecto no existe) y, si se indica responsable, ese usuario
+   * tambien tiene que existir (404 si no): asi el cliente recibe un error claro en vez de
+   * un 500 por violacion de foreign key. `createdBy` sale del usuario autenticado.
    */
   async create(dto: CreateTaskDto, user: UserEntity): Promise<TaskEntity> {
-    const projectExists = await this.projectRepo.existsBy({ id: dto.projectId });
-    if (!projectExists) {
-      throw new NotFoundException(`Project ${dto.projectId} no encontrado`);
-    }
+    await this.assertProjectMember(dto.projectId, user.id);
 
     if (dto.assignedToId) {
       const assignee = await this.usersService.findById(dto.assignedToId);
@@ -72,8 +95,9 @@ export class TasksService {
     return task;
   }
 
-  async update(id: string, dto: UpdateTaskDto): Promise<TaskEntity> {
+  async update(id: string, dto: UpdateTaskDto, user: UserEntity): Promise<TaskEntity> {
     const task = await this.findOne(id);
+    await this.assertProjectMember(task.projectId, user.id);
 
     Object.assign(task, {
       ...(dto.title !== undefined ? { title: dto.title } : {}),
@@ -88,11 +112,10 @@ export class TasksService {
     return this.repo.save(task);
   }
 
-  async remove(id: string): Promise<void> {
-    const result = await this.repo.delete({ id });
+  async remove(id: string, user: UserEntity): Promise<void> {
+    const task = await this.findOne(id);
+    await this.assertProjectMember(task.projectId, user.id);
 
-    if (!result.affected) {
-      throw new NotFoundException(`Task ${id} no encontrada`);
-    }
+    await this.repo.delete({ id: task.id });
   }
 }
