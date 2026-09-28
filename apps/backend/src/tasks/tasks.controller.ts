@@ -48,4 +48,9 @@ export class TasksController {
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: UserEntity) {
     return this.tasksService.remove(id, user);
   }
+
+  @Patch(':id/archive')
+  archive(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: UserEntity) {
+    return this.tasksService.archive(id, user);
+  }
 }

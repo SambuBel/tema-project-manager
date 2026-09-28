@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { TaskForm } from './TaskForm';
 import type { ProjectStatus } from '@tema/shared-types';
 import { ProjectActivityList } from './ProjectActivityList';
 
@@ -233,17 +234,22 @@ export function ProjectDetail({ id, onBack, onManageTeam }: ProjectDetailProps) 
             </div>
           </div>
 
-          {/* Próximos hitos */}
-          <div className="flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-6">
-            <h3 className="text-lg font-semibold text-[#172B42]">Próximos hitos</h3>
-            <p className="mt-4 text-sm italic text-[#607185]">
-              No hay hitos disponibles todavía.
-            </p>
-          </div>
-        </>
-      ) : (
-        <ProjectActivityList projectId={project.id} />
-      )}
+{/* Próximos hitos */}
+<div className="flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-6">
+  <h3 className="text-lg font-semibold text-[#172B42]">Próximos hitos</h3>
+  <p className="mt-4 text-sm italic text-[#607185]">
+    No hay hitos disponibles todavía.
+  </p>
+</div>
+
+{/* Alta de tareas */}
+<TaskForm projectId={project.id} />
+
+</>
+) : (
+  <ProjectActivityList projectId={project.id} />
+)}
+
     </div>
   );
 }

@@ -1,8 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { TaskEntity } from './task.entity';
-import { TaskPriority, TaskStatus, ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
+import { ProjectEntity } from '../projects/project.entity';
+import { ProjectMemberEntity } from '../database/entities/project-member.entity';
+import { UserEntity } from '../database/entities/user.entity';
+import { TaskPriority, TaskStatus } from '../database/enums';
+import { UsersService } from '../users/users.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { UserEntity } from '../database/entities/user.entity';
@@ -13,36 +17,78 @@ export class TasksService {
   constructor(
     @InjectRepository(TaskEntity)
     private readonly repo: Repository<TaskEntity>,
-    private readonly dataSource: DataSource,
-    private readonly activityService: ProjectActivityService,
+    @InjectRepository(ProjectEntity)
+    private readonly projectRepo: Repository<ProjectEntity>,
+    @InjectRepository(ProjectMemberEntity)
+    private readonly projectMemberRepo: Repository<ProjectMemberEntity>,
+    private readonly usersService: UsersService,
   ) {}
 
+  /** Lider del proyecto, o miembro activo (project_members sin removedAt). */
+  private async isProjectMember(project: ProjectEntity, userId: string): Promise<boolean> {
+    if (project.leaderId === userId) {
+      return true;
+    }
+    return this.projectMemberRepo.existsBy({ projectId: project.id, userId, removedAt: IsNull() });
+  }
+
+  /**
+   * El lider del proyecto siempre puede tocar sus tareas; cualquier otro usuario necesita
+   * ser miembro activo. Mismo criterio que ya usa ProjectsService para las acciones
+   * restringidas al lider. 404 si el proyecto no existe (evita filtrar existencia con un
+   * 403 distinto para proyectos inexistentes).
+   */
+  private async assertProjectMember(projectId: string, userId: string): Promise<ProjectEntity> {
+    const project = await this.projectRepo.findOneBy({ id: projectId });
+    if (!project) {
+      throw new NotFoundException(`Project ${projectId} no encontrado`);
+    }
+    if (!(await this.isProjectMember(project, userId))) {
+      throw new ForbiddenException('No sos miembro de este proyecto');
+    }
+    return project;
+  }
+
+  /**
+   * El responsable de una tarea tiene que existir (404 si no, evita un 500 por FK) y ser
+   * lider o miembro activo del MISMO proyecto de la tarea (400 si no: a diferencia de
+   * "no sos miembro", esto no es sobre quien hace el pedido sino sobre a quien se asigna).
+   */
+  private async assertAssigneeIsProjectMember(project: ProjectEntity, assigneeId: string): Promise<void> {
+    const assignee = await this.usersService.findById(assigneeId);
+    if (!assignee) {
+      throw new NotFoundException(`El usuario responsable ${assigneeId} no existe`);
+    }
+    if (!(await this.isProjectMember(project, assigneeId))) {
+      throw new BadRequestException('El responsable debe ser miembro del proyecto');
+    }
+  }
+
+  /**
+   * Crea una tarea dentro de un proyecto. El usuario tiene que ser lider o miembro activo
+   * del proyecto (404 si el proyecto no existe) y, si se indica responsable, ese usuario
+   * tambien tiene que existir y pertenecer al mismo proyecto. `createdBy` sale del usuario
+   * autenticado.
+   */
   async create(dto: CreateTaskDto, user: UserEntity): Promise<TaskEntity> {
-    return this.dataSource.transaction(async (manager) => {
-      const task = manager.create(TaskEntity, {
-        projectId: dto.projectId,
-        title: dto.title,
-        description: dto.description ?? null,
-        status: dto.status ?? TaskStatus.PENDING,
-        priority: dto.priority ?? TaskPriority.MEDIUM,
-        assignedToId: dto.assignedToId ?? null,
-        startDate: dto.startDate ?? null,
-        dueDate: dto.dueDate ?? null,
-      });
+    const project = await this.assertProjectMember(dto.projectId, user.id);
 
-      const savedTask = await manager.save(task);
+    if (dto.assignedToId) {
+      await this.assertAssigneeIsProjectMember(project, dto.assignedToId);
+    }
 
-      await this.activityService.logEvent({
-        projectId: savedTask.projectId,
-        actorId: user.id,
-        actionType: ProjectActivityAction.TASK_CREATED,
-        entityType: ProjectActivityEntityType.TASK,
-        entityId: savedTask.id,
-        metadata: { title: savedTask.title, status: savedTask.status },
-      }, manager);
+    const task = new TaskEntity();
+    task.projectId = dto.projectId;
+    task.title = dto.title;
+    task.description = dto.description ?? null;
+    task.status = dto.status ?? TaskStatus.PENDING;
+    task.priority = dto.priority ?? TaskPriority.MEDIUM;
+    task.assignedToId = dto.assignedToId ?? null;
+    task.startDate = dto.startDate ?? null;
+    task.dueDate = dto.dueDate ?? null;
+    task.createdBy = user.id;
 
-      return savedTask;
-    });
+    return this.repo.save(task);
   }
 
   findAllByProject(projectId: string): Promise<TaskEntity[]> {
@@ -67,47 +113,22 @@ export class TasksService {
   }
 
   async update(id: string, dto: UpdateTaskDto, user: UserEntity): Promise<TaskEntity> {
-    return this.dataSource.transaction(async (manager) => {
-      const task = await manager.findOne(TaskEntity, { where: { id } });
-      if (!task) {
-        throw new NotFoundException(`Task ${id} no encontrada`);
-      }
+    const task = await this.findOne(id);
+    const project = await this.assertProjectMember(task.projectId, user.id);
 
-      const prevStatus = task.status;
-      const changes: Record<string, { old: any, new: any }> = {};
+    if (dto.assignedToId) {
+      await this.assertAssigneeIsProjectMember(project, dto.assignedToId);
+    }
 
-      if (dto.title !== undefined && dto.title !== task.title) {
-        changes.title = { old: task.title, new: dto.title };
-        task.title = dto.title;
-      }
-      if (dto.description !== undefined && dto.description !== task.description) {
-        changes.description = { old: task.description, new: dto.description };
-        task.description = dto.description ?? null;
-      }
-      if (dto.status !== undefined && dto.status !== task.status) {
-        changes.status = { old: task.status, new: dto.status };
-        task.status = dto.status;
-      }
-      if (dto.priority !== undefined && dto.priority !== task.priority) {
-        changes.priority = { old: task.priority, new: dto.priority };
-        task.priority = dto.priority;
-      }
-      if (dto.assignedToId !== undefined && dto.assignedToId !== task.assignedToId) {
-        changes.assignedToId = { old: task.assignedToId, new: dto.assignedToId };
-        task.assignedToId = dto.assignedToId ?? null;
-      }
-      if (dto.startDate !== undefined && dto.startDate !== task.startDate) {
-        changes.startDate = { old: task.startDate, new: dto.startDate };
-        task.startDate = dto.startDate ?? null;
-      }
-      if (dto.dueDate !== undefined && dto.dueDate !== task.dueDate) {
-        changes.dueDate = { old: task.dueDate, new: dto.dueDate };
-        task.dueDate = dto.dueDate ?? null;
-      }
-
-      if (Object.keys(changes).length === 0) {
-        return task;
-      }
+    Object.assign(task, {
+      ...(dto.title !== undefined ? { title: dto.title } : {}),
+      ...(dto.description !== undefined ? { description: dto.description ?? null } : {}),
+      ...(dto.status !== undefined ? { status: dto.status } : {}),
+      ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
+      ...(dto.assignedToId !== undefined ? { assignedToId: dto.assignedToId ?? null } : {}),
+      ...(dto.startDate !== undefined ? { startDate: dto.startDate ?? null } : {}),
+      ...(dto.dueDate !== undefined ? { dueDate: dto.dueDate ?? null } : {}),
+    });
 
       const updatedTask = await manager.save(task);
 
@@ -125,25 +146,22 @@ export class TasksService {
   }
 
   async remove(id: string, user: UserEntity): Promise<void> {
-    return this.dataSource.transaction(async (manager) => {
-      const task = await manager.findOne(TaskEntity, { where: { id } });
-      if (!task) {
-        throw new NotFoundException(`Task ${id} no encontrada`);
-      }
+    const task = await this.findOne(id);
+    await this.assertProjectMember(task.projectId, user.id);
 
-      await this.activityService.logEvent({
-        projectId: task.projectId,
-        actorId: user.id,
-        actionType: ProjectActivityAction.TASK_DELETED,
-        entityType: ProjectActivityEntityType.TASK,
-        entityId: task.id,
-        metadata: { title: task.title },
-      }, manager);
+    await this.repo.delete({ id: task.id });
+  }
 
-      const result = await manager.delete(TaskEntity, { id });
-      if (!result.affected) {
-        throw new NotFoundException(`Task ${id} no encontrada`);
-      }
-    });
+  /** Idempotente: archivar una tarea ya archivada no hace nada (mismo criterio que ProjectsService.archive). */
+  async archive(id: string, user: UserEntity): Promise<TaskEntity> {
+    const task = await this.findOne(id);
+    await this.assertProjectMember(task.projectId, user.id);
+
+    if (task.archivedAt) {
+      return task;
+    }
+
+    task.archivedAt = new Date();
+    return this.repo.save(task);
   }
 }

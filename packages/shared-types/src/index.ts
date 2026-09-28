@@ -95,9 +95,9 @@ export interface HealthResponse {
   timestamp: string;
 }
 
-export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED' | 'CANCELLED';
 
-export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Task {
   id: ID;
@@ -110,8 +110,10 @@ export interface Task {
   assignedTo?: User;
   startDate: string | null;
   dueDate: string | null;
+  createdBy: ID;
   createdAt: string;
   updatedAt: string;
+  archivedAt: string | null;
 }
 
 export interface CreateTaskDto {
