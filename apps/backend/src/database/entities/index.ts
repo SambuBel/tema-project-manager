@@ -50,7 +50,10 @@ export * from './ai-conversation.entity';
 export * from './ai-message.entity';
 
 /** Todas las entidades del dominio, usadas por DataSource (migrations) y por DatabaseModule (Nest). */
+import { ProjectActivityEntity } from './project-activity.entity';
+
 export const ALL_ENTITIES = [
+  ProjectActivityEntity,
   ProjectEntity,
   UserEntity,
   RoleEntity,
@@ -77,3 +80,5 @@ export const ALL_ENTITIES = [
   AiConversationEntity,
   AiMessageEntity,
 ];
+
+export * from './project-activity.entity';
