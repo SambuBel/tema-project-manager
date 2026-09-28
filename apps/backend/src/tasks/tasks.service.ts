@@ -9,8 +9,6 @@ import { TaskPriority, TaskStatus } from '../database/enums';
 import { UsersService } from '../users/users.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
-import { UserEntity } from '../database/entities/user.entity';
-import { ProjectActivityService } from '../projects/project-activity.service';
 
 @Injectable()
 export class TasksService {
@@ -130,19 +128,7 @@ export class TasksService {
       ...(dto.dueDate !== undefined ? { dueDate: dto.dueDate ?? null } : {}),
     });
 
-      const updatedTask = await manager.save(task);
-
-      await this.activityService.logEvent({
-        projectId: updatedTask.projectId,
-        actorId: user.id,
-        actionType: ProjectActivityAction.TASK_UPDATED,
-        entityType: ProjectActivityEntityType.TASK,
-        entityId: updatedTask.id,
-        metadata: { changes, prevStatus, newStatus: updatedTask.status, title: task.title },
-      }, manager);
-
-      return updatedTask;
-    });
+    return this.repo.save(task);
   }
 
   async remove(id: string, user: UserEntity): Promise<void> {
