@@ -1,5 +1,7 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route } from 'react-router-dom';
 import { LoginPage } from './pages/Login.page';
+import { RequireAuth } from './components/auth/RequireAuth';
+import { RedirectIfAuthenticated } from './components/auth/RedirectIfAuthenticated';
 import { AppLayout } from './components/layout/AppLayout';
 import { HomePage } from './pages/HomePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
@@ -11,27 +13,24 @@ import { EditTaskPage } from './pages/EditTaskPage';
 export function App() {
   return (
     <Routes>
-      {/* 1. RUTA PÚBLICA: Login independiente en pantalla completa */}
-      <Route path="/login" element={<LoginPage />} />
-
-      {/* 2. Redirección automática al Login al abrir la app */}
-      <Route path="/" element={<Navigate to="/login" replace />} />
-
-      {/* 3. RUTAS PRIVADAS (Requieren Backend + Docker corriendo) */}
-      <Route element={<AppLayout />}>
-        <Route index element={<HomePage />} />
-        <Route path="projects/new" element={<CreateProjectPage />} />
-        <Route path="projects/:projectId/edit" element={<EditProjectPage />} />
-        <Route path="tasks/:taskId/edit" element={<EditTaskPage />} />
-        <Route path="projects/:projectId/*" element={<ProjectPage />} />
-        <Route path="users" element={<PlaceholderPage title="Permisos y usuarios" />} />
-        <Route path="notifications" element={<PlaceholderPage title="Notificaciones" />} />
-        <Route path="*" element={<PlaceholderPage title="Página no encontrada" />} />
-        <Route path="/home" element={<HomePage />} />
+      {/* Pública: si ya hay sesión, RedirectIfAuthenticated manda a "/" en vez de mostrarla. */}
+      <Route element={<RedirectIfAuthenticated />}>
+        <Route path="/login" element={<LoginPage />} />
       </Route>
 
-      {/* 4. Cualquier otra ruta redirige al Login */}
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      {/* Privadas: sin sesión, RequireAuth manda a /login (arranque de la app incluido). */}
+      <Route element={<RequireAuth />}>
+        <Route element={<AppLayout />}>
+          <Route index element={<HomePage />} />
+          <Route path="projects/new" element={<CreateProjectPage />} />
+          <Route path="projects/:projectId/edit" element={<EditProjectPage />} />
+          <Route path="tasks/:taskId/edit" element={<EditTaskPage />} />
+          <Route path="projects/:projectId/*" element={<ProjectPage />} />
+          <Route path="users" element={<PlaceholderPage title="Permisos y usuarios" />} />
+          <Route path="notifications" element={<PlaceholderPage title="Notificaciones" />} />
+          <Route path="*" element={<PlaceholderPage title="Página no encontrada" />} />
+        </Route>
+      </Route>
     </Routes>
   );
 }
