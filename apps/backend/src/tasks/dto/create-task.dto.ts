@@ -8,6 +8,10 @@ export class CreateTaskDto implements ICreateTaskDto {
   @IsUUID('all', { message: 'projectId debe ser un id de proyecto válido' })
   projectId!: string;
 
+  @IsOptional()
+  @IsUUID('all', { message: 'parentTaskId debe ser un id de tarea válido' })
+  parentTaskId?: string;
+
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   @IsString({ message: 'El título debe ser texto' })
   @IsNotEmpty({ message: 'El título es obligatorio' })

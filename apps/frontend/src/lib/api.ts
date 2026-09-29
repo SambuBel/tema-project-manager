@@ -83,4 +83,5 @@ export const api = {
   getTask: (id: string) => request<Task>(`/tasks/${id}`),
   updateTask: (id: string, dto: UpdateTaskDto) =>
     request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
 };

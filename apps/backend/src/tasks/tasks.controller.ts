@@ -31,6 +31,11 @@ export class TasksController {
     return this.tasksService.findOne(id, user);
   }
 
+  @Get(':id/subtasks')
+  findSubtasks(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+    return this.tasksService.findSubtasks(id, user);
+  }
+
   @Patch(':id')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTaskDto, @CurrentUser() user: RequestUser) {
     return this.tasksService.update(id, dto, user);
