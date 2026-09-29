@@ -54,26 +54,41 @@ export interface CreateProjectDto {
   estimatedEndDate?: string;
 }
 
+export interface UpdateProjectDto {
+  name?: string;
+  description?: string;
+  startDate?: string;
+  estimatedEndDate?: string;
+}
+
+/** Rol de un usuario DENTRO de un proyecto puntual. Nunca incluye PROJECT_LEADER: el líder es project.leaderId. */
+export type ProjectMemberRole = 'COLLABORATOR' | 'OBSERVER';
+
 export interface ProjectMember {
   id: ID;
   projectId: ID;
   userId: ID;
   user?: User;
-  projectRole: string;
+  projectRole: ProjectMemberRole;
   joinedAt: string;
 }
 
 export interface AddProjectMemberDto {
   userId: ID;
-  projectRole: string;
+  projectRole: ProjectMemberRole;
 }
 
 export interface UpdateProjectMemberRoleDto {
-  projectRole: string;
+  projectRole: ProjectMemberRole;
 }
 
 export interface UpdateProjectStatusDto {
   status: ProjectStatus;
+}
+
+/** Solo ADMIN/PROGRAM_MANAGER. El nuevo líder debe existir, estar activo y tener RoleName.PROJECT_LEADER. */
+export interface ChangeProjectLeaderDto {
+  newLeaderId: ID;
 }
 
 export interface ListProjectsQuery {
@@ -88,13 +103,14 @@ export interface HealthResponse {
   timestamp: string;
 }
 
-export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED' | 'CANCELLED';
 
-export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Task {
   id: ID;
   projectId: ID;
+  parentTaskId: ID | null;
   title: string;
   description: string | null;
   status: TaskStatus;
@@ -103,12 +119,16 @@ export interface Task {
   assignedTo?: User;
   startDate: string | null;
   dueDate: string | null;
+  createdBy: ID;
   createdAt: string;
   updatedAt: string;
+  archivedAt: string | null;
 }
 
 export interface CreateTaskDto {
   projectId: ID;
+  /** Si viene, esta tarea se crea como subtarea de parentTaskId (mismo proyecto, un solo nivel). */
+  parentTaskId?: ID;
   title: string;
   description?: string;
   status?: TaskStatus;

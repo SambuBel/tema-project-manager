@@ -1,7 +1,7 @@
 import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { UserEntity } from './user.entity';
 import { ProjectEntity } from '../../projects/project.entity';
-import { TaskEntity } from './task.entity';
+import { TaskEntity } from '../../tasks/task.entity';
 import { NotificationChannel } from '../enums';
 
 /**

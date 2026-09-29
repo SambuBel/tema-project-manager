@@ -7,7 +7,7 @@ import { AuthorizedDomainEntity } from './authorized-domain.entity';
 import { ProjectStatusHistoryEntity } from './project-status-history.entity';
 import { ResourceProfileEntity } from './resource-profile.entity';
 import { ProjectMemberEntity } from './project-member.entity';
-import { TaskEntity } from './task.entity';
+import { TaskEntity } from '../../tasks/task.entity';
 import { TaskDependencyEntity } from './task-dependency.entity';
 import { TagEntity } from './tag.entity';
 import { TaskTagEntity } from './task-tag.entity';
@@ -32,7 +32,7 @@ export * from './authorized-domain.entity';
 export * from './project-status-history.entity';
 export * from './resource-profile.entity';
 export * from './project-member.entity';
-export * from './task.entity';
+export { TaskEntity } from '../../tasks/task.entity';
 export * from './task-dependency.entity';
 export * from './tag.entity';
 export * from './task-tag.entity';
@@ -50,7 +50,10 @@ export * from './ai-conversation.entity';
 export * from './ai-message.entity';
 
 /** Todas las entidades del dominio, usadas por DataSource (migrations) y por DatabaseModule (Nest). */
+import { ProjectActivityEntity } from './project-activity.entity';
+
 export const ALL_ENTITIES = [
+  ProjectActivityEntity,
   ProjectEntity,
   UserEntity,
   RoleEntity,
@@ -77,3 +80,5 @@ export const ALL_ENTITIES = [
   AiConversationEntity,
   AiMessageEntity,
 ];
+
+export * from './project-activity.entity';
