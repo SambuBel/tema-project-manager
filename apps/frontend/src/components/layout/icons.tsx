@@ -70,3 +70,11 @@ export const ChevronIcon = () => (
     <path d="m14.5 6-6 6 6 6" />
   </Icon>
 );
+
+export const LogoutIcon = () => (
+  <Icon width="16" height="16">
+    <path d="M9 20H5.5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5.5 4H9" />
+    <path d="M16 16.5 20.5 12 16 7.5" />
+    <path d="M20 12H9.5" />
+  </Icon>
+);

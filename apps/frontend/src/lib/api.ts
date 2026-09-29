@@ -53,6 +53,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getMe: () => request<AuthenticatedUser>('/auth/me'),
+  logout: () => request<void>('/auth/logout', { method: 'POST' }),
   listProjects: (query?: ListProjectsQuery) => {
     const params = new URLSearchParams();
     if (query?.name) params.append('name', query.name);
