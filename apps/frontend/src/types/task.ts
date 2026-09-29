@@ -1,9 +1,10 @@
 /**
- * Cuando se agreguen a @tema/shared-types, reemplazar estos imports.
+ * Tipos de tareas sincronizados con @tema/shared-types.
+ * Cuando se migre completamente a shared-types, reemplazar estos imports.
  */
 
-export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
+export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED' | 'CANCELLED';
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Task {
   id: string;
@@ -36,10 +37,10 @@ export interface TaskFilters {
   search?: string;
 }
 
-/** Labels para mostrar en la UI. */
 export const taskStatusLabels: Record<TaskStatus, string> = {
   PENDING: 'Pendiente',
   IN_PROGRESS: 'En curso',
+  IN_REVIEW: 'En revisión',
   BLOCKED: 'Bloqueada',
   COMPLETED: 'Completada',
   CANCELLED: 'Cancelada',
@@ -49,4 +50,5 @@ export const taskPriorityLabels: Record<TaskPriority, string> = {
   LOW: 'Baja',
   MEDIUM: 'Media',
   HIGH: 'Alta',
+  CRITICAL: 'Crítica',
 };

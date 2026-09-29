@@ -13,13 +13,10 @@ import { FilterTasksDto } from './dto/filter-tasks.dto';
 
 /**
  * Toda decisión de AUTORIZACIÓN (quién puede ver/crear/editar/borrar) vive en
- * PermissionsService — este service ya no tiene su propia lógica de "es líder o
- * miembro" (existía como assertProjectMember/isProjectMember, duplicando lo que
- * ya resolvía PermissionsService para Projects; eliminada en el paso 4). Lo único
- * que queda acá son validaciones del DATO enviado, no de QUIEN pide la acción:
+ * PermissionsService - este service ya no tiene su propia lógica de "es líder o
+ * miembro". Lo único que queda acá son validaciones del DATO enviado, no de QUIEN pide la acción:
  * RN-03 (el responsable debe pertenecer al proyecto), la jerarquía de subtareas
- * y RN-04 (no completar con subtareas pendientes) — por eso son helpers técnicos
- * propios, no policies.
+ * y RN-04 (no completar con subtareas pendientes)
  */
 @Injectable()
 export class TasksService {
@@ -40,7 +37,7 @@ export class TasksService {
     return project;
   }
 
-  /** Sin chequeo de autorización: uso interno para operaciones que ya validan permisos por su cuenta. */
+  /** Sin chequeo de autorización */
   private async findTaskOrThrow(id: string): Promise<TaskEntity> {
     const task = await this.repo.findOne({
       where: { id },
@@ -52,15 +49,7 @@ export class TasksService {
     return task;
   }
 
-  /**
-   * RN-03: el responsable de una tarea tiene que existir (404 si no, evita un 500
-   * por FK) y pertenecer al proyecto — líder o con una fila activa en
-   * project_members (cualquier projectRole: un OBSERVER puede figurar como
-   * responsable histórico aunque hoy no pueda editar la tarea él mismo; eso no lo
-   * dice ninguna regla, así que no lo restrinjo). Reutiliza
-   * PermissionsService.getProjectMembership en vez de consultar project_members
-   * de nuevo acá.
-   */
+  
   private async assertAssigneeIsProjectMember(project: ProjectEntity, assigneeId: string): Promise<void> {
     const assignee = await this.usersService.findById(assigneeId);
     if (!assignee) {
@@ -77,8 +66,7 @@ export class TasksService {
 
   /**
    * Una subtarea tiene que apuntar a una tarea que exista, del MISMO proyecto, y que no
-   * sea a su vez una subtarea (jerarquia de un solo nivel: evita tener que resolver ciclos
-   * y anidamientos arbitrarios).
+   * sea a su vez una subtarea
    */
   private async assertValidParentTask(projectId: string, parentTaskId: string): Promise<void> {
     const parent = await this.repo.findOneBy({ id: parentTaskId });
@@ -95,7 +83,7 @@ export class TasksService {
 
   /**
    * Crea una tarea (o subtarea, si viene parentTaskId) dentro de un proyecto.
-   * canCreateTask decide QUIÉN puede crear (ver auth/permissions.service.ts);
+   * canCreateTask decide quien puede crear (ver auth/permissions.service.ts);
    * assertValidParentTask/assertAssigneeIsProjectMember validan que los datos
    * enviados sean coherentes. `createdBy` sale del usuario autenticado.
    */
@@ -142,7 +130,8 @@ export class TasksService {
       .createQueryBuilder('task')
       .leftJoinAndSelect('task.assignedTo', 'assignedTo')
       .leftJoinAndSelect('task.project', 'project')
-      .where('task.projectId = :projectId', { projectId: filters.projectId });
+      .where('task.projectId = :projectId', { projectId: filters.projectId })
+      .andWhere('task.parentTaskId IS NULL');
 
     if (filters.status) {
       qb.andWhere('task.status = :status', { status: filters.status });
@@ -179,7 +168,7 @@ export class TasksService {
     return task;
   }
 
-  /** Subtareas de una tarea: mismo criterio de acceso que ver la tarea padre (404/403 vía findOne). */
+  /** Subtareas de una tarea */
   async findSubtasks(parentTaskId: string, user: RequestUser): Promise<TaskEntity[]> {
     await this.findOne(parentTaskId, user);
 
@@ -225,16 +214,7 @@ export class TasksService {
     return this.repo.save(task);
   }
 
-  /**
-   * "Eliminar tarea" de la matriz funcional: RN-07 exige baja lógica para
-   * registros con historial (Comments/TaskDependencies referencian tasks), así
-   * que esto es archivar (archivedAt), nunca un DELETE físico. Usa
-   * canDeleteTask, la misma policy que tendría un DELETE real: COLLABORATOR y
-   * OBSERVER nunca, ni siquiera sobre tareas propias/asignadas — a diferencia de
-   * canEditTask, acá el ownership no habilita nada.
-   *
-   * Idempotente: archivar una tarea ya archivada no vuelve a guardar.
-   */
+  
   async archive(id: string, user: RequestUser): Promise<TaskEntity> {
     const task = await this.findTaskOrThrow(id);
 

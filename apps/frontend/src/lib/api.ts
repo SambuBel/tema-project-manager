@@ -10,9 +10,8 @@ import type {
   AuthenticatedUser,
   CreateTaskDto,
   UpdateTaskDto,
-  Task
 } from '@tema/shared-types';
-import type { TaskFilters } from '../types/task'
+import type { Task, TaskFilters } from '../types/task'
 
 const BASE = '/api';
 

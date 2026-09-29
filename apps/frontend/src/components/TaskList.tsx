@@ -4,11 +4,10 @@ import { api } from '../lib/api';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 
-/* ───────── Helpers visuales ───────── */
-
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
   IN_PROGRESS: 'bg-blue-50 text-blue-700',
+  IN_REVIEW: 'bg-purple-50 text-purple-700',
   BLOCKED: 'bg-red-50 text-red-700',
   COMPLETED: 'bg-green-50 text-green-700',
   CANCELLED: 'bg-gray-100 text-gray-400',
@@ -18,6 +17,7 @@ const priorityColors: Record<TaskPriority, string> = {
   LOW: 'bg-gray-100 text-gray-600',
   MEDIUM: 'bg-amber-50 text-amber-700',
   HIGH: 'bg-red-50 text-red-700',
+  CRITICAL: 'bg-red-100 text-red-800',
 };
 
 function initials(name: string): string {
@@ -30,7 +30,7 @@ function initials(name: string): string {
 }
 
 function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '';
+  if (!dateStr) return '—';
   try {
     return new Date(dateStr).toLocaleDateString('es-ES', {
       day: '2-digit',
@@ -48,22 +48,33 @@ function isOverdue(task: Task): boolean {
   return new Date(task.dueDate) < new Date();
 }
 
-/* ───────── Props ───────── */
+/** "En riesgo" = vencida O bloqueada. */
+function isAtRisk(task: Task): boolean {
+  return isOverdue(task) || task.status === 'BLOCKED';
+}
+
+/* Tipos */
+
+type RiskFilter = 'ALL' | 'AT_RISK';
+
+/* Props */
 
 interface TaskListProps {
   projectId: string;
-  projectName: string;
-  onBack: () => void;
   onSelectTask: (taskId: string) => void;
 }
 
-/* ───────── Componente ───────── */
+/* Componente */
 
-export function TaskList({ projectId, projectName, onBack, onSelectTask }: TaskListProps) {
+/**
+ * Lista de tareas de un proyecto en formato tabla.
+ */
+export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   const [filters, setFilters] = useState<TaskFilters>({ projectId });
   const [searchInput, setSearchInput] = useState('');
   const [statusInput, setStatusInput] = useState<TaskStatus | ''>('');
   const [priorityInput, setPriorityInput] = useState<TaskPriority | ''>('');
+  const [riskFilter, setRiskFilter] = useState<RiskFilter>('ALL');
 
   const tasks = useQuery({
     queryKey: ['tasks', filters],
@@ -80,42 +91,50 @@ export function TaskList({ projectId, projectName, onBack, onSelectTask }: TaskL
     });
   };
 
-  const handleStatusFilter = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setStatusInput(e.target.value as TaskStatus | '');
-  };
-
-  const handlePriorityFilter = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setPriorityInput(e.target.value as TaskPriority | '');
-  };
-
   const clearFilters = () => {
     setFilters({ projectId });
     setSearchInput('');
     setStatusInput('');
     setPriorityInput('');
+    setRiskFilter('ALL');
   };
 
   const hasActiveFilters = !!(filters.status || filters.priority || filters.search);
 
-  return (
-    <div className="flex flex-col gap-6 text-[#172B42]">
-      {/* Breadcrumb */}
-      <div className="flex items-center text-sm text-[#607185]">
-        <button onClick={onBack} className="hover:underline">
-          Mis proyectos
-        </button>
-        <span className="mx-2">/</span>
-        <button onClick={onBack} className="hover:underline">
-          {projectName}
-        </button>
-        <span className="mx-2">/</span>
-        <span>Tareas</span>
-      </div>
+  /* Aplicar filtro de riesgo sobre los datos ya cargados (client-side). */
+  const visibleTasks: Task[] = (() => {
+    if (!tasks.data) return [];
+    if (riskFilter === 'AT_RISK') return tasks.data.filter(isAtRisk);
+    return tasks.data;
+  })();
 
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-semibold">Tareas</h1>
-        <p className="mt-1 text-sm text-[#607185]">{projectName}</p>
+  const totalCount = tasks.data?.length ?? 0;
+  const atRiskCount = tasks.data?.filter(isAtRisk).length ?? 0;
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Toggle Todas / En riesgo */}
+      <div className="flex items-center gap-3">
+        <button
+          className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+            riskFilter === 'ALL'
+              ? 'bg-[#245B78] text-white'
+              : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-[#EAF2F7]'
+          }`}
+          onClick={() => setRiskFilter('ALL')}
+        >
+          Todas ({totalCount})
+        </button>
+        <button
+          className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+            riskFilter === 'AT_RISK'
+              ? 'bg-red-600 text-white'
+              : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-red-50'
+          }`}
+          onClick={() => setRiskFilter('AT_RISK')}
+        >
+          En riesgo ({atRiskCount})
+        </button>
       </div>
 
       {/* Filtros */}
@@ -123,7 +142,7 @@ export function TaskList({ projectId, projectName, onBack, onSelectTask }: TaskL
         <form onSubmit={handleSearch} className="flex flex-wrap items-center gap-3">
           <input
             className="min-w-[200px] flex-1 rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm placeholder:text-[#607185] focus:border-[#245B78] focus:outline-none"
-            placeholder="Buscar por título o descripción..."
+            placeholder="Buscar por título o descripción…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
@@ -131,7 +150,7 @@ export function TaskList({ projectId, projectName, onBack, onSelectTask }: TaskL
           <select
             className="rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
             value={statusInput}
-            onChange={handleStatusFilter}
+            onChange={(e) => setStatusInput(e.target.value as TaskStatus | '')}
           >
             <option value="">Estado: Todos</option>
             {Object.entries(taskStatusLabels).map(([key, label]) => (
@@ -144,7 +163,7 @@ export function TaskList({ projectId, projectName, onBack, onSelectTask }: TaskL
           <select
             className="rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
             value={priorityInput}
-            onChange={handlePriorityFilter}
+            onChange={(e) => setPriorityInput(e.target.value as TaskPriority | '')}
           >
             <option value="">Prioridad: Todas</option>
             {Object.entries(taskPriorityLabels).map(([key, label]) => (
@@ -175,7 +194,7 @@ export function TaskList({ projectId, projectName, onBack, onSelectTask }: TaskL
 
       {/* Loading */}
       {tasks.isLoading && (
-        <p className="text-sm text-[#607185]">Cargando tareas...</p>
+        <p className="text-sm text-[#607185]">Cargando tareas…</p>
       )}
 
       {/* Error */}
@@ -184,68 +203,58 @@ export function TaskList({ projectId, projectName, onBack, onSelectTask }: TaskL
       )}
 
       {/* Empty */}
-      {tasks.isSuccess && tasks.data.length === 0 && (
+      {tasks.isSuccess && visibleTasks.length === 0 && (
         <div className="rounded-xl border border-[#DEE5EC] bg-white p-8 text-center">
           <p className="text-sm text-[#607185]">
-            {hasActiveFilters
-              ? 'No se encontraron tareas con los filtros actuales.'
-              : 'Este proyecto todavía no tiene tareas.'}
+            {riskFilter === 'AT_RISK'
+              ? 'No hay tareas en riesgo. ¡Todo en orden!'
+              : hasActiveFilters
+                ? 'No se encontraron tareas con los filtros actuales.'
+                : 'Este proyecto todavía no tiene tareas.'}
           </p>
         </div>
       )}
 
-      {/* Task cards */}
-      {tasks.isSuccess && tasks.data.length > 0 && (
-        <div className="flex flex-col gap-3">
-          {tasks.data.map((task) => (
+      {/* Tabla de tareas */}
+      {tasks.isSuccess && visibleTasks.length > 0 && (
+        <div className="overflow-hidden rounded-xl border border-[#DEE5EC] bg-white">
+          {/* Header */}
+          <div className="grid grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 border-b border-[#DEE5EC] bg-[#F7F9FB] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#607185]">
+            <span>Tarea</span>
+            <span>Responsable</span>
+            <span>Estado</span>
+            <span>Prioridad</span>
+            <span>Vencimiento</span>
+          </div>
+
+          {/* Rows */}
+          {visibleTasks.map((task) => (
             <button
               key={task.id}
               onClick={() => onSelectTask(task.id)}
-              className="flex items-center gap-4 rounded-xl border border-[#DEE5EC] bg-white px-5 py-4 text-left transition-colors hover:border-[#245B78]/30 hover:bg-[#EAF2F7]/30"
+              className="grid w-full grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 border-b border-[#DEE5EC] px-5 py-3.5 text-left transition-colors last:border-b-0 hover:bg-[#EAF2F7]/40"
             >
-              {/* Título y descripción */}
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium text-[#172B42]">{task.title}</p>
+              {/* Tarea */}
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-[#172B42]">{task.title}</p>
                 {task.description && (
-                  <p className="mt-0.5 truncate text-sm text-[#607185]">
-                    {task.description}
-                  </p>
+                  <p className="mt-0.5 truncate text-xs text-[#607185]">{task.description}</p>
                 )}
               </div>
 
-              {/* Badges */}
-              <div className="flex shrink-0 items-center gap-2">
-                {/* Status */}
-                <span
-                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColors[task.status]}`}
-                >
-                  {taskStatusLabels[task.status]}
-                </span>
-
-                {/* Priority */}
-                <span
-                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${priorityColors[task.priority]}`}
-                >
-                  {taskPriorityLabels[task.priority]}
-                </span>
-
-                {/* Due date */}
-                {task.dueDate && (
-                  <span
-                    className={`text-xs ${isOverdue(task) ? 'font-semibold text-red-600' : 'text-[#607185]'}`}
-                  >
-                    {isOverdue(task) ? '⚠ ' : ''}
-                    {formatDate(task.dueDate)}
-                  </span>
-                )}
-
-                {/* Assignee */}
+              {/* Responsable */}
+              <div className="flex items-center">
                 {task.assignedTo ? (
-                  <div
-                    className="flex h-7 w-7 items-center justify-center rounded-full bg-[#EAF2F7] text-[10px] font-semibold text-[#245B78]"
-                    title={task.assignedTo.name}
-                  >
-                    {initials(task.assignedTo.name)}
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#EAF2F7] text-[10px] font-semibold text-[#245B78]"
+                      title={task.assignedTo.name}
+                    >
+                      {initials(task.assignedTo.name)}
+                    </div>
+                    <span className="hidden truncate text-xs text-[#172B42] lg:inline">
+                      {task.assignedTo.name.split(' ')[0]}
+                    </span>
                   </div>
                 ) : (
                   <div
@@ -256,8 +265,42 @@ export function TaskList({ projectId, projectName, onBack, onSelectTask }: TaskL
                   </div>
                 )}
               </div>
+
+              {/* Estado */}
+              <div>
+                <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColors[task.status]}`}>
+                  {taskStatusLabels[task.status]}
+                </span>
+              </div>
+
+              {/* Prioridad */}
+              <div>
+                <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${priorityColors[task.priority]}`}>
+                  {taskPriorityLabels[task.priority]}
+                </span>
+              </div>
+
+              {/* Vencimiento */}
+              <div>
+                <span className={`text-xs ${isOverdue(task) ? 'font-semibold text-red-600' : 'text-[#607185]'}`}>
+                  {isOverdue(task) && '⚠ '}
+                  {formatDate(task.dueDate)}
+                </span>
+              </div>
             </button>
           ))}
+
+          {/* Footer */}
+          <div className="flex items-center justify-between border-t border-[#DEE5EC] bg-[#F7F9FB] px-5 py-2.5 text-xs text-[#607185]">
+            <span>
+              {riskFilter === 'AT_RISK'
+                ? `${visibleTasks.length} tarea${visibleTasks.length !== 1 ? 's' : ''} en riesgo`
+                : `${visibleTasks.length} tarea${visibleTasks.length !== 1 ? 's' : ''}`}
+            </span>
+            {hasActiveFilters && (
+              <span className="italic">Filtros activos</span>
+            )}
+          </div>
         </div>
       )}
     </div>

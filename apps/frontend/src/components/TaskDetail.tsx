@@ -2,11 +2,12 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 import type { TaskStatus, TaskPriority } from '../types/task';
-
+import { SubtaskList } from './SubtaskList';
 
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
   IN_PROGRESS: 'bg-blue-50 text-blue-700',
+  IN_REVIEW: 'bg-purple-50 text-purple-700',
   BLOCKED: 'bg-red-50 text-red-700',
   COMPLETED: 'bg-green-50 text-green-700',
   CANCELLED: 'bg-gray-100 text-gray-400',
@@ -16,6 +17,7 @@ const priorityColors: Record<TaskPriority, string> = {
   LOW: 'bg-gray-100 text-gray-600',
   MEDIUM: 'bg-amber-50 text-amber-700',
   HIGH: 'bg-red-50 text-red-700',
+  CRITICAL: 'bg-red-100 text-red-800',
 };
 
 function formatDate(dateStr: string | null): string {
@@ -31,15 +33,17 @@ function formatDate(dateStr: string | null): string {
   }
 }
 
-
 interface TaskDetailProps {
   taskId: string;
-  projectName: string;
   onBack: () => void;
 }
 
+/* Componente */
 
-export function TaskDetail({ taskId, projectName, onBack }: TaskDetailProps) {
+/**
+ * Detalle de una tarea individual.
+ */
+export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
   const { data: task, isLoading, isError } = useQuery({
     queryKey: ['task', taskId],
     queryFn: () => api.getTask(taskId),
@@ -51,7 +55,7 @@ export function TaskDetail({ taskId, projectName, onBack }: TaskDetailProps) {
         <button onClick={onBack} className="self-start text-sm text-[#607185] hover:underline">
           &larr; Volver a tareas
         </button>
-        <p className="text-sm text-[#607185]">Cargando tarea...</p>
+        <p className="text-sm text-[#607185]">Cargando tarea…</p>
       </div>
     );
   }
@@ -69,18 +73,12 @@ export function TaskDetail({ taskId, projectName, onBack }: TaskDetailProps) {
 
   return (
     <div className="flex flex-col gap-8 text-[#172B42]">
-      <div className="flex items-center text-sm text-[#607185]">
-        <button onClick={onBack} className="hover:underline">
-          {projectName}
-        </button>
-        <span className="mx-2">/</span>
-        <button onClick={onBack} className="hover:underline">
-          Tareas
-        </button>
-        <span className="mx-2">/</span>
-        <span className="truncate">{task.title}</span>
-      </div>
+      {/* Botón volver */}
+      <button onClick={onBack} className="self-start text-sm text-[#607185] hover:underline">
+        &larr; Volver a tareas
+      </button>
 
+      {/* Título + badges */}
       <div>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-semibold">{task.title}</h1>
@@ -94,6 +92,7 @@ export function TaskDetail({ taskId, projectName, onBack }: TaskDetailProps) {
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        {/* Descripción */}
         <div className="flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-6 md:col-span-2">
           <h3 className="text-lg font-semibold text-[#172B42]">Descripción</h3>
           {task.description ? (
@@ -114,7 +113,12 @@ export function TaskDetail({ taskId, projectName, onBack }: TaskDetailProps) {
             {task.assignedTo ? (
               <div className="mt-3 flex items-center gap-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#EAF2F7] text-xs font-semibold text-[#245B78]">
-                  {task.assignedTo.name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase()}
+                  {task.assignedTo.name
+                    .split(' ')
+                    .map((n) => n[0])
+                    .join('')
+                    .substring(0, 2)
+                    .toUpperCase()}
                 </div>
                 <span className="text-sm font-medium">{task.assignedTo.name}</span>
               </div>
@@ -153,12 +157,12 @@ export function TaskDetail({ taskId, projectName, onBack }: TaskDetailProps) {
         </div>
       </div>
 
-      {/* Placeholder para subtareas (KAN-134) */}
+      {/* Subtareas */}
       <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
         <h3 className="text-lg font-semibold text-[#172B42]">Subtareas</h3>
-        <p className="mt-4 text-sm text-[#607185]">
-          pendiente de KAN-134.
-        </p>
+        <div className="mt-4">
+          <SubtaskList parentTaskId={taskId} />
+        </div>
       </div>
     </div>
   );
