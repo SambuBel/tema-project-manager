@@ -14,12 +14,18 @@ import { UserRoleEntity } from './entities/user-role.entity';
 import { RoleName } from './enums';
 
 /**
- * SOLO DESARROLLO: crea (o reutiliza) un usuario activo con rol COLLABORATOR y firma
- * a mano un JWT de sesion identico al que emite AuthService.signSessionToken, para poder
- * probar endpoints protegidos (ej. en Postman) sin pasar por el login real de Google.
+ * SOLO DESARROLLO: crea (o reutiliza) un usuario activo con un rol global y firma a mano
+ * un JWT de sesion identico al que emite AuthService.signSessionToken, para poder probar
+ * endpoints protegidos (ej. en Postman) sin pasar por el login real de Google.
+ *
+ * Por defecto el rol es PROJECT_LEADER: desde el paso de roles/permisos, crear un
+ * proyecto (POST /projects) requiere ADMIN/PROGRAM_MANAGER/PROJECT_LEADER — un
+ * COLLABORATOR ya no puede. Pasar otro rol como 3er argumento si hace falta probar
+ * con menos permisos (ej. COLLABORATOR para probar que un 403 sea el esperado).
  *
  * Uso:
  *   pnpm --filter @tema/backend create:dev-user -- dev@example.com "Dev User"
+ *   pnpm --filter @tema/backend create:dev-user -- dev@example.com "Dev User" COLLABORATOR
  */
 function base64url(input: Buffer | string): string {
   return Buffer.from(input).toString('base64url');
@@ -42,6 +48,10 @@ async function createDevUser(): Promise<void> {
   const args = process.argv.slice(2).filter((arg) => arg !== '--');
   const email = args[0] ?? 'dev@example.com';
   const name = args[1] ?? 'Dev User';
+  const roleArg = (args[2]?.toUpperCase() ?? RoleName.PROJECT_LEADER) as RoleName;
+  if (!Object.values(RoleName).includes(roleArg)) {
+    throw new Error(`Rol "${args[2]}" invalido. Opciones: ${Object.values(RoleName).join(', ')}`);
+  }
 
   const jwtSecret = process.env.JWT_SECRET;
   if (!jwtSecret) {
@@ -59,15 +69,15 @@ async function createDevUser(): Promise<void> {
   if (!user) {
     user = await usersRepo.save(usersRepo.create({ email, name, active: true }));
 
-    const collaboratorRole = await rolesRepo.findOneBy({ name: RoleName.COLLABORATOR });
-    if (!collaboratorRole) {
-      throw new Error(`No existe el rol ${RoleName.COLLABORATOR}. ¿Corriste "pnpm --filter @tema/backend seed"?`);
+    const role = await rolesRepo.findOneBy({ name: roleArg });
+    if (!role) {
+      throw new Error(`No existe el rol ${roleArg}. ¿Corriste "pnpm --filter @tema/backend seed"?`);
     }
     await userRolesRepo
       .createQueryBuilder()
       .insert()
       .into(UserRoleEntity)
-      .values({ userId: user.id, roleId: collaboratorRole.id })
+      .values({ userId: user.id, roleId: role.id })
       .orIgnore()
       .execute();
   }
@@ -77,7 +87,7 @@ async function createDevUser(): Promise<void> {
   const token = signDevSessionToken(user.id, jwtSecret, jwtExpiresIn);
 
   // eslint-disable-next-line no-console
-  console.log(`Usuario: ${user.email} (id=${user.id})`);
+  console.log(`Usuario: ${user.email} (id=${user.id}, rol pedido=${roleArg})`);
   // eslint-disable-next-line no-console
   console.log(`\nToken (valor de la cookie "tema_session"):\n${token}`);
   // eslint-disable-next-line no-console
