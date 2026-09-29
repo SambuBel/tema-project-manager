@@ -2,6 +2,7 @@
  * Tipos de tareas sincronizados con @tema/shared-types.
  * Cuando se migre completamente a shared-types, reemplazar estos imports.
  */
+import type { User } from '@tema/shared-types';
 
 export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED' | 'CANCELLED';
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -15,21 +16,16 @@ export interface Task {
   status: TaskStatus;
   priority: TaskPriority;
   assignedToId: string | null;
-  assignedTo: {
-    id: string;
-    name: string;
-    avatarUrl: string | null;
-  } | null;
-  /** leaderId incluido: lo necesitan los helpers de permisos de UI (lib/permissions.ts) sin fetch aparte. */
+  assignedTo?: User;
   project: {
     id: string;
     name: string;
     leaderId: string;
   };
   /** Quién creó la tarea (siempre presente, el backend lo llena con el usuario autenticado). */
-  createdBy: string;
   startDate: string | null;
   dueDate: string | null;
+  createdBy: string;
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
