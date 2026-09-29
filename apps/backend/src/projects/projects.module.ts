@@ -9,7 +9,7 @@ import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
 import { ProjectActivityService } from './project-activity.service';
 import { UsersModule } from '../users/users.module';
-import { AuthModule } from '../auth/auth.module'; // Fixed absolute path if any
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
