@@ -47,6 +47,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: 'include',
     ...init,
   });
+
+  // Sesión cortada a mitad de uso (cookie vencida/inválida en cualquier llamada
+  // que no sea la propia /auth/me, que ya maneja useCurrentUser + RequireAuth
+  // sin necesitar un reload duro). Reload completo, no navigate(): así se
+  // descarta cualquier estado en memoria de una sesión que ya no es válida.
+  if (res.status === 401 && path !== '/auth/me' && window.location.pathname !== '/login') {
+    window.location.href = '/login';
+  }
+
   if (!res.ok) throw new ApiRequestError(res.status, res.statusText, await readErrorDetails(res));
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
