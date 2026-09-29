@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { AddressInfo } from 'net';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AuthService } from '../auth/auth.service';
 import { UserEntity } from '../database/entities/user.entity';
 import { UsersService } from '../users/users.service';
 import { TasksController } from './tasks.controller';
@@ -30,6 +31,7 @@ describe('TasksController - POST /tasks', () => {
         // Dependencias del JwtAuthGuard real (solo se usan cuando NO se pisa el guard).
         { provide: JwtService, useValue: { verify: jest.fn() } },
         { provide: UsersService, useValue: { findById: jest.fn() } },
+        { provide: AuthService, useValue: { getRoleNames: jest.fn(async () => []) } },
       ],
     });
 

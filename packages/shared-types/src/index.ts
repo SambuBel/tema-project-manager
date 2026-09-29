@@ -61,26 +61,34 @@ export interface UpdateProjectDto {
   estimatedEndDate?: string;
 }
 
+/** Rol de un usuario DENTRO de un proyecto puntual. Nunca incluye PROJECT_LEADER: el líder es project.leaderId. */
+export type ProjectMemberRole = 'COLLABORATOR' | 'OBSERVER';
+
 export interface ProjectMember {
   id: ID;
   projectId: ID;
   userId: ID;
   user?: User;
-  projectRole: string;
+  projectRole: ProjectMemberRole;
   joinedAt: string;
 }
 
 export interface AddProjectMemberDto {
   userId: ID;
-  projectRole: string;
+  projectRole: ProjectMemberRole;
 }
 
 export interface UpdateProjectMemberRoleDto {
-  projectRole: string;
+  projectRole: ProjectMemberRole;
 }
 
 export interface UpdateProjectStatusDto {
   status: ProjectStatus;
+}
+
+/** Solo ADMIN/PROGRAM_MANAGER. El nuevo líder debe existir, estar activo y tener RoleName.PROJECT_LEADER. */
+export interface ChangeProjectLeaderDto {
+  newLeaderId: ID;
 }
 
 export interface ListProjectsQuery {

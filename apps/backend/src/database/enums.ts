@@ -11,6 +11,17 @@ export enum RoleName {
   OBSERVER = 'OBSERVER',
 }
 
+/**
+ * Rol de un usuario DENTRO de un proyecto puntual (project_members.project_role).
+ * A proposito no incluye PROJECT_LEADER: el lider de un proyecto es siempre
+ * project.leaderId (ver ProjectEntity), nunca una fila de project_members —
+ * mantenerlos separados evita tener dos fuentes de verdad para "quién lidera".
+ */
+export enum ProjectMemberRole {
+  COLLABORATOR = 'COLLABORATOR',
+  OBSERVER = 'OBSERVER',
+}
+
 export enum ProjectStatus {
   PLANNED = 'PLANNED',
   IN_PROGRESS = 'IN_PROGRESS',
@@ -77,6 +88,7 @@ export enum ProjectActivityAction {
   PROJECT_UPDATED = 'PROJECT_UPDATED',
   PROJECT_ARCHIVED = 'PROJECT_ARCHIVED',
   PROJECT_DELETED = 'PROJECT_DELETED',
+  PROJECT_LEADER_CHANGED = 'PROJECT_LEADER_CHANGED',
   MEMBER_ADDED = 'MEMBER_ADDED',
   MEMBER_ROLE_CHANGED = 'MEMBER_ROLE_CHANGED',
   MEMBER_REMOVED = 'MEMBER_REMOVED',
