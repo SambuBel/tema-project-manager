@@ -2,6 +2,7 @@
  * Tipos de tareas sincronizados con @tema/shared-types.
  * Cuando se migre completamente a shared-types, reemplazar estos imports.
  */
+import type { User } from '@tema/shared-types';
 
 export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED' | 'CANCELLED';
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -9,24 +10,23 @@ export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export interface Task {
   id: string;
   projectId: string;
+  parentTaskId: string | null;
   title: string;
   description: string | null;
   status: TaskStatus;
   priority: TaskPriority;
   assignedToId: string | null;
-  assignedTo: {
-    id: string;
-    name: string;
-    avatarUrl: string | null;
-  } | null;
+  assignedTo?: User;
   project: {
     id: string;
     name: string;
   };
   startDate: string | null;
   dueDate: string | null;
+  createdBy: string;
   createdAt: string;
   updatedAt: string;
+  archivedAt: string | null;
 }
 
 export interface TaskFilters {
