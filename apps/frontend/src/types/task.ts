@@ -9,6 +9,7 @@ export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export interface Task {
   id: string;
   projectId: string;
+  parentTaskId: string | null;
   title: string;
   description: string | null;
   status: TaskStatus;
@@ -19,14 +20,19 @@ export interface Task {
     name: string;
     avatarUrl: string | null;
   } | null;
+  /** leaderId incluido: lo necesitan los helpers de permisos de UI (lib/permissions.ts) sin fetch aparte. */
   project: {
     id: string;
     name: string;
+    leaderId: string;
   };
+  /** Quién creó la tarea (siempre presente, el backend lo llena con el usuario autenticado). */
+  createdBy: string;
   startDate: string | null;
   dueDate: string | null;
   createdAt: string;
   updatedAt: string;
+  archivedAt: string | null;
 }
 
 export interface TaskFilters {

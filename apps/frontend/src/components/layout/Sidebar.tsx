@@ -3,7 +3,7 @@ import { useMatch } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import { hasAnyRole } from '../../lib/roles';
-import { BellIcon, HomeIcon, ShieldIcon, SparklesIcon } from './icons';
+import { BellIcon, HomeIcon, InfoIcon, ShieldIcon, SparklesIcon } from './icons';
 import { SidebarHeader } from './SidebarHeader';
 import { SidebarNavButton, SidebarNavLink } from './SidebarNavItem';
 import { SidebarSection } from './SidebarSection';
@@ -60,6 +60,7 @@ export function Sidebar({ onNavigate, onOpenAssistant }: SidebarProps) {
             {canManageUsers && (
               <SidebarNavLink to="/users" icon={<ShieldIcon />} label="Permisos y usuarios" onNavigate={onNavigate} />
             )}
+            <SidebarNavLink to="/roles" icon={<InfoIcon />} label="Roles y permisos" onNavigate={onNavigate} />
             <SidebarNavLink to="/notifications" icon={<BellIcon />} label="Notificaciones" onNavigate={onNavigate} />
             {canUseAssistant && (
               <SidebarNavButton
