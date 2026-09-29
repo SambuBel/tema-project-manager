@@ -2,11 +2,15 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } 
 import { ProjectEntity } from '../../projects/project.entity';
 import { UserEntity } from './user.entity';
 import { ResourceProfileEntity } from './resource-profile.entity';
+import { ProjectMemberRole } from '../enums';
 
 /**
- * Rol dentro de un proyecto (project_role, ej: "Analista funcional"), que es distinto
- * del rol GLOBAL en user_roles (ej: COLLABORATOR). Un usuario puede ser PROJECT_LEADER
- * globalmente y aun asi tener un project_role puntual distinto en cada proyecto.
+ * Rol dentro de un proyecto (project_role: COLLABORATOR u OBSERVER), que es distinto
+ * del rol GLOBAL en user_roles (ej: RoleName.COLLABORATOR). A proposito NO admite
+ * PROJECT_LEADER: el lider de un proyecto es siempre project.leaderId (ver
+ * ProjectEntity), nunca una fila acá — evita una segunda fuente de verdad del líder.
+ * Un usuario puede tener RoleName.PROJECT_LEADER globalmente y aun asi figurar acá
+ * como COLLABORATOR/OBSERVER de un proyecto puntual que no lidera.
  */
 @Entity('project_members')
 @Index('ux_project_members_project_user', ['projectId', 'userId'], { unique: true })
@@ -29,8 +33,13 @@ export class ProjectMemberEntity {
   @JoinColumn({ name: 'user_id' })
   user!: UserEntity;
 
-  @Column({ name: 'project_role', type: 'varchar', length: 100 })
-  projectRole!: string;
+  @Column({
+    name: 'project_role',
+    type: 'enum',
+    enum: ProjectMemberRole,
+    enumName: 'project_member_role_enum',
+  })
+  projectRole!: ProjectMemberRole;
 
   @Column({ name: 'resource_profile_id', type: 'uuid', nullable: true })
   resourceProfileId!: string | null;

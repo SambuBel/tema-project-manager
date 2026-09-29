@@ -25,7 +25,7 @@ export class UserEntity {
   @Column({ name: 'name', type: 'varchar', length: 200 })
   name!: string;
 
-  @Column({ name: 'avatar_url', type: 'varchar', length: 500, nullable: true })
+  @Column({ name: 'avatar_url', type: 'varchar', length: 2000, nullable: true })
   avatarUrl!: string | null;
 
   @Column({ name: 'active', type: 'boolean', default: true })

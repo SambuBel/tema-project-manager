@@ -1,5 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
-import { TaskEntity } from './task.entity';
+import { TaskEntity } from '../../tasks/task.entity';
 import { TagEntity } from './tag.entity';
 
 @Entity('task_tags')

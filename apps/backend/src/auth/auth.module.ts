@@ -7,6 +7,7 @@ import { AuthorizedDomainEntity } from '../database/entities/authorized-domain.e
 import { ExternalAccountEntity } from '../database/entities/external-account.entity';
 import { RoleEntity } from '../database/entities/role.entity';
 import { UserRoleEntity } from '../database/entities/user-role.entity';
+import { ProjectMemberEntity } from '../database/entities/project-member.entity';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -14,10 +15,12 @@ import { GoogleStrategy } from './strategies/google.strategy';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { GoogleAuthCallbackGuard } from './guards/google-auth-callback.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
+import { PermissionsService } from './permissions.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([AuthorizedDomainEntity, ExternalAccountEntity, RoleEntity, UserRoleEntity]),
+    TypeOrmModule.forFeature([AuthorizedDomainEntity, ExternalAccountEntity, RoleEntity, UserRoleEntity, ProjectMemberEntity]),
     UsersModule,
     PassportModule.register({ defaultStrategy: 'google', session: false }),
     JwtModule.registerAsync({
@@ -30,7 +33,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, GoogleStrategy, GoogleAuthGuard, GoogleAuthCallbackGuard, JwtAuthGuard],
-  exports: [AuthService, JwtAuthGuard, JwtModule],
+  providers: [AuthService, GoogleStrategy, GoogleAuthGuard, GoogleAuthCallbackGuard, JwtAuthGuard, RolesGuard, PermissionsService],
+  exports: [AuthService, JwtAuthGuard, RolesGuard, PermissionsService, JwtModule],
 })
 export class AuthModule {}

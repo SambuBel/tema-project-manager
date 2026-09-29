@@ -16,7 +16,8 @@ function normalizeDomain(raw: string): string {
 }
 
 async function seedDevDomain(): Promise<void> {
-  const raw = process.argv[2] ?? process.env.AUTHORIZED_DOMAIN_DEV;
+  const args = process.argv.slice(2).filter((arg) => arg !== '--');
+  const raw = args[0] ?? process.env.AUTHORIZED_DOMAIN_DEV;
   if (!raw) {
     throw new Error(
       'Falta el dominio. Pasalo como argumento ("pnpm ... seed:dev-domain -- midominio.com") ' +

@@ -12,6 +12,23 @@ import { ProjectEntity } from '../projects/project.entity';
 import { UserEntity } from '../database/entities/user.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 
+/**
+ * Entidad canonica de la tabla `tasks` creada por la migration InitialSchema (unica
+ * TaskEntity del proyecto: comment/attachment/cost/notification/task-dependency/task-tag
+ * la referencian desde aca). Los nombres de propiedad (assignedToId, startDate) son los
+ * de la API; las columnas reales son responsible_user_id y planned_start_date, por eso
+ * van con `name` explicito. No mapea costos (estimated_cost, actual_cost, deleted_at):
+ * esas columnas existen en la tabla pero quedan fuera de alcance hasta que haya un ticket
+ * que las necesite.
+ *
+ * `archivedAt` es distinto de `deleted_at`: archivar no borra la tarea (sigue existiendo,
+ * solo se oculta), mismo criterio que ya usa ProjectEntity.archivedAt.
+ *
+ * Subtareas: no hay tabla separada, son filas de `tasks` con `parentTaskId` seteado
+ * (jerarquia de un solo nivel: una subtarea no puede tener sus propias subtareas,
+ * se valida en TasksService). `parentTaskId` solo se define al crear, no se puede
+ * reasignar via update — evita tener que resolver ciclos.
+ */
 @Entity('tasks')
 @Index('ix_tasks_project_id', ['projectId'])
 export class TaskEntity {
@@ -24,6 +41,14 @@ export class TaskEntity {
   @ManyToOne(() => ProjectEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'project_id' })
   project!: ProjectEntity;
+
+  @Index('ix_tasks_parent_task_id')
+  @Column({ name: 'parent_task_id', type: 'uuid', nullable: true })
+  parentTaskId!: string | null;
+
+  @ManyToOne(() => TaskEntity, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'parent_task_id' })
+  parentTask!: TaskEntity | null;
 
   @Column({ name: 'title', type: 'varchar', length: 200 })
   title!: string;
@@ -50,23 +75,34 @@ export class TaskEntity {
   })
   priority!: TaskPriority;
 
-  @Index('ix_tasks_assigned_to_id')
-  @Column({ name: 'assigned_to_id', type: 'uuid', nullable: true })
+  @Index('ix_tasks_responsible_user_id')
+  @Column({ name: 'responsible_user_id', type: 'uuid', nullable: true })
   assignedToId!: string | null;
 
   @ManyToOne(() => UserEntity, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'assigned_to_id' })
+  @JoinColumn({ name: 'responsible_user_id' })
   assignedTo!: UserEntity | null;
 
-  @Column({ name: 'start_date', type: 'date', nullable: true })
+  @Column({ name: 'planned_start_date', type: 'date', nullable: true })
   startDate!: string | null;
 
   @Column({ name: 'due_date', type: 'date', nullable: true })
   dueDate!: string | null;
+
+  /** Quien creo la tarea (created_by NOT NULL en la base): siempre el usuario autenticado. */
+  @Column({ name: 'created_by', type: 'uuid' })
+  createdBy!: string;
+
+  @ManyToOne(() => UserEntity, { onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'created_by' })
+  creator!: UserEntity;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt!: Date;
+
+  @Column({ name: 'archived_at', type: 'timestamptz', nullable: true })
+  archivedAt!: Date | null;
 }
