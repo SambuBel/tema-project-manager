@@ -17,9 +17,8 @@ describe('task-transitions', () => {
       });
     });
 
-    it('COMPLETED y CANCELLED deberían ser estados finales (sin transiciones)', () => {
+    it('COMPLETED debería ser estado final (sin transiciones)', () => {
       expect(VALID_TRANSITIONS[TaskStatus.COMPLETED]).toEqual([]);
-      expect(VALID_TRANSITIONS[TaskStatus.CANCELLED]).toEqual([]);
     });
   });
 
@@ -49,7 +48,6 @@ describe('task-transitions', () => {
     it.each([
       [TaskStatus.PENDING, TaskStatus.COMPLETED],
       [TaskStatus.PENDING, TaskStatus.IN_REVIEW],
-      [TaskStatus.PENDING, TaskStatus.CANCELLED],
       [TaskStatus.IN_PROGRESS, TaskStatus.PENDING],
       [TaskStatus.IN_REVIEW, TaskStatus.BLOCKED],
       [TaskStatus.IN_REVIEW, TaskStatus.PENDING],
@@ -57,8 +55,6 @@ describe('task-transitions', () => {
       [TaskStatus.BLOCKED, TaskStatus.COMPLETED],
       [TaskStatus.COMPLETED, TaskStatus.IN_PROGRESS],
       [TaskStatus.COMPLETED, TaskStatus.PENDING],
-      [TaskStatus.CANCELLED, TaskStatus.PENDING],
-      [TaskStatus.CANCELLED, TaskStatus.IN_PROGRESS],
     ])('debería rechazar la transición %s → %s', (from, to) => {
       expect(isValidTransition(from, to)).toBe(false);
     });

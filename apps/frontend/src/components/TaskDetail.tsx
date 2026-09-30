@@ -1,17 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { taskStatusLabels, taskPriorityLabels } from '../types/task';
-import type { TaskStatus, TaskPriority } from '../types/task';
+import { taskPriorityLabels } from '../types/task';
+import type { TaskPriority } from '../types/task';
 import { SubtaskList } from './SubtaskList';
-
-const statusColors: Record<TaskStatus, string> = {
-  PENDING: 'bg-gray-100 text-gray-700',
-  IN_PROGRESS: 'bg-blue-50 text-blue-700',
-  IN_REVIEW: 'bg-purple-50 text-purple-700',
-  BLOCKED: 'bg-red-50 text-red-700',
-  COMPLETED: 'bg-green-50 text-green-700',
-  CANCELLED: 'bg-gray-100 text-gray-400',
-};
+import { TaskStatusDropdown } from './TaskStatusDropdown';
 
 const priorityColors: Record<TaskPriority, string> = {
   LOW: 'bg-gray-100 text-gray-600',
@@ -81,10 +73,8 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
       {/* Título + badges */}
       <div>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-3xl font-semibold">{task.title}</h1>
-          <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusColors[task.status]}`}>
-            {taskStatusLabels[task.status]}
-          </span>
+          <h1 className="text-4xl font-semibold">{task.title}</h1>
+          <TaskStatusDropdown taskId={taskId} currentStatus={task.status} />
           <span className={`rounded-full px-3 py-1 text-xs font-medium ${priorityColors[task.priority]}`}>
             {taskPriorityLabels[task.priority]}
           </span>

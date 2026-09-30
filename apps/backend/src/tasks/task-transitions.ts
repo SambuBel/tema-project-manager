@@ -9,8 +9,7 @@ export const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   [TaskStatus.IN_PROGRESS]: [TaskStatus.IN_REVIEW, TaskStatus.BLOCKED, TaskStatus.COMPLETED],
   [TaskStatus.IN_REVIEW]:   [TaskStatus.COMPLETED, TaskStatus.IN_PROGRESS],
   [TaskStatus.BLOCKED]:     [TaskStatus.PENDING],
-  [TaskStatus.COMPLETED]:   [],
-  [TaskStatus.CANCELLED]:   [],
+  [TaskStatus.COMPLETED]:   []
 };
 
 export function isValidTransition(from: TaskStatus, to: TaskStatus): boolean {
@@ -22,6 +21,5 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   [TaskStatus.IN_PROGRESS]: 'En curso',
   [TaskStatus.IN_REVIEW]:   'En revisión',
   [TaskStatus.BLOCKED]:     'Bloqueada',
-  [TaskStatus.COMPLETED]:   'Completada',
-  [TaskStatus.CANCELLED]:   'Cancelada',
+  [TaskStatus.COMPLETED]:   'Completada'
 };

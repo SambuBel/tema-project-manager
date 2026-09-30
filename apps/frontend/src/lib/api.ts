@@ -11,7 +11,7 @@ import type {
   CreateTaskDto,
   UpdateTaskDto,
 } from '@tema/shared-types';
-import type { Task, TaskFilters } from '../types/task'
+import type { Task, TaskFilters, TaskStatus } from '../types/task'
 
 const BASE = '/api';
 
@@ -104,5 +104,9 @@ export const api = {
   getTask: (id: string) => request<Task>(`/tasks/${id}`),
   updateTask: (id: string, dto: UpdateTaskDto) =>
     request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  updateTaskStatus: (id: string, status: TaskStatus) =>
+    request<Task>(`/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  archiveTask: (id: string) =>
+    request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
   getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
 };
