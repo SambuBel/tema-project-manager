@@ -20,7 +20,9 @@ export interface Task {
   project: {
     id: string;
     name: string;
+    leaderId: string;
   };
+  /** Quién creó la tarea (siempre presente, el backend lo llena con el usuario autenticado). */
   startDate: string | null;
   dueDate: string | null;
   createdBy: string;

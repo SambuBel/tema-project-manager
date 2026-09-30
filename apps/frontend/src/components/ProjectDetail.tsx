@@ -1,5 +1,8 @@
 import { TaskForm } from './TaskForm';
 import type { Project } from '@tema/shared-types';
+import { useCurrentUser } from '../hooks/useCurrentUser';
+import { useMyMembership } from '../hooks/useMyMembership';
+import { canCreateTaskUI } from '../lib/permissions';
 
 /**
  * Contenido de la pestaña "Resumen" del proyecto.
@@ -24,6 +27,10 @@ function formatDate(dateStr: string | null | undefined): string {
 }
 
 export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
+  const { user } = useCurrentUser();
+  const { membership } = useMyMembership(project.id);
+  const canCreateTask = !!user && canCreateTaskUI(user, project, membership);
+
   return (
     <>
       {/* Tarjetas Superiores */}
@@ -120,8 +127,8 @@ export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
         </p>
       </div>
 
-      {/* Alta de tareas */}
-      <TaskForm projectId={project.id} />
+      {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}
+      {canCreateTask && <TaskForm projectId={project.id} />}
     </>
   );
 }

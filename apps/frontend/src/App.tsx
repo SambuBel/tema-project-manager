@@ -9,6 +9,7 @@ import { ProjectPage } from './pages/ProjectPage';
 import { CreateProjectPage } from './pages/CreateProjectPage';
 import { EditProjectPage } from './pages/EditProjectPage';
 import { EditTaskPage } from './pages/EditTaskPage';
+import { RolesMatrixPage } from './pages/RolesMatrixPage';
 
 export function App() {
   return (
@@ -26,6 +27,7 @@ export function App() {
           <Route path="projects/:projectId/edit" element={<EditProjectPage />} />
           <Route path="tasks/:taskId/edit" element={<EditTaskPage />} />
           <Route path="projects/:projectId/*" element={<ProjectPage />} />
+          <Route path="roles" element={<RolesMatrixPage />} />
           <Route path="users" element={<PlaceholderPage title="Permisos y usuarios" />} />
           <Route path="notifications" element={<PlaceholderPage title="Notificaciones" />} />
           <Route path="*" element={<PlaceholderPage title="Página no encontrada" />} />

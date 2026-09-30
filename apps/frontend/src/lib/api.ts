@@ -109,4 +109,5 @@ export const api = {
   archiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
   getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
+  archiveTask: (id: string) => request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
 };

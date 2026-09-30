@@ -1,8 +1,12 @@
 import { useNavigate } from 'react-router-dom';
 import { ProjectList } from '../components/ProjectList';
+import { useCurrentUser } from '../hooks/useCurrentUser';
+import { canCreateProjectUI } from '../lib/permissions';
 
 export function HomePage() {
   const navigate = useNavigate();
+  const { user } = useCurrentUser();
+  const canCreateProject = !!user && canCreateProjectUI(user);
 
   return (
     <div className="flex flex-col h-full max-w-6xl mx-auto py-8 px-4">
@@ -11,12 +15,14 @@ export function HomePage() {
           <h1 className="text-3xl font-bold text-gray-900">Mis proyectos</h1>
           <p className="text-gray-500 mt-1">Todos los proyectos del espacio de trabajo.</p>
         </div>
-        <button
-          className="bg-sidebar-card hover:bg-sidebar-hover text-white px-5 py-2.5 rounded-md font-medium text-sm transition-colors"
-          onClick={() => navigate('/projects/new')}
-        >
-          + Nuevo proyecto
-        </button>
+        {canCreateProject && (
+          <button
+            className="bg-sidebar-card hover:bg-sidebar-hover text-white px-5 py-2.5 rounded-md font-medium text-sm transition-colors"
+            onClick={() => navigate('/projects/new')}
+          >
+            + Nuevo proyecto
+          </button>
+        )}
       </div>
 
       <div className="mt-8">
@@ -33,12 +39,14 @@ export function HomePage() {
           <button className="rounded-md border border-gray-300 bg-white px-6 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
             Ver equipo
           </button>
-          <button
-            className="rounded-md bg-sidebar-card px-6 py-2.5 text-sm font-medium text-white hover:bg-sidebar-hover"
-            onClick={() => navigate('/projects/new')}
-          >
-            Crear un proyecto
-          </button>
+          {canCreateProject && (
+            <button
+              className="rounded-md bg-sidebar-card px-6 py-2.5 text-sm font-medium text-white hover:bg-sidebar-hover"
+              onClick={() => navigate('/projects/new')}
+            >
+              Crear un proyecto
+            </button>
+          )}
         </div>
       </div>
     </div>
