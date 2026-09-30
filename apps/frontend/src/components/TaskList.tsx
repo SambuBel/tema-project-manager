@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { useCurrentUser } from '../hooks/useCurrentUser';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 
@@ -54,7 +55,7 @@ function isAtRisk(task: Task): boolean {
 
 /* Tipos */
 
-type RiskFilter = 'ALL' | 'AT_RISK';
+type ViewFilter = 'ALL' | 'AT_RISK' | 'MINE';
 
 /* Props */
 
@@ -69,11 +70,23 @@ interface TaskListProps {
  * Lista de tareas de un proyecto en formato tabla.
  */
 export function TaskList({ projectId, onSelectTask }: TaskListProps) {
+  const { user: currentUser } = useCurrentUser();
   const [filters, setFilters] = useState<TaskFilters>({ projectId });
   const [searchInput, setSearchInput] = useState('');
   const [statusInput, setStatusInput] = useState<TaskStatus | ''>('');
   const [priorityInput, setPriorityInput] = useState<TaskPriority | ''>('');
-  const [riskFilter, setRiskFilter] = useState<RiskFilter>('ALL');
+  const [assignedToInput, setAssignedToInput] = useState('');
+  const [viewFilter, setViewFilter] = useState<ViewFilter>('ALL');
+
+  const project = useQuery({ queryKey: ['project', projectId], queryFn: () => api.getProject(projectId) });
+  const members = useQuery({ queryKey: ['project-members', projectId], queryFn: () => api.getProjectMembers(projectId) });
+
+  /* Responsables posibles para el filtro: lider + miembros activos, sin repetidos. */
+  const assignees = new Map<string, { id: string; name: string }>();
+  if (project.data?.leader) assignees.set(project.data.leader.id, project.data.leader);
+  for (const member of members.data ?? []) {
+    if (member.user) assignees.set(member.user.id, member.user);
+  }
 
   const tasks = useQuery({
     queryKey: ['tasks', filters],
@@ -87,6 +100,7 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
       search: searchInput || undefined,
       status: statusInput || undefined,
       priority: priorityInput || undefined,
+      assignedToId: assignedToInput || undefined,
     });
   };
 
@@ -95,42 +109,58 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
     setSearchInput('');
     setStatusInput('');
     setPriorityInput('');
-    setRiskFilter('ALL');
+    setAssignedToInput('');
+    setViewFilter('ALL');
   };
 
-  const hasActiveFilters = !!(filters.status || filters.priority || filters.search);
+  const hasActiveFilters = !!(filters.status || filters.priority || filters.search || filters.assignedToId);
 
-  /* Aplicar filtro de riesgo sobre los datos ya cargados (client-side). */
+  /* "Mis tareas" y "En riesgo" se aplican sobre los datos ya cargados (client-side):
+     comparten la misma consulta que "Todas", solo cambia qué se muestra de esa lista. */
+  const isMine = (task: Task): boolean => !!currentUser && task.assignedToId === currentUser.id;
+
   const visibleTasks: Task[] = (() => {
     if (!tasks.data) return [];
-    if (riskFilter === 'AT_RISK') return tasks.data.filter(isAtRisk);
+    if (viewFilter === 'AT_RISK') return tasks.data.filter(isAtRisk);
+    if (viewFilter === 'MINE') return tasks.data.filter(isMine);
     return tasks.data;
   })();
 
   const totalCount = tasks.data?.length ?? 0;
   const atRiskCount = tasks.data?.filter(isAtRisk).length ?? 0;
+  const mineCount = tasks.data?.filter(isMine).length ?? 0;
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Toggle Todas / En riesgo */}
+      {/* Toggle Todas / Mis tareas / En riesgo */}
       <div className="flex items-center gap-3">
         <button
           className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-            riskFilter === 'ALL'
+            viewFilter === 'ALL'
               ? 'bg-[#245B78] text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-[#EAF2F7]'
           }`}
-          onClick={() => setRiskFilter('ALL')}
+          onClick={() => setViewFilter('ALL')}
         >
           Todas ({totalCount})
         </button>
         <button
           className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-            riskFilter === 'AT_RISK'
+            viewFilter === 'MINE'
+              ? 'bg-[#245B78] text-white'
+              : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-[#EAF2F7]'
+          }`}
+          onClick={() => setViewFilter('MINE')}
+        >
+          Mis tareas ({mineCount})
+        </button>
+        <button
+          className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+            viewFilter === 'AT_RISK'
               ? 'bg-red-600 text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-red-50'
           }`}
-          onClick={() => setRiskFilter('AT_RISK')}
+          onClick={() => setViewFilter('AT_RISK')}
         >
           En riesgo ({atRiskCount})
         </button>
@@ -172,6 +202,19 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
             ))}
           </select>
 
+          <select
+            className="rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
+            value={assignedToInput}
+            onChange={(e) => setAssignedToInput(e.target.value)}
+          >
+            <option value="">Responsable: Todos</option>
+            {[...assignees.values()].map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+
           <button
             type="submit"
             className="rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white hover:bg-[#1a445b]"
@@ -205,11 +248,13 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
       {tasks.isSuccess && visibleTasks.length === 0 && (
         <div className="rounded-xl border border-[#DEE5EC] bg-white p-8 text-center">
           <p className="text-sm text-[#607185]">
-            {riskFilter === 'AT_RISK'
+            {viewFilter === 'AT_RISK'
               ? 'No hay tareas en riesgo. ¡Todo en orden!'
-              : hasActiveFilters
-                ? 'No se encontraron tareas con los filtros actuales.'
-                : 'Este proyecto todavía no tiene tareas.'}
+              : viewFilter === 'MINE'
+                ? 'No tenés tareas asignadas acá.'
+                : hasActiveFilters
+                  ? 'No se encontraron tareas con los filtros actuales.'
+                  : 'Este proyecto todavía no tiene tareas.'}
           </p>
         </div>
       )}
@@ -292,9 +337,11 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-[#DEE5EC] bg-[#F7F9FB] px-5 py-2.5 text-xs text-[#607185]">
             <span>
-              {riskFilter === 'AT_RISK'
+              {viewFilter === 'AT_RISK'
                 ? `${visibleTasks.length} tarea${visibleTasks.length !== 1 ? 's' : ''} en riesgo`
-                : `${visibleTasks.length} tarea${visibleTasks.length !== 1 ? 's' : ''}`}
+                : viewFilter === 'MINE'
+                  ? `${visibleTasks.length} tarea${visibleTasks.length !== 1 ? 's' : ''} asignada${visibleTasks.length !== 1 ? 's' : ''} a vos`
+                  : `${visibleTasks.length} tarea${visibleTasks.length !== 1 ? 's' : ''}`}
             </span>
             {hasActiveFilters && (
               <span className="italic">Filtros activos</span>
