@@ -6,6 +6,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { FilterTasksDto } from './dto/filter-tasks.dto';
 import { TasksService } from './tasks.service';
+import { UpdateTaskStatusDto } from './dto/update-task-status.dto';
 
 /**
  * No hay DELETE /tasks/:id: "eliminar tarea" de la matriz funcional es RN-07
@@ -40,6 +41,15 @@ export class TasksController {
   @Patch(':id')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTaskDto, @CurrentUser() user: RequestUser) {
     return this.tasksService.update(id, dto, user);
+  }
+
+  @Patch(':id/status')
+  updateStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateTaskStatusDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.tasksService.updateStatus(id, dto, user);
   }
 
   @Patch(':id/archive')

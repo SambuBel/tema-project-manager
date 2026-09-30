@@ -10,8 +10,7 @@ const statusColors: Record<TaskStatus, string> = {
   IN_PROGRESS: 'bg-blue-50 text-blue-700',
   IN_REVIEW: 'bg-purple-50 text-purple-700',
   BLOCKED: 'bg-red-50 text-red-700',
-  COMPLETED: 'bg-green-50 text-green-700',
-  CANCELLED: 'bg-gray-100 text-gray-400',
+  COMPLETED: 'bg-green-50 text-green-700'
 };
 
 const priorityColors: Record<TaskPriority, string> = {
@@ -45,7 +44,7 @@ function formatDate(dateStr: string | null): string {
 /** Devuelve true si la tarea está vencida (dueDate pasó y no está completada/cancelada). */
 function isOverdue(task: Task): boolean {
   if (!task.dueDate) return false;
-  if (task.status === 'COMPLETED' || task.status === 'CANCELLED') return false;
+  if (task.status === 'COMPLETED') return false;
   return new Date(task.dueDate) < new Date();
 }
 
