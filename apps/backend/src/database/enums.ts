@@ -34,16 +34,15 @@ export enum TaskStatus {
   PENDING = 'PENDING',
   BLOCKED = 'BLOCKED',
   IN_PROGRESS = 'IN_PROGRESS',
-  IN_REVIEW = 'IN_REVIEW', // agregado por la migration *-AddTaskReviewStatusAndCriticalPriority
+  IN_REVIEW = 'IN_REVIEW',
   COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
 }
 
 export enum TaskPriority {
   LOW = 'LOW',
   MEDIUM = 'MEDIUM',
   HIGH = 'HIGH',
-  CRITICAL = 'CRITICAL', // agregado por la misma migration
+  CRITICAL = 'CRITICAL',
 }
 
 export enum DependencyType {

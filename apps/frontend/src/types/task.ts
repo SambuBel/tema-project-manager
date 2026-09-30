@@ -4,7 +4,7 @@
  */
 import type { User } from '@tema/shared-types';
 
-export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED' | 'CANCELLED';
+export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED';
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Task {
@@ -44,13 +44,22 @@ export const taskStatusLabels: Record<TaskStatus, string> = {
   IN_PROGRESS: 'En curso',
   IN_REVIEW: 'En revisión',
   BLOCKED: 'Bloqueada',
-  COMPLETED: 'Completada',
-  CANCELLED: 'Cancelada',
+  COMPLETED: 'Completada'
 };
 
 export const taskPriorityLabels: Record<TaskPriority, string> = {
   LOW: 'Baja',
   MEDIUM: 'Media',
   HIGH: 'Alta',
-  CRITICAL: 'Crítica',
+  CRITICAL: 'Crítica'
+};
+
+
+/* En caso de cambiar algo acá, cambiar el backend también task-transitions.ts */
+export const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+  PENDING: ['IN_PROGRESS', 'BLOCKED'],
+  IN_PROGRESS: ['IN_REVIEW', 'BLOCKED', 'COMPLETED'],
+  IN_REVIEW: ['COMPLETED', 'IN_PROGRESS'],
+  BLOCKED: ['PENDING'],
+  COMPLETED: []
 };

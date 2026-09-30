@@ -9,7 +9,13 @@ import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { UpdateTaskStatusDto } from './dto/update-task-status.dto';
 import { FilterTasksDto } from './dto/filter-tasks.dto';
+import {
+  isValidTransition,
+  TASK_STATUS_LABELS,
+  VALID_TRANSITIONS,
+} from './task-transitions';
 
 /**
  * Toda decisión de AUTORIZACIÓN (quién puede ver/crear/editar/borrar) vive en
@@ -49,7 +55,7 @@ export class TasksService {
     return task;
   }
 
-  
+
   private async assertAssigneeIsProjectMember(project: ProjectEntity, assigneeId: string): Promise<void> {
     const assignee = await this.usersService.findById(assigneeId);
     if (!assignee) {
@@ -191,6 +197,11 @@ export class TasksService {
       await this.assertAssigneeIsProjectMember(task.project, dto.assignedToId);
     }
 
+    // Validar transición de estado si se está cambiando el status
+    if (dto.status !== undefined && dto.status !== task.status) {
+      this.validateTransition(task.status, dto.status);
+    }
+
     // RN-04: no se puede completar una tarea si tiene subtareas sin completar.
     if (dto.status === TaskStatus.COMPLETED) {
       const pendingSubtasks = await this.repo.count({
@@ -214,7 +225,7 @@ export class TasksService {
     return this.repo.save(task);
   }
 
-  
+
   async archive(id: string, user: RequestUser): Promise<TaskEntity> {
     const task = await this.findTaskOrThrow(id);
 
@@ -229,5 +240,48 @@ export class TasksService {
 
     task.archivedAt = new Date();
     return this.repo.save(task);
+  }
+
+  /**
+   * Cambia el estado de una tarea validando la transición.
+   * Endpoint dedicado: PATCH /tasks/:id/status
+   */
+  async updateStatus(id: string, dto: UpdateTaskStatusDto, user: RequestUser): Promise<TaskEntity> {
+    const task = await this.findTaskOrThrow(id);
+
+    const allowed = await this.permissions.canEditTask(user, task, task.project);
+    if (!allowed) {
+      throw new ForbiddenException('No podés cambiar el estado de esta tarea.');
+    }
+
+    if (task.status === dto.status) {
+      return task;
+    }
+
+    this.validateTransition(task.status, dto.status);
+
+    task.status = dto.status;
+    return this.repo.save(task);
+  }
+
+  private validateTransition(from: TaskStatus, to: TaskStatus): void {
+    if (!isValidTransition(from, to)) {
+      const fromLabel = TASK_STATUS_LABELS[from];
+      const toLabel = TASK_STATUS_LABELS[to];
+      const allowed = VALID_TRANSITIONS[from];
+
+      if (allowed.length === 0) {
+        throw new BadRequestException(
+          `La tarea está en estado "${fromLabel}" y no permite transiciones. Es un estado final.`,
+        );
+      }
+
+      const allowedLabels = allowed.map((s) => TASK_STATUS_LABELS[s]).join(', ');
+
+      throw new BadRequestException(
+        `No se puede pasar de "${fromLabel}" a "${toLabel}". ` +
+          `Transiciones permitidas desde "${fromLabel}": ${allowedLabels}.`,
+      );
+    }
   }
 }

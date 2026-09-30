@@ -400,10 +400,56 @@ describe('TasksService - update (canEditTask)', () => {
     expect(taskRepo.save).not.toHaveBeenCalled();
   });
 
+  describe('validación de transiciones de estado en update genérico', () => {
+    it('debería validar la transición al cambiar status (transición inválida -> 400)', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(
+        makeTask({ project: makeProject(), status: TaskStatus.PENDING }),
+      );
+
+      await expect(
+        service.update('task-1', { status: TaskStatus.COMPLETED }, makeUser('admin-1', [RoleName.ADMIN])),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('debería permitir update sin cambio de status', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(
+        makeTask({ project: makeProject(), status: TaskStatus.PENDING }),
+      );
+
+      const result = await service.update(
+        'task-1',
+        { title: 'Título nuevo' },
+        makeUser('admin-1', [RoleName.ADMIN]),
+      );
+
+      expect(result.title).toBe('Título nuevo');
+      expect(taskRepo.save).toHaveBeenCalled();
+    });
+
+    it('debería permitir transición válida PENDING -> IN_PROGRESS', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(
+        makeTask({ project: makeProject(), status: TaskStatus.PENDING }),
+      );
+
+      const result = await service.update(
+        'task-1',
+        { status: TaskStatus.IN_PROGRESS },
+        makeUser('admin-1', [RoleName.ADMIN]),
+      );
+
+      expect(result.status).toBe(TaskStatus.IN_PROGRESS);
+    });
+  });
+
   describe('RN-04: no completar con subtareas pendientes', () => {
     it('permite completar si no tiene subtareas pendientes (count = 0)', async () => {
       const { service, taskRepo } = makeService([]);
-      taskRepo.findOne.mockResolvedValue(makeTask({ project: makeProject() }));
+      taskRepo.findOne.mockResolvedValue(
+        makeTask({ project: makeProject(), status: TaskStatus.IN_PROGRESS }),
+      );
       taskRepo.count.mockResolvedValue(0);
 
       await expect(
@@ -413,7 +459,9 @@ describe('TasksService - update (canEditTask)', () => {
 
     it('400 si tiene subtareas sin completar, no guarda', async () => {
       const { service, taskRepo } = makeService([]);
-      taskRepo.findOne.mockResolvedValue(makeTask({ project: makeProject() }));
+      taskRepo.findOne.mockResolvedValue(
+        makeTask({ project: makeProject(), status: TaskStatus.IN_PROGRESS }),
+      );
       taskRepo.count.mockResolvedValue(2);
 
       await expect(
@@ -424,7 +472,9 @@ describe('TasksService - update (canEditTask)', () => {
 
     it('consulta subtareas pendientes de ESTA tarea (parentTaskId = task.id, status != COMPLETED)', async () => {
       const { service, taskRepo } = makeService([]);
-      taskRepo.findOne.mockResolvedValue(makeTask({ project: makeProject() }));
+      taskRepo.findOne.mockResolvedValue(
+        makeTask({ project: makeProject(), status: TaskStatus.IN_PROGRESS }),
+      );
 
       await service.update('task-1', { status: TaskStatus.COMPLETED }, makeUser('admin-1', [RoleName.ADMIN]));
 
@@ -451,6 +501,127 @@ describe('TasksService - update (canEditTask)', () => {
       ).rejects.toThrow(ForbiddenException);
       expect(taskRepo.count).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('TasksService - updateStatus (transiciones de estado)', () => {
+  it('debería cambiar el estado con una transición válida', async () => {
+    const { service, taskRepo } = makeService([]);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.PENDING }),
+    );
+
+    const result = await service.updateStatus(
+      'task-1',
+      { status: TaskStatus.IN_PROGRESS },
+      makeUser('admin-1', [RoleName.ADMIN]),
+    );
+
+    expect(result.status).toBe(TaskStatus.IN_PROGRESS);
+    expect(taskRepo.save).toHaveBeenCalled();
+  });
+
+  it('debería devolver la tarea sin cambios si el estado es el mismo (no-op)', async () => {
+    const { service, taskRepo } = makeService([]);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.IN_PROGRESS }),
+    );
+
+    const result = await service.updateStatus(
+      'task-1',
+      { status: TaskStatus.IN_PROGRESS },
+      makeUser('admin-1', [RoleName.ADMIN]),
+    );
+
+    expect(result.status).toBe(TaskStatus.IN_PROGRESS);
+    expect(taskRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('debería lanzar BadRequestException para una transición inválida', async () => {
+    const { service, taskRepo } = makeService([]);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.PENDING }),
+    );
+
+    await expect(
+      service.updateStatus('task-1', { status: TaskStatus.COMPLETED }, makeUser('admin-1', [RoleName.ADMIN])),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('debería lanzar BadRequestException desde un estado final', async () => {
+    const { service, taskRepo } = makeService([]);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.COMPLETED }),
+    );
+
+    await expect(
+      service.updateStatus('task-1', { status: TaskStatus.IN_PROGRESS }, makeUser('admin-1', [RoleName.ADMIN])),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('debería lanzar NotFoundException si la tarea no existe', async () => {
+    const { service, taskRepo } = makeService([]);
+    taskRepo.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.updateStatus('no-existe', { status: TaskStatus.IN_PROGRESS }, makeUser('admin-1', [RoleName.ADMIN])),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('debería permitir la transición IN_PROGRESS → IN_REVIEW', async () => {
+    const { service, taskRepo } = makeService([]);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.IN_PROGRESS }),
+    );
+
+    const result = await service.updateStatus(
+      'task-1',
+      { status: TaskStatus.IN_REVIEW },
+      makeUser('admin-1', [RoleName.ADMIN]),
+    );
+
+    expect(result.status).toBe(TaskStatus.IN_REVIEW);
+  });
+
+  it('debería permitir la transición BLOCKED → PENDING', async () => {
+    const { service, taskRepo } = makeService([]);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.BLOCKED }),
+    );
+
+    const result = await service.updateStatus(
+      'task-1',
+      { status: TaskStatus.PENDING },
+      makeUser('admin-1', [RoleName.ADMIN]),
+    );
+
+    expect(result.status).toBe(TaskStatus.PENDING);
+  });
+
+  it('debería respetar permisos: OBSERVER no puede cambiar estado', async () => {
+    const { service, taskRepo } = makeService([membership('obs-1', ProjectMemberRole.OBSERVER)]);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.PENDING }),
+    );
+
+    await expect(
+      service.updateStatus('task-1', { status: TaskStatus.IN_PROGRESS }, makeUser('obs-1', [RoleName.OBSERVER])),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('COLLABORATOR puede cambiar estado de tarea propia', async () => {
+    const { service, taskRepo } = makeService([membership('collab-1', ProjectMemberRole.COLLABORATOR)]);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.PENDING, createdBy: 'collab-1' }),
+    );
+
+    const result = await service.updateStatus(
+      'task-1',
+      { status: TaskStatus.IN_PROGRESS },
+      makeUser('collab-1', [RoleName.COLLABORATOR]),
+    );
+
+    expect(result.status).toBe(TaskStatus.IN_PROGRESS);
   });
 });
 
@@ -564,5 +735,15 @@ describe('TasksService - caso crítico (bug arquitectónico original)', () => {
     const { service, taskRepo } = makeService(members);
     taskRepo.findOne.mockResolvedValue(makeTask({ project: makeProject() }));
     await expect(service.archive('task-1', user)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('PATCH status (cambiar estado): 403', async () => {
+    const { service, taskRepo } = makeService(members);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.PENDING }),
+    );
+    await expect(
+      service.updateStatus('task-1', { status: TaskStatus.IN_PROGRESS }, user),
+    ).rejects.toThrow(ForbiddenException);
   });
 });
