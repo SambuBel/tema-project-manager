@@ -1,8 +1,12 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, IsNull, Repository, DataSource } from 'typeorm';
+import * as crypto from 'crypto';
 import { ProjectEntity } from './project.entity';
 import { ProjectMemberEntity } from '../database/entities/project-member.entity';
+import { ProjectInvitationEntity } from './project-invitation.entity';
+import { UserEntity } from '../database/entities/user.entity';
+import { TaskEntity } from '../tasks/task.entity';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
 import { UpdateProjectDtoImpl } from './update-project.dto';
@@ -43,7 +47,7 @@ export class ProjectsService {
    * (COLLABORATOR u OBSERVER) — filtrado en SQL, nunca trayendo todo y filtrando
    * en memoria.
    */
-  findAll(query: ListProjectsDto = {}, user: RequestUser): Promise<ProjectEntity[]> {
+  async findAll(query: ListProjectsDto = {}, user: RequestUser): Promise<ProjectEntity[]> {
     const qb = this.repo.createQueryBuilder('project');
 
     qb.where(query.archived ? 'project.archivedAt IS NOT NULL' : 'project.archivedAt IS NULL');
@@ -65,7 +69,8 @@ export class ProjectsService {
     }
 
     qb.orderBy('project.createdAt', 'DESC');
-    return qb.getMany();
+    const projects = await qb.getMany();
+    return (await this.enrichProjectsStats(projects)) as any;
   }
 
   /** Sin chequeo de acceso: uso interno para operaciones que ya validan permisos por su cuenta. */
@@ -85,7 +90,8 @@ export class ProjectsService {
     if (!allowed) {
       throw new ForbiddenException('No tenés acceso a este proyecto.');
     }
-    return project;
+    const enriched = await this.enrichProjectsStats([project]);
+    return enriched[0] as any;
   }
 
   /** GET /projects/:id/activity: mismo criterio de acceso que ver el proyecto. */
@@ -306,6 +312,101 @@ export class ProjectsService {
     });
   }
 
+  async inviteMember(projectId: string, dto: any, user: RequestUser) {
+    return this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
+      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+
+      if (!this.permissions.canManageProjectTeam(user, project)) {
+        throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
+      }
+
+      if (!dto.email.toLowerCase().endsWith('@gmail.com')) {
+        throw new BadRequestException('Solo se permiten invitaciones a correos con dominio @gmail.com');
+      }
+
+      // Check if user is already a member
+      const existingUser = await this.usersService.findByEmail(dto.email, manager);
+      if (existingUser) {
+        const isMember = await manager.findOne(ProjectMemberEntity, {
+          where: { projectId, userId: existingUser.id, removedAt: IsNull() },
+        });
+        if (isMember) {
+          throw new BadRequestException('El usuario ya es miembro de este proyecto');
+        }
+      }
+
+      // Check if there is already a pending invitation for this email
+      const existingInvite = await manager.findOne(ProjectInvitationEntity, {
+        where: { projectId, email: dto.email, status: 'PENDING' },
+      });
+      if (existingInvite) {
+        throw new BadRequestException('Ya existe una invitación pendiente para este correo');
+      }
+
+      const token = crypto.randomBytes(32).toString('hex');
+
+      const invitation = manager.create(ProjectInvitationEntity, {
+        projectId,
+        email: dto.email,
+        projectRole: dto.projectRole as unknown as ProjectMemberRoleEnum,
+        invitedBy: user.id,
+        token,
+        status: 'PENDING',
+      });
+
+      await manager.save(invitation);
+      
+      // TODO: Here we would trigger the email sending service.
+      
+      return invitation;
+    });
+  }
+
+  async getPendingInvitations(projectId: string): Promise<ProjectInvitationEntity[]> {
+    return this.dataSource.getRepository(ProjectInvitationEntity).find({
+      where: { projectId, status: 'PENDING' },
+      relations: ['inviter'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  // --- TEST ENDPOINT ONLY ---
+  async testAcceptInvitation(projectId: string, invitationId: string, user: RequestUser): Promise<void> {
+    return this.dataSource.transaction(async (manager) => {
+      const invitation = await manager.findOne(ProjectInvitationEntity, {
+        where: { id: invitationId, projectId, status: 'PENDING' },
+      });
+      if (!invitation) throw new NotFoundException('Invitación no encontrada o ya procesada');
+
+      const usersRepo = manager.getRepository(UserEntity);
+      const membersRepo = manager.getRepository(ProjectMemberEntity);
+      
+      let targetUser = await usersRepo.findOneBy({ email: invitation.email });
+      if (!targetUser) {
+        // Create dummy user for test
+        targetUser = usersRepo.create({
+          email: invitation.email,
+          name: 'Test ' + invitation.email.split('@')[0],
+          active: true,
+        });
+        await usersRepo.save(targetUser);
+      }
+
+      // Add as member
+      const member = membersRepo.create({
+        projectId,
+        userId: targetUser.id,
+        projectRole: invitation.projectRole,
+      });
+      await membersRepo.save(member);
+
+      // Mark invitation as accepted
+      invitation.status = 'ACCEPTED';
+      await manager.save(invitation);
+    });
+  }
+
   async addMember(projectId: string, dto: AddProjectMemberDto, user: RequestUser): Promise<ProjectMemberEntity> {
     return this.dataSource.transaction(async (manager) => {
       const project = await manager.findOneBy(ProjectEntity, { id: projectId });
@@ -398,6 +499,87 @@ export class ProjectsService {
       );
 
       return savedMember;
+    });
+  }
+
+  async removeMember(projectId: string, memberId: string, user: RequestUser): Promise<void> {
+    return this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
+      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+
+      if (!this.permissions.canManageProjectTeam(user, project)) {
+        throw new ForbiddenException('No tenés permisos para administrar el equipo de este proyecto.');
+      }
+
+      const member = await manager.findOne(ProjectMemberEntity, {
+        where: { id: memberId, projectId },
+      });
+
+      if (!member) {
+        throw new NotFoundException(`Miembro ${memberId} no encontrado en este proyecto`);
+      }
+
+      if (member.removedAt) {
+        throw new BadRequestException('El usuario ya fue removido del proyecto');
+      }
+
+      member.removedAt = new Date();
+      await manager.save(member);
+
+      await this.activityService.logEvent(
+        {
+          projectId,
+          actorId: user.id,
+          actionType: ProjectActivityAction.MEMBER_REMOVED,
+          entityType: ProjectActivityEntityType.MEMBER,
+          entityId: member.id,
+          metadata: { userId: member.userId, role: member.projectRole },
+        },
+        manager,
+      );
+    });
+  }
+
+  private async enrichProjectsStats(projects: ProjectEntity[]) {
+    if (projects.length === 0) return [];
+    
+    const projectIds = projects.map((p) => p.id);
+    
+    const membersQuery = this.dataSource.createQueryBuilder()
+      .select('m.project_id', 'projectId')
+      .addSelect('COUNT(m.id)', 'count')
+      .from(ProjectMemberEntity, 'm')
+      .where('m.project_id IN (:...projectIds)', { projectIds })
+      .andWhere('m.removed_at IS NULL')
+      .groupBy('m.project_id')
+      .getRawMany();
+
+    const tasksQuery = this.dataSource.createQueryBuilder()
+      .select('t.project_id', 'projectId')
+      .addSelect('COUNT(t.id)', 'total')
+      .addSelect("SUM(CASE WHEN t.status = 'COMPLETED' THEN 1 ELSE 0 END)", 'completed')
+      .from(TaskEntity, 't')
+      .where('t.project_id IN (:...projectIds)', { projectIds })
+      .andWhere('t.archived_at IS NULL')
+      .groupBy('t.project_id')
+      .getRawMany();
+
+    const [membersCounts, tasksCounts] = await Promise.all([membersQuery, tasksQuery]);
+    
+    const membersMap = new Map(membersCounts.map(r => [r.projectId, parseInt(r.count, 10)]));
+    const tasksMap = new Map(tasksCounts.map(r => [
+      r.projectId, 
+      { total: parseInt(r.total, 10), completed: parseInt(r.completed, 10) }
+    ]));
+
+    return projects.map((p) => {
+      const totalTasks = tasksMap.get(p.id)?.total || 0;
+      const completedTasks = tasksMap.get(p.id)?.completed || 0;
+      const progress = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
+      
+      p.memberCount = membersMap.get(p.id) || 0;
+      p.progress = progress;
+      return p;
     });
   }
 }

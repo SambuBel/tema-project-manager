@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards, Delete } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -56,9 +56,33 @@ export class ProjectsController {
     return this.projects.getActivity(id, limit, offset, user);
   }
 
+  @Get(':id/invitations')
+  getInvitations(@Param('id') id: string) {
+    return this.projects.getPendingInvitations(id);
+  }
+
+  @Post(':id/invitations')
+  inviteMember(@Param('id') id: string, @Body() dto: any, @CurrentUser() user: RequestUser) {
+    return this.projects.inviteMember(id, dto, user);
+  }
+
+  @Post(':id/invitations/:invitationId/test-accept')
+  testAcceptInvitation(
+    @Param('id') id: string,
+    @Param('invitationId') invitationId: string,
+    @CurrentUser() user: RequestUser
+  ) {
+    return this.projects.testAcceptInvitation(id, invitationId, user);
+  }
+
   @Post(':id/members')
   addMember(@Param('id') id: string, @Body() dto: AddProjectMemberDtoImpl, @CurrentUser() user: RequestUser) {
     return this.projects.addMember(id, dto, user);
+  }
+
+  @Delete(':id/members/:memberId')
+  removeMember(@Param('id') id: string, @Param('memberId') memberId: string, @CurrentUser() user: RequestUser) {
+    return this.projects.removeMember(id, memberId, user);
   }
 
   @Patch(':id/members/:memberId/role')

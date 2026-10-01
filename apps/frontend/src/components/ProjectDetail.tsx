@@ -37,8 +37,12 @@ export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="flex flex-col justify-center rounded-xl border border-[#DEE5EC] bg-white p-6">
           <h3 className="text-sm font-medium text-[#607185]">Avance</h3>
-          <p className="mt-2 text-3xl font-semibold">-</p>
-          <p className="mt-2 text-sm text-[#607185]">Sin métricas disponibles</p>
+          <p className="mt-2 text-3xl font-semibold">
+            {project.progress !== undefined ? `${project.progress}%` : '-'}
+          </p>
+          <p className="mt-2 text-sm text-[#607185]">
+            {project.progress !== undefined ? 'De tareas completadas' : 'Sin métricas disponibles'}
+          </p>
         </div>
 
         <div className="flex flex-col justify-center rounded-xl border border-[#DEE5EC] bg-white p-6">
@@ -53,8 +57,12 @@ export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
 
         <div className="flex flex-col justify-center rounded-xl border border-[#DEE5EC] bg-white p-6">
           <h3 className="text-sm font-medium text-[#607185]">Equipo</h3>
-          <p className="mt-2 text-3xl font-semibold">-</p>
-          <p className="mt-2 text-sm text-[#607185]">Información de equipo pendiente</p>
+          <p className="mt-2 text-3xl font-semibold">
+            {project.memberCount !== undefined ? project.memberCount : '-'}
+          </p>
+          <p className="mt-2 text-sm text-[#607185]">
+            {project.memberCount !== undefined ? 'Miembros activos' : 'Información de equipo pendiente'}
+          </p>
         </div>
       </div>
 

@@ -5,7 +5,9 @@ import type {
   UpdateProjectStatusDto,
   UpdateProjectDto,
   ProjectMember,
+  ProjectInvitation,
   AddProjectMemberDto,
+  InviteProjectMemberDto,
   UpdateProjectMemberRoleDto,
   AuthenticatedUser,
   CreateTaskDto,
@@ -83,10 +85,17 @@ export const api = {
   archiveProject: (id: string) =>
     request<Project>(`/projects/${id}/archive`, { method: 'PATCH' }),
   getProjectMembers: (id: string) => request<ProjectMember[]>(`/projects/${id}/members`),
+  getProjectInvitations: (id: string) => request<ProjectInvitation[]>(`/projects/${id}/invitations`),
   addProjectMember: (id: string, dto: AddProjectMemberDto) =>
     request<ProjectMember>(`/projects/${id}/members`, { method: 'POST', body: JSON.stringify(dto) }),
+  inviteProjectMember: (id: string, dto: InviteProjectMemberDto) =>
+    request<ProjectInvitation>(`/projects/${id}/invitations`, { method: 'POST', body: JSON.stringify(dto) }),
+  testAcceptProjectInvitation: (projectId: string, invitationId: string) =>
+    request<void>(`/projects/${projectId}/invitations/${invitationId}/test-accept`, { method: 'POST' }),
   updateProjectMemberRole: (projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto) =>
     request<ProjectMember>(`/projects/${projectId}/members/${memberId}/role`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  removeProjectMember: (projectId: string, memberId: string) =>
+    request<void>(`/projects/${projectId}/members/${memberId}`, { method: 'DELETE' }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
 
   // --- Tasks ---
@@ -109,5 +118,4 @@ export const api = {
   archiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
   getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
-  archiveTask: (id: string) => request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
 };

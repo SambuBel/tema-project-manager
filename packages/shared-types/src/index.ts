@@ -45,6 +45,8 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  memberCount?: number;
+  progress?: number;
 }
 
 export interface CreateProjectDto {
@@ -73,8 +75,22 @@ export interface ProjectMember {
   joinedAt: string;
 }
 
+export interface ProjectInvitation {
+  id: ID;
+  projectId: ID;
+  email: string;
+  projectRole: ProjectMemberRole;
+  status: 'PENDING' | 'ACCEPTED' | 'REVOKED';
+  createdAt: string;
+}
+
 export interface AddProjectMemberDto {
   userId: ID;
+  projectRole: ProjectMemberRole;
+}
+
+export interface InviteProjectMemberDto {
+  email: string;
   projectRole: ProjectMemberRole;
 }
 

@@ -46,15 +46,6 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
     return `${d.getDate()} ${d.toLocaleString('es', { month: 'short' }).substring(0, 3)}`;
   };
 
-  // Mock progress for now as it's not in the API
-  const getMockProgress = (id: string) => {
-    let hash = 0;
-    for (let i = 0; i < id.length; i++) {
-      hash = id.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return Math.abs(hash % 81) + 20; // returns 20 to 100
-  };
-
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
@@ -118,12 +109,12 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
                 <div className="mb-2 h-1.5 w-full rounded-full bg-gray-100">
                   <div
                     className="h-1.5 rounded-full bg-[#5E8E7E]"
-                    style={{ width: `${getMockProgress(p.id)}%` }}
+                    style={{ width: `${p.progress ?? 0}%` }}
                   ></div>
                 </div>
 
                 <p className="mb-6 text-xs text-gray-500">
-                  {getMockProgress(p.id)}% de avance • Entrega{' '}
+                  {p.progress ?? 0}% de avance • Entrega{' '}
                   {formatDate(p.estimatedEndDate)}
                 </p>
 
