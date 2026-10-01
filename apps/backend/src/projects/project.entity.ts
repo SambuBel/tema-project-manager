@@ -65,4 +65,8 @@ export class ProjectEntity {
 
   @DeleteDateColumn({ name: 'deleted_at', type: 'timestamptz', nullable: true })
   deletedAt!: Date | null;
+
+  // Propiedades calculadas dinámicamente en el servicio (no son columnas en la BD)
+  memberCount?: number;
+  progress?: number;
 }

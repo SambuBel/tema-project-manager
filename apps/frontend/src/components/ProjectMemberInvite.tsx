@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import type { Project, AddProjectMemberDto } from '@tema/shared-types';
+import type { Project, InviteProjectMemberDto, ProjectMemberRole } from '@tema/shared-types';
 
 interface ProjectMemberInviteProps {
   project: Project;
@@ -10,22 +10,30 @@ interface ProjectMemberInviteProps {
 
 export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProps) {
   const qc = useQueryClient();
-  const [selectedRole, setSelectedRole] = useState('');
-  
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [selectedRole, setSelectedRole] = useState<ProjectMemberRole>('COLLABORATOR');
+  const [validationError, setValidationError] = useState<string | null>(null);
+
   const inviteMutation = useMutation({
-    mutationFn: (dto: AddProjectMemberDto) => api.addProjectMember(project.id, dto),
+    mutationFn: (dto: InviteProjectMemberDto) => api.inviteProjectMember(project.id, dto),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['project-members', project.id] });
+      qc.invalidateQueries({ queryKey: ['project-invitations', project.id] });
       onBack();
     },
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Cannot submit until dependencies are met.
-  };
+    setValidationError(null);
 
-  const isFormBlocked = true;
+    if (!email.toLowerCase().endsWith('@gmail.com')) {
+      setValidationError('Por cuestiones de seguridad, solo se permiten invitaciones a correos con dominio @gmail.com');
+      return;
+    }
+
+    inviteMutation.mutate({ email, projectRole: selectedRole });
+  };
 
   return (
     <div className="flex flex-col gap-8 text-[#172B42]">
@@ -54,43 +62,59 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
           <form onSubmit={handleSubmit} className="flex flex-col gap-6">
             
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-[#172B42]">Usuario a invitar *</label>
-              <select 
-                disabled 
-                className="rounded-lg border border-[#DEE5EC] bg-gray-50 px-4 py-3 text-sm text-[#607185] opacity-70"
-              >
-                <option>Pendiente de integración con Usuarios</option>
-              </select>
-              <span className="text-xs text-red-500 font-medium">
-                Bloqueado: La gestión global de usuarios aún no está disponible (Dependencia de Auth).
-              </span>
+              <label className="text-sm font-medium text-[#172B42]">Nombre *</label>
+              <input 
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78]"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-[#172B42]">Correo electrónico *</label>
+              <input 
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78]"
+              />
             </div>
 
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-[#172B42]">Rol *</label>
               <select 
-                disabled
+                required
                 value={selectedRole}
-                onChange={(e) => setSelectedRole(e.target.value)}
-                className="rounded-lg border border-[#DEE5EC] bg-gray-50 px-4 py-3 text-sm text-[#172B42] opacity-70"
+                onChange={(e) => setSelectedRole(e.target.value as ProjectMemberRole)}
+                className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78] bg-white"
               >
-                <option>Pendiente de definición/integración de roles de proyecto</option>
+                <option value="COLLABORATOR">Colaborador</option>
+                <option value="OBSERVER">Observador</option>
               </select>
             </div>
 
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-[#172B42]">Proyecto *</label>
-              <select 
+              <input 
+                type="text"
                 disabled
+                value={project.name}
                 className="rounded-lg border border-[#DEE5EC] bg-gray-50 px-4 py-3 text-sm text-[#172B42] opacity-70"
-              >
-                <option>{project.name}</option>
-              </select>
+              />
             </div>
 
+            {validationError && (
+              <div className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
+                {validationError}
+              </div>
+            )}
+
             {inviteMutation.isError && (
-              <div className="text-sm text-red-600 font-medium">
-                Error al invitar: {inviteMutation.error.message}
+              <div className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
+                {inviteMutation.error?.message || 'Error al enviar la invitación'}
               </div>
             )}
 
@@ -104,7 +128,7 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
               </button>
               <button 
                 type="submit"
-                disabled={isFormBlocked || inviteMutation.isPending}
+                disabled={inviteMutation.isPending}
                 className="rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {inviteMutation.isPending ? 'Enviando...' : 'Enviar invitación'}

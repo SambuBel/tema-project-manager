@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import type { Project, ProjectMember, ProjectMemberRole } from '@tema/shared-types';
 import { useCurrentUser } from '../hooks/useCurrentUser';
@@ -34,6 +34,30 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
   const { data: members, isLoading, isError } = useQuery({
     queryKey: ['project-members', project.id],
     queryFn: () => api.getProjectMembers(project.id),
+  });
+
+  const { data: invitations } = useQuery({
+    queryKey: ['project-invitations', project.id],
+    queryFn: () => api.getProjectInvitations(project.id),
+  });
+
+  const qc = useQueryClient();
+  const removeMutation = useMutation({
+    mutationFn: (memberId: string) => api.removeProjectMember(project.id, memberId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project-members', project.id] });
+    },
+  });
+
+  const acceptTestMutation = useMutation({
+    mutationFn: (invitationId: string) => api.testAcceptProjectInvitation(project.id, invitationId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project-members', project.id] });
+      qc.invalidateQueries({ queryKey: ['project-invitations', project.id] });
+    },
+    onError: (error: any) => {
+      alert(`Error al procesar la invitación: ${error.message || 'Error desconocido'}`);
+    }
   });
 
   if (!user) return null;
@@ -105,13 +129,13 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
           <p className="text-sm text-[#607185]">Cargando miembros...</p>
         ) : isError ? (
           <p className="text-sm text-red-600">Error al cargar los miembros del proyecto.</p>
-        ) : !members || members.length === 0 ? (
+        ) : (!members || members.length === 0) && (!invitations || invitations.length === 0) ? (
           <p className="text-sm italic text-[#607185]">
             No hay miembros registrados todavía{canManage ? ': agregá al primero.' : '.'}
           </p>
         ) : (
           <div className="flex flex-col gap-4">
-            {members.map((member, index) => {
+            {members?.map((member, index) => {
               const name = member.user?.name || 'Usuario desconocido';
               return (
                 <div key={member.id}>
@@ -141,9 +165,13 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
                           </button>
                           <button
                             type="button"
-                            disabled
-                            title="Falta el endpoint de backend para quitar un miembro del proyecto"
-                            className="cursor-not-allowed rounded-lg border border-[#DEE5EC] bg-gray-50 px-3 py-1.5 text-sm font-medium text-gray-400"
+                            onClick={() => {
+                              if (confirm('¿Estás seguro de que querés quitar a esta persona del proyecto?')) {
+                                removeMutation.mutate(member.id);
+                              }
+                            }}
+                            title="Quitar al miembro del proyecto"
+                            className="rounded-lg border border-[#DEE5EC] bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
                           >
                             Quitar
                           </button>
@@ -151,7 +179,47 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
                       )}
                     </div>
                   </div>
-                  {index < members.length - 1 && <div className="my-4 h-px w-full bg-[#DEE5EC]" />}
+                  {index < (members?.length ?? 0) - 1 && <div className="my-4 h-px w-full bg-[#DEE5EC]" />}
+                </div>
+              );
+            })}
+            
+            {invitations && invitations.length > 0 && members && members.length > 0 && <div className="my-4 h-px w-full bg-[#DEE5EC]" />}
+            
+            {invitations?.map((invitation, index) => {
+              return (
+                <div key={invitation.id} className="opacity-70">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 font-semibold text-gray-500">
+                        {initials(invitation.email)}
+                      </div>
+                      <div>
+                        <div className="text-base font-semibold">{invitation.email}</div>
+                        <div className="text-xs text-[#607185]">Invitación pendiente</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <span className={`rounded-full px-3 py-1 text-xs font-medium ${ROLE_BADGE_STYLES[invitation.projectRole]}`}>
+                        {ROLE_LABELS[invitation.projectRole]}
+                      </span>
+                      <span className="rounded-full px-3 py-1 text-xs font-medium bg-orange-100 text-orange-700">
+                        Pendiente
+                      </span>
+                      {canManage && (
+                        <button
+                          type="button"
+                          disabled={acceptTestMutation.isPending}
+                          onClick={() => acceptTestMutation.mutate(invitation.id)}
+                          className="rounded-lg bg-[#245B78] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1a445b] disabled:opacity-50"
+                        >
+                          Test-AgregarMiembro
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {index < invitations.length - 1 && <div className="my-4 h-px w-full bg-[#DEE5EC]" />}
                 </div>
               );
             })}
