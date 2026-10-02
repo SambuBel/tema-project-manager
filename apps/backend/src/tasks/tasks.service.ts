@@ -3,6 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import { TaskEntity } from './task.entity';
 import { ProjectEntity } from '../projects/project.entity';
+import { CommentEntity } from '../database/entities/comment.entity';
+import { ProjectActivityService } from '../projects/project-activity.service';
+import { ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
+import { ProjectActivityEntity } from '../database/entities/project-activity.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 import { UsersService } from '../users/users.service';
 import { PermissionsService } from '../auth/permissions.service';
@@ -31,8 +35,11 @@ export class TasksService {
     private readonly repo: Repository<TaskEntity>,
     @InjectRepository(ProjectEntity)
     private readonly projectRepo: Repository<ProjectEntity>,
+    @InjectRepository(CommentEntity)
+    private readonly commentRepo: Repository<CommentEntity>,
     private readonly usersService: UsersService,
     private readonly permissions: PermissionsService,
+    private readonly activityService: ProjectActivityService,
   ) {}
 
   private async findProjectOrThrow(projectId: string): Promise<ProjectEntity> {
@@ -121,7 +128,16 @@ export class TasksService {
     task.dueDate = dto.dueDate ?? null;
     task.createdBy = user.id;
 
-    return this.repo.save(task);
+    const saved = await this.repo.save(task);
+    await this.activityService.logEvent({
+      projectId: saved.projectId,
+      actorId: user.id,
+      actionType: ProjectActivityAction.TASK_CREATED,
+      entityType: ProjectActivityEntityType.TASK,
+      entityId: saved.id,
+      metadata: { title: saved.title },
+    });
+    return saved;
   }
 
   async findAllByProject(filters: FilterTasksDto, user: RequestUser): Promise<TaskEntity[]> {
@@ -212,19 +228,98 @@ export class TasksService {
       }
     }
 
-    Object.assign(task, {
-      ...(dto.title !== undefined ? { title: dto.title } : {}),
-      ...(dto.description !== undefined ? { description: dto.description ?? null } : {}),
-      ...(dto.status !== undefined ? { status: dto.status } : {}),
-      ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
-      ...(dto.assignedToId !== undefined ? { assignedToId: dto.assignedToId ?? null } : {}),
-      ...(dto.startDate !== undefined ? { startDate: dto.startDate ?? null } : {}),
-      ...(dto.dueDate !== undefined ? { dueDate: dto.dueDate ?? null } : {}),
-    });
+    
+    const changes: Record<string, { old: any; new: any }> = {};
+    const trackChange = (field: keyof TaskEntity, dtoField: keyof UpdateTaskDto) => {
+      if (dto[dtoField] !== undefined && task[field] !== dto[dtoField]) {
+        changes[field as string] = { old: task[field], new: dto[dtoField] };
+        (task as any)[field] = dto[dtoField];
+      }
+    };
 
-    return this.repo.save(task);
+    trackChange('title', 'title');
+    trackChange('description', 'description');
+    trackChange('priority', 'priority');
+    trackChange('status', 'status');
+    trackChange('assignedToId', 'assignedToId');
+    trackChange('startDate', 'startDate');
+    trackChange('dueDate', 'dueDate');
+
+    const saved = await this.repo.save(task);
+
+    if (Object.keys(changes).length > 0) {
+      await this.activityService.logEvent({
+        projectId: saved.projectId,
+        actorId: user.id,
+        actionType: ProjectActivityAction.TASK_UPDATED,
+        entityType: ProjectActivityEntityType.TASK,
+        entityId: saved.id,
+        metadata: { changes },
+      });
+    }
+
+    return saved;
+
   }
 
+
+  
+  async addComment(taskId: string, content: string, user: RequestUser): Promise<CommentEntity> {
+    const trimmed = content?.trim();
+    if (!trimmed) throw new BadRequestException('El comentario no puede estar vacío');
+    const task = await this.findTaskOrThrow(taskId);
+    const allowed = await this.permissions.canViewProject(user, task.project);
+    if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
+
+    const comment = this.commentRepo.create({
+      taskId,
+      authorUserId: user.id,
+      content: trimmed,
+    });
+    return this.commentRepo.save(comment);
+  }
+
+  async getTimeline(taskId: string, user: RequestUser): Promise<any[]> {
+    const task = await this.findTaskOrThrow(taskId);
+    const allowed = await this.permissions.canViewProject(user, task.project);
+    if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
+
+    const comments = await this.commentRepo.find({
+      where: { taskId },
+      relations: ['author'],
+    });
+
+    const mappedComments = comments.map((c: CommentEntity) => ({
+      id: c.id,
+      type: 'COMMENT',
+      content: c.content,
+      actor: { id: c.author.id, name: c.author.name, avatar: c.author.name.substring(0, 2).toUpperCase() },
+      createdAt: c.createdAt,
+    }));
+
+    const activities = await this.projectRepo.manager.find(ProjectActivityEntity, {
+      where: { entityType: ProjectActivityEntityType.TASK, entityId: taskId },
+      relations: ['actor'],
+    });
+
+    const mappedActivities = activities.map((a: ProjectActivityEntity) => ({
+      id: a.id,
+      type: 'HISTORY',
+      actionType: a.actionType,
+      metadata: a.metadata,
+      actor: { id: a.actor.id, name: a.actor.name, avatar: a.actor.name.substring(0, 2).toUpperCase() },
+      createdAt: a.createdAt,
+    }));
+
+    const timeline = [...mappedComments, ...mappedActivities];
+    timeline.sort((a, b) => {
+      const timeDiff = b.createdAt.getTime() - a.createdAt.getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return a.id.localeCompare(b.id);
+    });
+
+    return timeline;
+  }
 
   async archive(id: string, user: RequestUser): Promise<TaskEntity> {
     const task = await this.findTaskOrThrow(id);
@@ -239,7 +334,18 @@ export class TasksService {
     }
 
     task.archivedAt = new Date();
-    return this.repo.save(task);
+    const saved = await this.repo.save(task);
+
+    await this.activityService.logEvent({
+      projectId: saved.projectId,
+      actorId: user.id,
+      actionType: ProjectActivityAction.TASK_DELETED,
+      entityType: ProjectActivityEntityType.TASK,
+      entityId: saved.id,
+      metadata: { archivedAt: saved.archivedAt },
+    });
+
+    return saved;
   }
 
   /**
@@ -260,8 +366,20 @@ export class TasksService {
 
     this.validateTransition(task.status, dto.status);
 
+    const oldStatus = task.status;
     task.status = dto.status;
-    return this.repo.save(task);
+    const saved = await this.repo.save(task);
+
+    await this.activityService.logEvent({
+      projectId: saved.projectId,
+      actorId: user.id,
+      actionType: ProjectActivityAction.TASK_UPDATED,
+      entityType: ProjectActivityEntityType.TASK,
+      entityId: saved.id,
+      metadata: { changes: { status: { old: oldStatus, new: dto.status } } },
+    });
+
+    return saved;
   }
 
   private validateTransition(from: TaskStatus, to: TaskStatus): void {

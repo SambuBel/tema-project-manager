@@ -15,7 +15,7 @@ import type {
   ListUsersQuery,
   RoleName,
 } from '@tema/shared-types';
-import type { Task, TaskFilters, TaskStatus } from '../types/task'
+import type { Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
 
 const BASE = '/api';
 
@@ -131,4 +131,6 @@ export const api = {
   archiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
   getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
+  getTaskTimeline: (taskId: string) => request<TaskTimelineItem[]>(`/tasks/${taskId}/timeline`),
+  addTaskComment: (taskId: string, content: string) => request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
 };

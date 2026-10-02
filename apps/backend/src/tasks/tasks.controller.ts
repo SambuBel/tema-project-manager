@@ -3,6 +3,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { FilterTasksDto } from './dto/filter-tasks.dto';
 import { TasksService } from './tasks.service';
@@ -50,6 +51,23 @@ export class TasksController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.tasksService.updateStatus(id, dto, user);
+  }
+
+  @Post(':id/comments')
+  addComment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateCommentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.tasksService.addComment(id, dto.content, user);
+  }
+
+  @Get(':id/timeline')
+  getTimeline(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.tasksService.getTimeline(id, user);
   }
 
   @Patch(':id/archive')
