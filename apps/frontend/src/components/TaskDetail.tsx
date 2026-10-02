@@ -10,14 +10,6 @@ import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
 import { canDeleteTaskUI, canEditTaskUI } from '../lib/permissions';
 
-const statusColors: Record<TaskStatus, string> = {
-  PENDING: 'bg-gray-100 text-gray-700',
-  IN_PROGRESS: 'bg-blue-50 text-blue-700',
-  IN_REVIEW: 'bg-purple-50 text-purple-700',
-  BLOCKED: 'bg-red-50 text-red-700',
-  COMPLETED: 'bg-green-50 text-green-700',
-  CANCELLED: 'bg-gray-100 text-gray-400',
-};
 import { TaskStatusDropdown } from './TaskStatusDropdown';
 
 const priorityColors: Record<TaskPriority, string> = {

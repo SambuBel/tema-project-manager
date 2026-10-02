@@ -142,4 +142,121 @@ describe('PermissionsService', () => {
       expect(service.canViewEconomicData(makeUser([RoleName.ADMIN]), makeProject('otro'))).toBe(true);
     });
   });
+
+  describe('gestión de roles globales (Users)', () => {
+    const ADMIN = makeUser([RoleName.ADMIN], 'admin-1');
+    const PM = makeUser([RoleName.PROGRAM_MANAGER], 'pm-1');
+    const LEADER = makeUser([RoleName.PROJECT_LEADER], 'leader-1');
+    const COLLAB = makeUser([RoleName.COLLABORATOR], 'collab-1');
+    const OBSERVER = makeUser([RoleName.OBSERVER], 'obs-1');
+    const TARGET_ID = 'target-1';
+
+    describe('canManageGlobalRoles', () => {
+      it('ADMIN sobre otro usuario: true', () => {
+        expect(service.canManageGlobalRoles(ADMIN, TARGET_ID)).toBe(true);
+      });
+
+      it('ADMIN sobre sí mismo: false (RN-09)', () => {
+        expect(service.canManageGlobalRoles(ADMIN, ADMIN.id)).toBe(false);
+      });
+
+      it('PROGRAM_MANAGER: false (no tiene gestión general, solo la excepción de asignar líder)', () => {
+        expect(service.canManageGlobalRoles(PM, TARGET_ID)).toBe(false);
+      });
+
+      it('PROJECT_LEADER, COLLABORATOR, OBSERVER: false', () => {
+        expect(service.canManageGlobalRoles(LEADER, TARGET_ID)).toBe(false);
+        expect(service.canManageGlobalRoles(COLLAB, TARGET_ID)).toBe(false);
+        expect(service.canManageGlobalRoles(OBSERVER, TARGET_ID)).toBe(false);
+      });
+    });
+
+    describe('canAssignGlobalRole', () => {
+      it('ADMIN puede asignar cualquier rol a otro usuario', () => {
+        for (const role of Object.values(RoleName)) {
+          expect(service.canAssignGlobalRole(ADMIN, TARGET_ID, role)).toBe(true);
+        }
+      });
+
+      it('ADMIN no puede asignarse roles a sí mismo', () => {
+        expect(service.canAssignGlobalRole(ADMIN, ADMIN.id, RoleName.PROJECT_LEADER)).toBe(false);
+      });
+
+      it('PROGRAM_MANAGER puede asignar PROJECT_LEADER', () => {
+        expect(service.canAssignGlobalRole(PM, TARGET_ID, RoleName.PROJECT_LEADER)).toBe(true);
+      });
+
+      it('PROGRAM_MANAGER NO puede asignar ADMIN, PROGRAM_MANAGER, COLLABORATOR ni OBSERVER', () => {
+        expect(service.canAssignGlobalRole(PM, TARGET_ID, RoleName.ADMIN)).toBe(false);
+        expect(service.canAssignGlobalRole(PM, TARGET_ID, RoleName.PROGRAM_MANAGER)).toBe(false);
+        expect(service.canAssignGlobalRole(PM, TARGET_ID, RoleName.COLLABORATOR)).toBe(false);
+        expect(service.canAssignGlobalRole(PM, TARGET_ID, RoleName.OBSERVER)).toBe(false);
+      });
+
+      it('PROGRAM_MANAGER no puede asignarse PROJECT_LEADER a sí mismo', () => {
+        expect(service.canAssignGlobalRole(PM, PM.id, RoleName.PROJECT_LEADER)).toBe(false);
+      });
+
+      it('PROJECT_LEADER, COLLABORATOR, OBSERVER: false para cualquier rol', () => {
+        expect(service.canAssignGlobalRole(LEADER, TARGET_ID, RoleName.COLLABORATOR)).toBe(false);
+        expect(service.canAssignGlobalRole(COLLAB, TARGET_ID, RoleName.OBSERVER)).toBe(false);
+        expect(service.canAssignGlobalRole(OBSERVER, TARGET_ID, RoleName.PROJECT_LEADER)).toBe(false);
+      });
+    });
+
+    describe('canRemoveGlobalRole', () => {
+      it('ADMIN puede quitar roles de otro usuario', () => {
+        expect(service.canRemoveGlobalRole(ADMIN, TARGET_ID)).toBe(true);
+      });
+
+      it('ADMIN no puede quitarse roles a sí mismo', () => {
+        expect(service.canRemoveGlobalRole(ADMIN, ADMIN.id)).toBe(false);
+      });
+
+      it('PROGRAM_MANAGER NO puede quitar roles (no está documentado como permitido, a diferencia de asignar)', () => {
+        expect(service.canRemoveGlobalRole(PM, TARGET_ID)).toBe(false);
+      });
+
+      it('PROJECT_LEADER, COLLABORATOR, OBSERVER: false', () => {
+        expect(service.canRemoveGlobalRole(LEADER, TARGET_ID)).toBe(false);
+        expect(service.canRemoveGlobalRole(COLLAB, TARGET_ID)).toBe(false);
+        expect(service.canRemoveGlobalRole(OBSERVER, TARGET_ID)).toBe(false);
+      });
+    });
+
+    describe('canViewUsers', () => {
+      it('ADMIN y PROGRAM_MANAGER pueden', () => {
+        expect(service.canViewUsers(ADMIN)).toBe(true);
+        expect(service.canViewUsers(PM)).toBe(true);
+      });
+
+      it('PROJECT_LEADER, COLLABORATOR, OBSERVER no pueden', () => {
+        expect(service.canViewUsers(LEADER)).toBe(false);
+        expect(service.canViewUsers(COLLAB)).toBe(false);
+        expect(service.canViewUsers(OBSERVER)).toBe(false);
+      });
+    });
+
+    describe('canManageUserStatus', () => {
+      it('ADMIN puede activar/desactivar a otro usuario', () => {
+        expect(service.canManageUserStatus(ADMIN, TARGET_ID)).toBe(true);
+      });
+
+      it('ADMIN no puede desactivarse a sí mismo', () => {
+        expect(service.canManageUserStatus(ADMIN, ADMIN.id)).toBe(false);
+      });
+
+      it('PROGRAM_MANAGER no puede activar/desactivar usuarios', () => {
+        expect(service.canManageUserStatus(PM, TARGET_ID)).toBe(false);
+      });
+    });
+
+    describe('multi-rol', () => {
+      it('ADMIN + PROGRAM_MANAGER conserva el permiso de ADMIN (gestión general)', () => {
+        const multi = makeUser([RoleName.PROGRAM_MANAGER, RoleName.ADMIN], 'multi-1');
+        expect(service.canManageGlobalRoles(multi, TARGET_ID)).toBe(true);
+        expect(service.canAssignGlobalRole(multi, TARGET_ID, RoleName.COLLABORATOR)).toBe(true);
+      });
+    });
+  });
 });

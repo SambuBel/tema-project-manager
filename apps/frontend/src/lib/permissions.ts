@@ -1,4 +1,4 @@
-import type { AuthenticatedUser, Project, ProjectMember, Task } from '@tema/shared-types';
+import type { AuthenticatedUser, Project, ProjectMember, RoleName, Task } from '@tema/shared-types';
 import { hasAnyRole } from './roles';
 
 /**
@@ -90,4 +90,51 @@ export function canEditTaskUI(
  */
 export function canDeleteTaskUI(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
   return isAdminPmOrLeader(user, project);
+}
+
+// ---------------------------------------------------------------------------
+// Gestión de roles globales (Users). Espejan PermissionsService.canManageGlobalRoles
+// / canAssignGlobalRole / canRemoveGlobalRole / canViewUsers / canManageUserStatus.
+// `targetUserId` es el id del usuario sobre el que se quiere actuar — RN-09
+// (nadie modifica sus propios roles) se resuelve acá exactamente igual que en
+// el backend: comparando contra user.id, nunca confiando en que el backend
+// "ya lo va a rechazar" para decidir qué mostrar.
+// ---------------------------------------------------------------------------
+
+/** ¿Puede abrir la pantalla "Usuarios y permisos" en algún modo (ADMIN completo, PM restringido)? */
+export function canViewUsersUI(user: AuthenticatedUser): boolean {
+  return hasAnyRole(user.roles, ['ADMIN', 'PROGRAM_MANAGER']);
+}
+
+/** Gestión GENERAL de roles de otro usuario (el editor completo de chips): solo ADMIN, nunca sobre sí mismo. */
+export function canManageGlobalRolesUI(user: AuthenticatedUser, targetUserId: string): boolean {
+  if (user.id === targetUserId) return false;
+  return hasAnyRole(user.roles, ['ADMIN']);
+}
+
+/**
+ * ADMIN: cualquier rol. PROGRAM_MANAGER: únicamente PROJECT_LEADER (excepción
+ * explícita del documento funcional, nunca "si es PM entonces puede todo").
+ */
+export function canAssignGlobalRoleUI(user: AuthenticatedUser, targetUserId: string, role: RoleName): boolean {
+  if (user.id === targetUserId) return false;
+  if (hasAnyRole(user.roles, ['ADMIN'])) return true;
+  return hasAnyRole(user.roles, ['PROGRAM_MANAGER']) && role === 'PROJECT_LEADER';
+}
+
+/** Atajo de canAssignGlobalRoleUI para el único caso que PM tiene permitido: asignar Líder. */
+export function canAssignProjectLeaderRoleUI(user: AuthenticatedUser, targetUserId: string): boolean {
+  return canAssignGlobalRoleUI(user, targetUserId, 'PROJECT_LEADER');
+}
+
+/** Solo ADMIN puede quitar un rol global — ver nota de ambigüedad sobre PM en el informe de esta HU. */
+export function canRemoveGlobalRoleUI(user: AuthenticatedUser, targetUserId: string): boolean {
+  if (user.id === targetUserId) return false;
+  return hasAnyRole(user.roles, ['ADMIN']);
+}
+
+/** Activar/desactivar usuarios: solo ADMIN, nunca sobre uno mismo. */
+export function canManageUserStatusUI(user: AuthenticatedUser, targetUserId: string): boolean {
+  if (user.id === targetUserId) return false;
+  return hasAnyRole(user.roles, ['ADMIN']);
 }
