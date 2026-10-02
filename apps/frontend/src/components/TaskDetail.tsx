@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { taskPriorityLabels } from '../types/task';
-import type { TaskPriority } from '../types/task';
+import type { TaskPriority, TaskStatus } from '../types/task';
 import { SubtaskList } from './SubtaskList';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useCurrentUser } from '../hooks/useCurrentUser';
@@ -11,6 +11,7 @@ import { useMyMembership } from '../hooks/useMyMembership';
 import { canDeleteTaskUI, canEditTaskUI } from '../lib/permissions';
 
 import { TaskStatusDropdown } from './TaskStatusDropdown';
+import { TaskTimeline } from './TaskTimeline';
 
 const priorityColors: Record<TaskPriority, string> = {
   LOW: 'bg-gray-100 text-gray-600',
@@ -205,6 +206,13 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
         <h3 className="text-lg font-semibold text-[#172B42]">Subtareas</h3>
         <div className="mt-4">
           <SubtaskList parentTaskId={taskId} />
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
+        <h3 className="text-lg font-semibold text-[#172B42]">Actividad y Comentarios</h3>
+        <div className="mt-4">
+          <TaskTimeline taskId={taskId} />
         </div>
       </div>
 

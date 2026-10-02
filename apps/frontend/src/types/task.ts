@@ -63,3 +63,17 @@ export const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   BLOCKED: ['PENDING'],
   COMPLETED: []
 };
+
+export interface TaskTimelineItem {
+  id: string;
+  type: 'COMMENT' | 'HISTORY';
+  content?: string;
+  actionType?: string;
+  metadata?: any;
+  actor: {
+    id: string;
+    name: string;
+    avatar: string;
+  };
+  createdAt: string;
+}
