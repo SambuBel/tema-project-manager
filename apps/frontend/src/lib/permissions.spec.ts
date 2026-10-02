@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { AuthenticatedUser, Project, ProjectMember, RoleName, Task } from '@tema/shared-types';
 import {
+  canAssignGlobalRoleUI,
+  canAssignProjectLeaderRoleUI,
   canChangeLeaderUI,
   canCreateProjectUI,
   canCreateTaskUI,
   canDeleteTaskUI,
   canEditTaskUI,
+  canManageGlobalRolesUI,
   canManageProjectUI,
   canManageTeamUI,
+  canManageUserStatusUI,
+  canRemoveGlobalRoleUI,
+  canViewUsersUI,
 } from './permissions';
 
 const PROJECT_ID = 'project-1';
@@ -225,5 +231,104 @@ describe('canDeleteTaskUI', () => {
 
   it('OBSERVER nunca puede', () => {
     expect(canDeleteTaskUI(makeUser('u1', ['OBSERVER']), project)).toBe(false);
+  });
+});
+
+describe('Users: gestión de roles globales', () => {
+  const TARGET_ID = 'target-1';
+
+  describe('canViewUsersUI', () => {
+    it('ADMIN y PROGRAM_MANAGER pueden', () => {
+      expect(canViewUsersUI(makeUser('admin-1', ['ADMIN']))).toBe(true);
+      expect(canViewUsersUI(makeUser('pm-1', ['PROGRAM_MANAGER']))).toBe(true);
+    });
+
+    it('PROJECT_LEADER, COLLABORATOR, OBSERVER no pueden', () => {
+      expect(canViewUsersUI(makeUser('u1', ['PROJECT_LEADER']))).toBe(false);
+      expect(canViewUsersUI(makeUser('u1', ['COLLABORATOR']))).toBe(false);
+      expect(canViewUsersUI(makeUser('u1', ['OBSERVER']))).toBe(false);
+    });
+  });
+
+  describe('canManageGlobalRolesUI (editor completo)', () => {
+    it('ADMIN sobre otro usuario: true', () => {
+      expect(canManageGlobalRolesUI(makeUser('admin-1', ['ADMIN']), TARGET_ID)).toBe(true);
+    });
+
+    it('ADMIN sobre sí mismo: false (RN-09)', () => {
+      const admin = makeUser('admin-1', ['ADMIN']);
+      expect(canManageGlobalRolesUI(admin, admin.id)).toBe(false);
+    });
+
+    it('PROGRAM_MANAGER: false (no tiene el editor completo)', () => {
+      expect(canManageGlobalRolesUI(makeUser('pm-1', ['PROGRAM_MANAGER']), TARGET_ID)).toBe(false);
+    });
+  });
+
+  describe('canAssignGlobalRoleUI / canAssignProjectLeaderRoleUI', () => {
+    it('ADMIN puede asignar cualquier rol', () => {
+      const admin = makeUser('admin-1', ['ADMIN']);
+      expect(canAssignGlobalRoleUI(admin, TARGET_ID, 'ADMIN')).toBe(true);
+      expect(canAssignGlobalRoleUI(admin, TARGET_ID, 'COLLABORATOR')).toBe(true);
+    });
+
+    it('PROGRAM_MANAGER solo puede asignar PROJECT_LEADER', () => {
+      const pm = makeUser('pm-1', ['PROGRAM_MANAGER']);
+      expect(canAssignGlobalRoleUI(pm, TARGET_ID, 'PROJECT_LEADER')).toBe(true);
+      expect(canAssignProjectLeaderRoleUI(pm, TARGET_ID)).toBe(true);
+    });
+
+    it('PROGRAM_MANAGER no puede asignar ADMIN, PROGRAM_MANAGER, COLLABORATOR ni OBSERVER', () => {
+      const pm = makeUser('pm-1', ['PROGRAM_MANAGER']);
+      expect(canAssignGlobalRoleUI(pm, TARGET_ID, 'ADMIN')).toBe(false);
+      expect(canAssignGlobalRoleUI(pm, TARGET_ID, 'PROGRAM_MANAGER')).toBe(false);
+      expect(canAssignGlobalRoleUI(pm, TARGET_ID, 'COLLABORATOR')).toBe(false);
+      expect(canAssignGlobalRoleUI(pm, TARGET_ID, 'OBSERVER')).toBe(false);
+    });
+
+    it('nadie puede asignarse roles a sí mismo, ni ADMIN', () => {
+      const admin = makeUser('admin-1', ['ADMIN']);
+      expect(canAssignGlobalRoleUI(admin, admin.id, 'PROJECT_LEADER')).toBe(false);
+    });
+
+    it('PROJECT_LEADER, COLLABORATOR, OBSERVER: false para cualquier rol', () => {
+      expect(canAssignGlobalRoleUI(makeUser('u1', ['PROJECT_LEADER']), TARGET_ID, 'COLLABORATOR')).toBe(false);
+      expect(canAssignGlobalRoleUI(makeUser('u1', ['COLLABORATOR']), TARGET_ID, 'OBSERVER')).toBe(false);
+    });
+  });
+
+  describe('canRemoveGlobalRoleUI', () => {
+    it('solo ADMIN, nunca PROGRAM_MANAGER (no está documentado como permitido)', () => {
+      expect(canRemoveGlobalRoleUI(makeUser('admin-1', ['ADMIN']), TARGET_ID)).toBe(true);
+      expect(canRemoveGlobalRoleUI(makeUser('pm-1', ['PROGRAM_MANAGER']), TARGET_ID)).toBe(false);
+    });
+
+    it('ADMIN no puede quitarse roles a sí mismo', () => {
+      const admin = makeUser('admin-1', ['ADMIN']);
+      expect(canRemoveGlobalRoleUI(admin, admin.id)).toBe(false);
+    });
+  });
+
+  describe('canManageUserStatusUI', () => {
+    it('ADMIN puede activar/desactivar a otro usuario', () => {
+      expect(canManageUserStatusUI(makeUser('admin-1', ['ADMIN']), TARGET_ID)).toBe(true);
+    });
+
+    it('ADMIN no puede desactivarse a sí mismo', () => {
+      const admin = makeUser('admin-1', ['ADMIN']);
+      expect(canManageUserStatusUI(admin, admin.id)).toBe(false);
+    });
+
+    it('PROGRAM_MANAGER no puede', () => {
+      expect(canManageUserStatusUI(makeUser('pm-1', ['PROGRAM_MANAGER']), TARGET_ID)).toBe(false);
+    });
+  });
+
+  describe('multi-rol', () => {
+    it('ADMIN + PROGRAM_MANAGER conserva el permiso de ADMIN', () => {
+      const multi = makeUser('multi-1', ['PROGRAM_MANAGER', 'ADMIN']);
+      expect(canManageGlobalRolesUI(multi, TARGET_ID)).toBe(true);
+      expect(canAssignGlobalRoleUI(multi, TARGET_ID, 'COLLABORATOR')).toBe(true);
+    });
   });
 });

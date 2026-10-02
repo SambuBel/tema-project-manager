@@ -7,9 +7,13 @@ import type {
   ProjectMember,
   AddProjectMemberDto,
   UpdateProjectMemberRoleDto,
+  ChangeProjectLeaderDto,
   AuthenticatedUser,
   CreateTaskDto,
   UpdateTaskDto,
+  UserWithRoles,
+  ListUsersQuery,
+  RoleName,
 } from '@tema/shared-types';
 import type { Task, TaskFilters, TaskStatus } from '../types/task'
 
@@ -87,7 +91,25 @@ export const api = {
     request<ProjectMember>(`/projects/${id}/members`, { method: 'POST', body: JSON.stringify(dto) }),
   updateProjectMemberRole: (projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto) =>
     request<ProjectMember>(`/projects/${projectId}/members/${memberId}/role`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  changeProjectLeader: (projectId: string, dto: ChangeProjectLeaderDto) =>
+    request<Project>(`/projects/${projectId}/leader`, { method: 'PATCH', body: JSON.stringify(dto) }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
+
+  // --- Users (administración de roles globales) ---
+  listUsers: (query?: ListUsersQuery) => {
+    const params = new URLSearchParams();
+    if (query?.search) params.append('search', query.search);
+    if (query?.role) params.append('role', query.role);
+    const qs = params.toString();
+    return request<UserWithRoles[]>(`/users${qs ? `?${qs}` : ''}`);
+  },
+  getUser: (id: string) => request<UserWithRoles>(`/users/${id}`),
+  updateUserStatus: (id: string, active: boolean) =>
+    request<UserWithRoles>(`/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ active }) }),
+  assignUserRole: (id: string, role: RoleName) =>
+    request<UserWithRoles>(`/users/${id}/roles`, { method: 'POST', body: JSON.stringify({ role }) }),
+  removeUserRole: (id: string, role: RoleName) =>
+    request<UserWithRoles>(`/users/${id}/roles/${role}`, { method: 'DELETE' }),
 
   // --- Tasks ---
   listTasks: (filters: TaskFilters) => {
@@ -109,5 +131,4 @@ export const api = {
   archiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
   getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
-  archiveTask: (id: string) => request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
 };

@@ -6,6 +6,7 @@ import { useCurrentUser } from '../hooks/useCurrentUser';
 import { canChangeLeaderUI, canManageTeamUI } from '../lib/permissions';
 import { ProjectMemberInvite } from './ProjectMemberInvite';
 import { ChangeMemberRoleModal } from './project/ChangeMemberRoleModal';
+import { ChangeLeaderModal } from './project/ChangeLeaderModal';
 
 const ROLE_BADGE_STYLES: Record<ProjectMemberRole, string> = {
   COLLABORATOR: 'bg-[#EAF2F7] text-[#245B78]',
@@ -30,6 +31,7 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
   const { user } = useCurrentUser();
   const [view, setView] = useState<'list' | 'invite'>('list');
   const [editingMember, setEditingMember] = useState<ProjectMember | null>(null);
+  const [changingLeader, setChangingLeader] = useState(false);
 
   const { data: members, isLoading, isError } = useQuery({
     queryKey: ['project-members', project.id],
@@ -64,19 +66,13 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
         </div>
 
         {canChangeLeader && (
-          <div>
-            <button
-              type="button"
-              disabled
-              title="Falta el listado de usuarios con rol PROJECT_LEADER (dependencia: Users backend)"
-              className="cursor-not-allowed rounded-lg border border-[#DEE5EC] bg-gray-50 px-4 py-2 text-sm font-medium text-gray-400"
-            >
-              Cambiar líder
-            </button>
-            <p className="mt-1 text-xs text-[#607185]">
-              Disponible cuando exista el listado de usuarios (GET /users filtrable por PROJECT_LEADER).
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={() => setChangingLeader(true)}
+            className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
+          >
+            Cambiar líder
+          </button>
         )}
       </div>
 
@@ -164,6 +160,14 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
           projectId={project.id}
           member={editingMember}
           onClose={() => setEditingMember(null)}
+        />
+      )}
+
+      {changingLeader && (
+        <ChangeLeaderModal
+          projectId={project.id}
+          currentLeaderId={project.leaderId}
+          onClose={() => setChangingLeader(false)}
         />
       )}
     </div>

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -21,7 +21,7 @@ import { PermissionsService } from './permissions.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([AuthorizedDomainEntity, ExternalAccountEntity, RoleEntity, UserRoleEntity, ProjectMemberEntity]),
-    UsersModule,
+    forwardRef(() => UsersModule),
     PassportModule.register({ defaultStrategy: 'google', session: false }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
