@@ -2,20 +2,16 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { taskStatusLabels, taskPriorityLabels } from '../types/task';
-import type { TaskStatus, TaskPriority } from '../types/task';
+import { taskPriorityLabels } from '../types/task';
+import type { TaskPriority, TaskStatus } from '../types/task';
 import { SubtaskList } from './SubtaskList';
-import { TaskForm } from './TaskForm';
 import { ConfirmDialog } from './ConfirmDialog';
+import { useCurrentUser } from '../hooks/useCurrentUser';
+import { useMyMembership } from '../hooks/useMyMembership';
+import { canDeleteTaskUI, canEditTaskUI } from '../lib/permissions';
 
-const statusColors: Record<TaskStatus, string> = {
-  PENDING: 'bg-gray-100 text-gray-700',
-  IN_PROGRESS: 'bg-blue-50 text-blue-700',
-  IN_REVIEW: 'bg-purple-50 text-purple-700',
-  BLOCKED: 'bg-red-50 text-red-700',
-  COMPLETED: 'bg-green-50 text-green-700',
-  CANCELLED: 'bg-gray-100 text-gray-400',
-};
+import { TaskStatusDropdown } from './TaskStatusDropdown';
+import { TaskTimeline } from './TaskTimeline';
 
 const priorityColors: Record<TaskPriority, string> = {
   LOW: 'bg-gray-100 text-gray-600',
@@ -49,6 +45,7 @@ interface TaskDetailProps {
  */
 export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
   const qc = useQueryClient();
+  const { user } = useCurrentUser();
   const [confirmArchive, setConfirmArchive] = useState(false);
 
   const { data: task, isLoading, isError } = useQuery({
@@ -56,15 +53,14 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
     queryFn: () => api.getTask(taskId),
   });
 
+  const { membership } = useMyMembership(task?.projectId);
+
   const archive = useMutation({
     mutationFn: () => api.archiveTask(taskId),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['tasks'] });
-      if (task?.parentTaskId) {
-        void qc.invalidateQueries({ queryKey: ['subtasks', task.parentTaskId] });
-      }
       setConfirmArchive(false);
-      onBack();
+      void qc.invalidateQueries({ queryKey: ['task', taskId] });
+      void qc.invalidateQueries({ queryKey: ['tasks', task?.projectId] });
     },
   });
 
@@ -90,6 +86,9 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
     );
   }
 
+  const canEdit = !!user && canEditTaskUI(user, task, task.project, membership);
+  const canDelete = !!user && canDeleteTaskUI(user, task.project);
+
   return (
     <div className="flex flex-col gap-8 text-[#172B42]">
       {/* Botón volver */}
@@ -97,44 +96,44 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
         &larr; Volver a tareas
       </button>
 
-      {/* Título + badges + editar */}
+      {/* Título + badges + acciones */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-3xl font-semibold">{task.title}</h1>
-          <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusColors[task.status]}`}>
-            {taskStatusLabels[task.status]}
-          </span>
+          <h1 className="text-4xl font-semibold">{task.title}</h1>
+          <TaskStatusDropdown taskId={taskId} currentStatus={task.status} />
           <span className={`rounded-full px-3 py-1 text-xs font-medium ${priorityColors[task.priority]}`}>
             {taskPriorityLabels[task.priority]}
           </span>
+          {task.archivedAt && (
+            <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-500">Archivada</span>
+          )}
         </div>
-        <div className="flex gap-2">
-          <Link
-            to={`/tasks/${taskId}/edit`}
-            className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
-          >
-            Editar tarea
-          </Link>
-          <button
-            type="button"
-            onClick={() => setConfirmArchive(true)}
-            className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-          >
-            Eliminar
-          </button>
-        </div>
-      </div>
 
-      <ConfirmDialog
-        open={confirmArchive}
-        title={`¿Eliminar "${task.title}"?`}
-        description="La tarea se archiva y deja de verse en el listado. No se pierde la información, pero esta acción no se puede deshacer desde acá."
-        confirmLabel="Eliminar"
-        variant="danger"
-        isConfirming={archive.isPending}
-        onConfirm={() => archive.mutate()}
-        onCancel={() => setConfirmArchive(false)}
-      />
+        {/* Nunca puede -> no se renderiza; puede pero está archivada -> deshabilitado con motivo */}
+        {(canEdit || canDelete) && (
+          <div className="flex gap-2">
+            {canEdit && (
+              <Link
+                to={`/tasks/${task.id}/edit`}
+                className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
+              >
+                Editar tarea
+              </Link>
+            )}
+            {canDelete && (
+              <button
+                type="button"
+                onClick={() => setConfirmArchive(true)}
+                disabled={!!task.archivedAt}
+                title={task.archivedAt ? 'Esta tarea ya está archivada' : undefined}
+                className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+              >
+                {task.archivedAt ? 'Tarea archivada' : 'Archivar tarea'}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         {/* Descripción */}
@@ -202,18 +201,31 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
         </div>
       </div>
 
-      {/* Subtareas: jerarquia de un solo nivel, una subtarea no puede tener las suyas */}
-      {!task.parentTaskId && (
-        <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
-          <h3 className="text-lg font-semibold text-[#172B42]">Subtareas</h3>
-          <div className="mt-4">
-            <SubtaskList parentTaskId={taskId} />
-          </div>
-          <div className="mt-6 border-t border-[#DEE5EC] pt-6">
-            <TaskForm projectId={task.projectId} parentTaskId={taskId} />
-          </div>
+      {/* Subtareas */}
+      <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
+        <h3 className="text-lg font-semibold text-[#172B42]">Subtareas</h3>
+        <div className="mt-4">
+          <SubtaskList parentTaskId={taskId} />
         </div>
-      )}
+      </div>
+
+      <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
+        <h3 className="text-lg font-semibold text-[#172B42]">Actividad y Comentarios</h3>
+        <div className="mt-4">
+          <TaskTimeline taskId={taskId} />
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={confirmArchive}
+        title="Archivar tarea"
+        description="La tarea deja de aparecer como activa. Esta acción corresponde a 'eliminar tarea' (RN-07): la tarea no se borra, queda archivada."
+        confirmLabel="Archivar"
+        variant="danger"
+        isConfirming={archive.isPending}
+        onConfirm={() => archive.mutate()}
+        onCancel={() => setConfirmArchive(false)}
+      />
     </div>
   );
 }

@@ -5,13 +5,19 @@ import type {
   UpdateProjectStatusDto,
   UpdateProjectDto,
   ProjectMember,
+  ProjectInvitation,
   AddProjectMemberDto,
+  InviteProjectMemberDto,
   UpdateProjectMemberRoleDto,
+  ChangeProjectLeaderDto,
   AuthenticatedUser,
   CreateTaskDto,
   UpdateTaskDto,
+  UserWithRoles,
+  ListUsersQuery,
+  RoleName,
 } from '@tema/shared-types';
-import type { Task, TaskFilters } from '../types/task'
+import type { Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
 
 const BASE = '/api';
 
@@ -83,11 +89,36 @@ export const api = {
   archiveProject: (id: string) =>
     request<Project>(`/projects/${id}/archive`, { method: 'PATCH' }),
   getProjectMembers: (id: string) => request<ProjectMember[]>(`/projects/${id}/members`),
+  getProjectInvitations: (id: string) => request<ProjectInvitation[]>(`/projects/${id}/invitations`),
   addProjectMember: (id: string, dto: AddProjectMemberDto) =>
     request<ProjectMember>(`/projects/${id}/members`, { method: 'POST', body: JSON.stringify(dto) }),
+  inviteProjectMember: (id: string, dto: InviteProjectMemberDto) =>
+    request<ProjectInvitation>(`/projects/${id}/invitations`, { method: 'POST', body: JSON.stringify(dto) }),
+  testAcceptProjectInvitation: (projectId: string, invitationId: string) =>
+    request<void>(`/projects/${projectId}/invitations/${invitationId}/test-accept`, { method: 'POST' }),
   updateProjectMemberRole: (projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto) =>
     request<ProjectMember>(`/projects/${projectId}/members/${memberId}/role`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  removeProjectMember: (projectId: string, memberId: string) =>
+    request<void>(`/projects/${projectId}/members/${memberId}`, { method: 'DELETE' }),
+  changeProjectLeader: (projectId: string, dto: ChangeProjectLeaderDto) =>
+    request<Project>(`/projects/${projectId}/leader`, { method: 'PATCH', body: JSON.stringify(dto) }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
+
+  // --- Users (administración de roles globales) ---
+  listUsers: (query?: ListUsersQuery) => {
+    const params = new URLSearchParams();
+    if (query?.search) params.append('search', query.search);
+    if (query?.role) params.append('role', query.role);
+    const qs = params.toString();
+    return request<UserWithRoles[]>(`/users${qs ? `?${qs}` : ''}`);
+  },
+  getUser: (id: string) => request<UserWithRoles>(`/users/${id}`),
+  updateUserStatus: (id: string, active: boolean) =>
+    request<UserWithRoles>(`/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ active }) }),
+  assignUserRole: (id: string, role: RoleName) =>
+    request<UserWithRoles>(`/users/${id}/roles`, { method: 'POST', body: JSON.stringify({ role }) }),
+  removeUserRole: (id: string, role: RoleName) =>
+    request<UserWithRoles>(`/users/${id}/roles/${role}`, { method: 'DELETE' }),
 
   // --- Tasks ---
   listTasks: (filters: TaskFilters) => {
@@ -104,6 +135,11 @@ export const api = {
   getTask: (id: string) => request<Task>(`/tasks/${id}`),
   updateTask: (id: string, dto: UpdateTaskDto) =>
     request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  updateTaskStatus: (id: string, status: TaskStatus) =>
+    request<Task>(`/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  archiveTask: (id: string) =>
+    request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
   getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
-  archiveTask: (id: string) => request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
+  getTaskTimeline: (taskId: string) => request<TaskTimelineItem[]>(`/tasks/${taskId}/timeline`),
+  addTaskComment: (taskId: string, content: string) => request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
 };

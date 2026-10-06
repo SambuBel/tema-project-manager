@@ -32,6 +32,31 @@ export interface AuthenticatedUser {
   roles: RoleName[];
 }
 
+/** Usuario + sus roles globales, para la administración de usuarios (GET /users, GET /users/:id). */
+export interface UserWithRoles {
+  id: ID;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  active: boolean;
+  roles: RoleName[];
+}
+
+export interface ListUsersQuery {
+  search?: string;
+  /** Filtra a quienes tengan ese rol global — ej. candidatos para liderar un proyecto. */
+  role?: RoleName;
+}
+
+export interface UpdateUserStatusDto {
+  active: boolean;
+}
+
+/** Asignar/quitar un rol global. Ver RN-09: nadie puede modificar sus propios roles. */
+export interface AssignRoleDto {
+  role: RoleName;
+}
+
 export interface Project {
   id: ID;
   name: string;
@@ -45,6 +70,8 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  memberCount?: number;
+  progress?: number;
 }
 
 export interface CreateProjectDto {
@@ -73,8 +100,22 @@ export interface ProjectMember {
   joinedAt: string;
 }
 
+export interface ProjectInvitation {
+  id: ID;
+  projectId: ID;
+  email: string;
+  projectRole: ProjectMemberRole;
+  status: 'PENDING' | 'ACCEPTED' | 'REVOKED';
+  createdAt: string;
+}
+
 export interface AddProjectMemberDto {
   userId: ID;
+  projectRole: ProjectMemberRole;
+}
+
+export interface InviteProjectMemberDto {
+  email: string;
   projectRole: ProjectMemberRole;
 }
 
@@ -103,7 +144,7 @@ export interface HealthResponse {
   timestamp: string;
 }
 
-export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED' | 'CANCELLED';
+export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED';
 
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -152,4 +193,8 @@ export interface ListTasksQuery {
   projectId: ID;
   status?: TaskStatus;
   assignedToId?: ID;
+}
+
+export interface UpdateTaskStatusDto {
+  status: TaskStatus;
 }

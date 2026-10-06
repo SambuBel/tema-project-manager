@@ -53,6 +53,14 @@ export const SparklesIcon = () => (
   </Icon>
 );
 
+export const InfoIcon = () => (
+  <Icon>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 11v5.5" />
+    <circle cx="12" cy="8" r="0.75" fill="currentColor" stroke="none" />
+  </Icon>
+);
+
 export const MenuIcon = () => (
   <Icon width="22" height="22">
     <path d="M4 7h16M4 12h16M4 17h16" />
