@@ -32,6 +32,31 @@ export interface AuthenticatedUser {
   roles: RoleName[];
 }
 
+/** Usuario + sus roles globales, para la administración de usuarios (GET /users, GET /users/:id). */
+export interface UserWithRoles {
+  id: ID;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  active: boolean;
+  roles: RoleName[];
+}
+
+export interface ListUsersQuery {
+  search?: string;
+  /** Filtra a quienes tengan ese rol global — ej. candidatos para liderar un proyecto. */
+  role?: RoleName;
+}
+
+export interface UpdateUserStatusDto {
+  active: boolean;
+}
+
+/** Asignar/quitar un rol global. Ver RN-09: nadie puede modificar sus propios roles. */
+export interface AssignRoleDto {
+  role: RoleName;
+}
+
 export interface Project {
   id: ID;
   name: string;

@@ -3,22 +3,15 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { taskPriorityLabels } from '../types/task';
-import type { TaskPriority } from '../types/task';
+import type { TaskPriority, TaskStatus } from '../types/task';
 import { SubtaskList } from './SubtaskList';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
 import { canDeleteTaskUI, canEditTaskUI } from '../lib/permissions';
 
-const statusColors: Record<TaskStatus, string> = {
-  PENDING: 'bg-gray-100 text-gray-700',
-  IN_PROGRESS: 'bg-blue-50 text-blue-700',
-  IN_REVIEW: 'bg-purple-50 text-purple-700',
-  BLOCKED: 'bg-red-50 text-red-700',
-  COMPLETED: 'bg-green-50 text-green-700',
-  CANCELLED: 'bg-gray-100 text-gray-400',
-};
 import { TaskStatusDropdown } from './TaskStatusDropdown';
+import { TaskTimeline } from './TaskTimeline';
 
 const priorityColors: Record<TaskPriority, string> = {
   LOW: 'bg-gray-100 text-gray-600',
@@ -213,6 +206,13 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
         <h3 className="text-lg font-semibold text-[#172B42]">Subtareas</h3>
         <div className="mt-4">
           <SubtaskList parentTaskId={taskId} />
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
+        <h3 className="text-lg font-semibold text-[#172B42]">Actividad y Comentarios</h3>
+        <div className="mt-4">
+          <TaskTimeline taskId={taskId} />
         </div>
       </div>
 

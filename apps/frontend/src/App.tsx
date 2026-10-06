@@ -10,6 +10,9 @@ import { CreateProjectPage } from './pages/CreateProjectPage';
 import { EditProjectPage } from './pages/EditProjectPage';
 import { EditTaskPage } from './pages/EditTaskPage';
 import { RolesMatrixPage } from './pages/RolesMatrixPage';
+import { AdminUsersPage } from './pages/AdminUsersPage';
+import { RequireRole } from './components/auth/RequireRole';
+import { canViewUsersUI } from './lib/permissions';
 
 export function App() {
   return (
@@ -28,7 +31,10 @@ export function App() {
           <Route path="tasks/:taskId/edit" element={<EditTaskPage />} />
           <Route path="projects/:projectId/*" element={<ProjectPage />} />
           <Route path="roles" element={<RolesMatrixPage />} />
-          <Route path="users" element={<PlaceholderPage title="Permisos y usuarios" />} />
+          {/* "No alcanza con ocultar el link": la ruta queda protegida acá, no solo en el Sidebar. */}
+          <Route element={<RequireRole allow={canViewUsersUI} />}>
+            <Route path="users" element={<AdminUsersPage />} />
+          </Route>
           <Route path="notifications" element={<PlaceholderPage title="Notificaciones" />} />
           <Route path="*" element={<PlaceholderPage title="Página no encontrada" />} />
         </Route>

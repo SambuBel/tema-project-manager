@@ -4,6 +4,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ProjectActivityEntity } from '../database/entities/project-activity.entity';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
 import { ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
+import { Not } from 'typeorm';
 
 describe('ProjectActivityService', () => {
   let service: ProjectActivityService;
@@ -85,6 +86,18 @@ describe('ProjectActivityService', () => {
     });
   });
 
+  
+    it('debería filtrar eventos TASK de la actividad general del proyecto', async () => {
+      mockActivityRepo.find.mockResolvedValue([]);
+      mockStatusRepo.find.mockResolvedValue([]);
+      await service.getActivity('p1', 10, 0);
+      expect(mockActivityRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { projectId: 'p1', entityType: Not(ProjectActivityEntityType.TASK) }
+        })
+      );
+    });
+
   describe('getActivity (paginación y combinación)', () => {
     it('debería combinar eventos generales y de estado, paginando correctamente', async () => {
       const date1 = new Date('2026-09-02T10:00:00Z');
@@ -107,7 +120,7 @@ describe('ProjectActivityService', () => {
       const result = await service.getActivity('p1', 2, 0);
 
       // Expect 2 items (limit 2)
-      expect(result.length).toBe(2);
+      expect(result.length).toBe(2); // s1 and g1
 
       // Descending order expected: date3 (g2), date1 (s1)
       expect(result[0].id).toBe('g2');
@@ -115,6 +128,11 @@ describe('ProjectActivityService', () => {
       
       expect(result[1].id).toBe('s1');
       expect(result[1].actionType).toBe('STATUS_CHANGED');
+      
+      // Assert the filter was applied
+      expect(mockActivityRepo.find).toHaveBeenCalledWith(expect.objectContaining({
+        where: { projectId: 'p1', entityType: Not(ProjectActivityEntityType.TASK) }
+      }));
 
       // Check offset 1, limit 2
       const resultOffset = await service.getActivity('p1', 2, 1);

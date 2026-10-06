@@ -3,6 +3,7 @@ import { useMatch } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import { hasAnyRole } from '../../lib/roles';
+import { canViewUsersUI } from '../../lib/permissions';
 import { BellIcon, HomeIcon, InfoIcon, ShieldIcon, SparklesIcon } from './icons';
 import { SidebarHeader } from './SidebarHeader';
 import { SidebarNavButton, SidebarNavLink } from './SidebarNavItem';
@@ -30,7 +31,7 @@ export function Sidebar({ onNavigate, onOpenAssistant }: SidebarProps) {
   });
 
   // Solo visibilidad de UI; la autorizacion real la hace el backend.
-  const canManageUsers = !!user && hasAnyRole(user.roles, ['ADMIN']);
+  const canManageUsers = !!user && canViewUsersUI(user);
   const canUseAssistant = !!user && hasAnyRole(user.roles, ['ADMIN', 'PROGRAM_MANAGER', 'PROJECT_LEADER', 'COLLABORATOR']);
 
   return (
