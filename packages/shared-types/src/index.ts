@@ -157,3 +157,25 @@ export interface ListTasksQuery {
 export interface UpdateTaskStatusDto {
   status: TaskStatus;
 }
+
+export interface Subtask {
+  id: ID;
+  taskId: ID;
+  title: string;
+  assignedToId: ID | null;
+  assignedTo?: User;
+  completed: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSubtaskDto {
+  title: string;
+  assignedToId?: ID;
+}
+
+export interface UpdateSubtaskDto {
+  title?: string;
+  assignedToId?: ID | null;
+  completed?: boolean;
+}
