@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '../lib/api';
+import type { Project, InviteProjectMemberDto, ProjectMemberRole } from '@tema/shared-types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../lib/api';
 import type { Project, ProjectMemberRole } from '@tema/shared-types';
@@ -15,6 +18,13 @@ const ROLE_OPTIONS: { value: ProjectMemberRole; label: string }[] = [
 
 export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProps) {
   const qc = useQueryClient();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [selectedRole, setSelectedRole] = useState<ProjectMemberRole>('COLLABORATOR');
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const inviteMutation = useMutation({
+    mutationFn: (dto: InviteProjectMemberDto) => api.inviteProjectMember(project.id, dto),
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedRole, setSelectedRole] = useState<ProjectMemberRole>('COLLABORATOR');
 
@@ -36,13 +46,22 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
   const inviteMutation = useMutation({
     mutationFn: () => api.addProjectMember(project.id, { userId: selectedUserId, projectRole: selectedRole }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['project-members', project.id] });
+      qc.invalidateQueries({ queryKey: ['project-invitations', project.id] });
       onBack();
     },
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setValidationError(null);
+
+    if (!email.toLowerCase().endsWith('@gmail.com')) {
+      setValidationError('Por cuestiones de seguridad, solo se permiten invitaciones a correos con dominio @gmail.com');
+      return;
+    }
+
+    inviteMutation.mutate({ email, projectRole: selectedRole });
+  };
     if (!selectedUserId) return;
     inviteMutation.mutate();
   };
@@ -79,6 +98,37 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
           <form onSubmit={handleSubmit} className="flex flex-col gap-6">
 
             <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-[#172B42]">Nombre *</label>
+              <input 
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78]"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-[#172B42]">Correo electrónico *</label>
+              <input 
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78]"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-[#172B42]">Rol *</label>
+              <select 
+                required
+                value={selectedRole}
+                onChange={(e) => setSelectedRole(e.target.value as ProjectMemberRole)}
+                className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78] bg-white"
+              >
+                <option value="COLLABORATOR">Colaborador</option>
+                <option value="OBSERVER">Observador</option>
               <label htmlFor="invite-user" className="text-sm font-medium text-[#172B42]">Usuario *</label>
               {users.isLoading ? (
                 <p className="text-sm text-[#607185]">Cargando usuarios…</p>
@@ -123,15 +173,24 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
 
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-[#172B42]">Proyecto *</label>
+              <input 
+                type="text"
               <select
                 disabled
+                value={project.name}
                 className="rounded-lg border border-[#DEE5EC] bg-gray-50 px-4 py-3 text-sm text-[#172B42] opacity-70"
-              >
-                <option>{project.name}</option>
-              </select>
+              />
             </div>
 
+            {validationError && (
+              <div className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
+                {validationError}
+              </div>
+            )}
+
             {inviteMutation.isError && (
+              <div className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
+                {inviteMutation.error?.message || 'Error al enviar la invitación'}
               <div className="text-sm text-red-600 font-medium">
                 No se pudo agregar al miembro: {errorMessage}
               </div>
@@ -147,6 +206,7 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
               </button>
               <button
                 type="submit"
+                disabled={inviteMutation.isPending}
                 disabled={!selectedUserId || inviteMutation.isPending}
                 className="rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:opacity-50 disabled:cursor-not-allowed"
               >
