@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, Repository, Not } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ProjectActivityEntity } from '../database/entities/project-activity.entity';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
@@ -46,7 +46,7 @@ export class ProjectActivityService {
     
     // Buscar eventos generales
     const activities = await this.repo.find({
-      where: { projectId },
+      where: { projectId, entityType: Not(ProjectActivityEntityType.TASK) },
       relations: ['actor'],
       order: { createdAt: 'DESC' },
       take,

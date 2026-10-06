@@ -175,4 +175,63 @@ export class PermissionsService {
   canManageTaskPlanning(user: RequestUser, project: ProjectEntity): boolean {
     return this.isAdminPmOrLeader(user, project);
   }
+
+  // ---------------------------------------------------------------------------
+  // Gestión de ROLES GLOBALES (Users). Distinto de todo lo de arriba: esto no es
+  // "¿puede administrar este proyecto/tarea?", es "¿puede modificar los roles de
+  // ESE OTRO usuario?" — por eso el parámetro es un userId, no una entidad ya
+  // cargada (no hace falta: la única regla contextual es comparar contra el
+  // propio actor, RN-09).
+  // ---------------------------------------------------------------------------
+
+  /** RN-09: nadie modifica sus propios roles, ni siquiera ADMIN. */
+  private isSelf(actor: RequestUser, targetUserId: string): boolean {
+    return actor.id === targetUserId;
+  }
+
+  /**
+   * "¿Puede este actor administrar los roles de este OTRO usuario, en general?"
+   * Hoy equivale a "es ADMIN y no es sobre sí mismo" — PROGRAM_MANAGER NO entra
+   * acá: su única capacidad es la excepción puntual de canAssignGlobalRole con
+   * PROJECT_LEADER, nunca gestión general (ver canAssignGlobalRole).
+   */
+  canManageGlobalRoles(actor: RequestUser, targetUserId: string): boolean {
+    if (this.isSelf(actor, targetUserId)) return false;
+    return this.hasAnyGlobalRole(actor, [RoleName.ADMIN]);
+  }
+
+  /**
+   * ADMIN: puede asignar cualquier rol a cualquier OTRO usuario.
+   * PROGRAM_MANAGER: únicamente puede asignar RoleName.PROJECT_LEADER — regla
+   * explícita del documento funcional ("Asignar rol de Líder: PM Sí"). A
+   * propósito NO se resuelve como "if PM → true": se valida el rol pedido.
+   * Cualquier otro rol pedido por un PM (ADMIN, PROGRAM_MANAGER, COLLABORATOR,
+   * OBSERVER) da false.
+   */
+  canAssignGlobalRole(actor: RequestUser, targetUserId: string, role: RoleName): boolean {
+    if (this.isSelf(actor, targetUserId)) return false;
+    if (this.hasAnyGlobalRole(actor, [RoleName.ADMIN])) return true;
+    return this.hasAnyGlobalRole(actor, [RoleName.PROGRAM_MANAGER]) && role === RoleName.PROJECT_LEADER;
+  }
+
+  /**
+   * Solo ADMIN. El documento dice explícitamente que PM puede ASIGNAR
+   * PROJECT_LEADER, pero no dice nada sobre remover ningún rol — no se asume
+   * simétrico. Ver nota de ambigüedad en la respuesta de esta HU.
+   */
+  canRemoveGlobalRole(actor: RequestUser, targetUserId: string): boolean {
+    if (this.isSelf(actor, targetUserId)) return false;
+    return this.hasAnyGlobalRole(actor, [RoleName.ADMIN]);
+  }
+
+  /** ADMIN y PROGRAM_MANAGER consultan la lista de usuarios (PM la necesita para elegir a quién asignar Líder). */
+  canViewUsers(actor: RequestUser): boolean {
+    return this.hasAnyGlobalRole(actor, [RoleName.ADMIN, RoleName.PROGRAM_MANAGER]);
+  }
+
+  /** Activar/desactivar usuarios: solo ADMIN, nunca sobre uno mismo. */
+  canManageUserStatus(actor: RequestUser, targetUserId: string): boolean {
+    if (this.isSelf(actor, targetUserId)) return false;
+    return this.hasAnyGlobalRole(actor, [RoleName.ADMIN]);
+  }
 }

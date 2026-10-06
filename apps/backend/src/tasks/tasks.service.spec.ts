@@ -87,8 +87,10 @@ function makeService(
   const service = new TasksService(
     taskRepo as unknown as import('typeorm').Repository<TaskEntity>,
     projectRepo as unknown as import('typeorm').Repository<ProjectEntity>,
+    { create: jest.fn(), save: jest.fn(), find: jest.fn() } as never,
     usersService as never,
-    permissions,
+    permissions as never,
+    { logEvent: jest.fn() } as never,
   );
 
   return { service, taskRepo, projectRepo, usersService };

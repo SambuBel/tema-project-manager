@@ -1,5 +1,8 @@
 import { TaskForm } from './TaskForm';
 import type { Project } from '@tema/shared-types';
+import { useCurrentUser } from '../hooks/useCurrentUser';
+import { useMyMembership } from '../hooks/useMyMembership';
+import { canCreateTaskUI } from '../lib/permissions';
 
 /**
  * Contenido de la pestaña "Resumen" del proyecto.
@@ -24,14 +27,22 @@ function formatDate(dateStr: string | null | undefined): string {
 }
 
 export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
+  const { user } = useCurrentUser();
+  const { membership } = useMyMembership(project.id);
+  const canCreateTask = !!user && canCreateTaskUI(user, project, membership);
+
   return (
     <>
       {/* Tarjetas Superiores */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="flex flex-col justify-center rounded-xl border border-[#DEE5EC] bg-white p-6">
           <h3 className="text-sm font-medium text-[#607185]">Avance</h3>
-          <p className="mt-2 text-3xl font-semibold">-</p>
-          <p className="mt-2 text-sm text-[#607185]">Sin métricas disponibles</p>
+          <p className="mt-2 text-3xl font-semibold">
+            {project.progress !== undefined ? `${project.progress}%` : '-'}
+          </p>
+          <p className="mt-2 text-sm text-[#607185]">
+            {project.progress !== undefined ? 'De tareas completadas' : 'Sin métricas disponibles'}
+          </p>
         </div>
 
         <div className="flex flex-col justify-center rounded-xl border border-[#DEE5EC] bg-white p-6">
@@ -46,8 +57,12 @@ export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
 
         <div className="flex flex-col justify-center rounded-xl border border-[#DEE5EC] bg-white p-6">
           <h3 className="text-sm font-medium text-[#607185]">Equipo</h3>
-          <p className="mt-2 text-3xl font-semibold">-</p>
-          <p className="mt-2 text-sm text-[#607185]">Información de equipo pendiente</p>
+          <p className="mt-2 text-3xl font-semibold">
+            {project.memberCount !== undefined ? project.memberCount : '-'}
+          </p>
+          <p className="mt-2 text-sm text-[#607185]">
+            {project.memberCount !== undefined ? 'Miembros activos' : 'Información de equipo pendiente'}
+          </p>
         </div>
       </div>
 
@@ -120,8 +135,8 @@ export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
         </p>
       </div>
 
-      {/* Alta de tareas */}
-      <TaskForm projectId={project.id} />
+      {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}
+      {canCreateTask && <TaskForm projectId={project.id} />}
     </>
   );
 }
