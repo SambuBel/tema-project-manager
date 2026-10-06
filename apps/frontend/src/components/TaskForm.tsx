@@ -104,9 +104,15 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
 
   const update = useMutation({
     mutationFn: (dto: UpdateTaskDto) => api.updateTask(initialData!.id, dto),
-    onSuccess: () => {
+    onSuccess: (updatedTask) => {
+      // Escribimos la respuesta (ya confirmada por el backend) directo en la cache, en vez
+      // de solo invalidar y esperar un refetch: evita la carrera contra el navigate() de
+      // abajo, que podia dejar la pantalla siguiente mostrando el dato viejo todavia cacheado.
+      qc.setQueryData(['task', updatedTask.id], updatedTask);
       void qc.invalidateQueries({ queryKey: ['tasks', projectId] });
-      void qc.invalidateQueries({ queryKey: ['task', initialData!.id] });
+      if (updatedTask.parentTaskId) {
+        void qc.invalidateQueries({ queryKey: ['subtasks', updatedTask.parentTaskId] });
+      }
       navigate(`/projects/${projectId}`);
     },
   });

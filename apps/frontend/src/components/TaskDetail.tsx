@@ -1,8 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 import type { TaskStatus, TaskPriority } from '../types/task';
 import { SubtaskList } from './SubtaskList';
+import { TaskForm } from './TaskForm';
+import { ConfirmDialog } from './ConfirmDialog';
 
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
@@ -44,9 +48,24 @@ interface TaskDetailProps {
  * Detalle de una tarea individual.
  */
 export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
+  const qc = useQueryClient();
+  const [confirmArchive, setConfirmArchive] = useState(false);
+
   const { data: task, isLoading, isError } = useQuery({
     queryKey: ['task', taskId],
     queryFn: () => api.getTask(taskId),
+  });
+
+  const archive = useMutation({
+    mutationFn: () => api.archiveTask(taskId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['tasks'] });
+      if (task?.parentTaskId) {
+        void qc.invalidateQueries({ queryKey: ['subtasks', task.parentTaskId] });
+      }
+      setConfirmArchive(false);
+      onBack();
+    },
   });
 
   if (isLoading) {
@@ -78,8 +97,8 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
         &larr; Volver a tareas
       </button>
 
-      {/* Título + badges */}
-      <div>
+      {/* Título + badges + editar */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-semibold">{task.title}</h1>
           <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusColors[task.status]}`}>
@@ -89,7 +108,33 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
             {taskPriorityLabels[task.priority]}
           </span>
         </div>
+        <div className="flex gap-2">
+          <Link
+            to={`/tasks/${taskId}/edit`}
+            className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
+          >
+            Editar tarea
+          </Link>
+          <button
+            type="button"
+            onClick={() => setConfirmArchive(true)}
+            className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+          >
+            Eliminar
+          </button>
+        </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmArchive}
+        title={`¿Eliminar "${task.title}"?`}
+        description="La tarea se archiva y deja de verse en el listado. No se pierde la información, pero esta acción no se puede deshacer desde acá."
+        confirmLabel="Eliminar"
+        variant="danger"
+        isConfirming={archive.isPending}
+        onConfirm={() => archive.mutate()}
+        onCancel={() => setConfirmArchive(false)}
+      />
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         {/* Descripción */}
@@ -157,13 +202,18 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
         </div>
       </div>
 
-      {/* Subtareas */}
-      <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
-        <h3 className="text-lg font-semibold text-[#172B42]">Subtareas</h3>
-        <div className="mt-4">
-          <SubtaskList parentTaskId={taskId} />
+      {/* Subtareas: jerarquia de un solo nivel, una subtarea no puede tener las suyas */}
+      {!task.parentTaskId && (
+        <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
+          <h3 className="text-lg font-semibold text-[#172B42]">Subtareas</h3>
+          <div className="mt-4">
+            <SubtaskList parentTaskId={taskId} />
+          </div>
+          <div className="mt-6 border-t border-[#DEE5EC] pt-6">
+            <TaskForm projectId={task.projectId} parentTaskId={taskId} />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
