@@ -104,6 +104,7 @@ export interface ProjectInvitation {
   id: ID;
   projectId: ID;
   email: string;
+  name?: string | null;
   projectRole: ProjectMemberRole;
   status: 'PENDING' | 'ACCEPTED' | 'REVOKED';
   createdAt: string;
@@ -116,6 +117,7 @@ export interface AddProjectMemberDto {
 
 export interface InviteProjectMemberDto {
   email: string;
+  name?: string;
   projectRole: ProjectMemberRole;
 }
 

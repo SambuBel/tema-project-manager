@@ -26,6 +26,9 @@ export class ProjectInvitationEntity {
   @Column({ name: 'email', type: 'varchar', length: 255 })
   email!: string;
 
+  @Column({ name: 'name', type: 'varchar', length: 255, nullable: true })
+  name!: string | null;
+
   @Column({
     name: 'project_role',
     type: 'enum',

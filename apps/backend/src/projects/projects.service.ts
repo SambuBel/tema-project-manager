@@ -349,6 +349,7 @@ export class ProjectsService {
       const invitation = manager.create(ProjectInvitationEntity, {
         projectId,
         email: dto.email,
+        name: dto.name,
         projectRole: dto.projectRole as unknown as ProjectMemberRoleEnum,
         invitedBy: user.id,
         token,
@@ -389,7 +390,7 @@ export class ProjectsService {
         // Create dummy user for test
         targetUser = usersRepo.create({
           email: invitation.email,
-          name: formattedName,
+          name: invitation.name || formattedName,
           active: true,
         });
         await usersRepo.save(targetUser);
