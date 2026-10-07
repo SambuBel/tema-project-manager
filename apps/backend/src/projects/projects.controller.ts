@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards, Delete } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards, Delete, HttpCode } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -67,6 +67,7 @@ export class ProjectsController {
   }
 
   @Post(':id/invitations/:invitationId/test-accept')
+  @HttpCode(204)
   testAcceptInvitation(
     @Param('id') id: string,
     @Param('invitationId') invitationId: string,
