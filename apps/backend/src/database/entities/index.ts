@@ -52,6 +52,7 @@ export * from './ai-message.entity';
 /** Todas las entidades del dominio, usadas por DataSource (migrations) y por DatabaseModule (Nest). */
 import { ProjectActivityEntity } from './project-activity.entity';
 import { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
+import { SubtaskEntity } from '../../subtasks/subtask.entity';
 
 export const ALL_ENTITIES = [
   ProjectInvitationEntity,
@@ -66,6 +67,7 @@ export const ALL_ENTITIES = [
   ResourceProfileEntity,
   ProjectMemberEntity,
   TaskEntity,
+  SubtaskEntity,
   TaskDependencyEntity,
   TagEntity,
   TaskTagEntity,
@@ -83,5 +85,6 @@ export const ALL_ENTITIES = [
   AiMessageEntity,
 ];
 
+export { SubtaskEntity } from '../../subtasks/subtask.entity';
 export * from './project-activity.entity';
 export { ProjectInvitationEntity } from '../../projects/project-invitation.entity';

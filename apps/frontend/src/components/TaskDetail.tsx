@@ -205,7 +205,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
       <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
         <h3 className="text-lg font-semibold text-[#172B42]">Subtareas</h3>
         <div className="mt-4">
-          <SubtaskList parentTaskId={taskId} />
+          <SubtaskList parentTaskId={taskId} projectId={task.projectId} />
         </div>
       </div>
 

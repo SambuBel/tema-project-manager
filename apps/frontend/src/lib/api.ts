@@ -16,6 +16,9 @@ import type {
   UserWithRoles,
   ListUsersQuery,
   RoleName,
+  Subtask,
+  CreateSubtaskDto,
+  UpdateSubtaskDto,
 } from '@tema/shared-types';
 import type { Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
 
@@ -139,7 +142,13 @@ export const api = {
     request<Task>(`/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   archiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
-  getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
+  getSubtasks: (taskId: string) => request<Subtask[]>(`/tasks/${taskId}/subtasks`),
+  createSubtask: (taskId: string, dto: CreateSubtaskDto) =>
+    request<Subtask>(`/tasks/${taskId}/subtasks` , { method: 'POST', body: JSON.stringify(dto)}),
+  updateSubtask: (taskId: string, subtaskId: string, dto: UpdateSubtaskDto) =>
+    request<Subtask>(`/tasks/${taskId}/subtasks/${subtaskId}` , { method: 'PATCH', body: JSON.stringify(dto)}),
+  deleteSubtask: (taskId: string, subtaskId: string) =>
+    request<void>(`/tasks/${taskId}/subtasks/${subtaskId}` , { method: 'DELETE' }),
   getTaskTimeline: (taskId: string) => request<TaskTimelineItem[]>(`/tasks/${taskId}/timeline`),
   addTaskComment: (taskId: string, content: string) => request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
 };

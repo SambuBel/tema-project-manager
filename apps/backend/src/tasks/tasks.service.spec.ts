@@ -7,6 +7,7 @@ import { TaskEntity } from './task.entity';
 import { ProjectMemberRole, RoleName, TaskStatus } from '../database/enums';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { SubtaskEntity } from '../subtasks/subtask.entity';
 
 const PROJECT_ID = 'project-1';
 const LEADER_ID = 'leader-1';
@@ -23,7 +24,6 @@ function makeTask(overrides: Partial<TaskEntity> & { project: ProjectEntity }): 
   return {
     id: 'task-1',
     projectId: PROJECT_ID,
-    parentTaskId: null,
     createdBy: 'someone-else',
     assignedToId: null,
     archivedAt: null,
@@ -59,6 +59,7 @@ interface Deps {
   taskRepo: { findOne: jest.Mock; find: jest.Mock; findOneBy: jest.Mock; count: jest.Mock; save: jest.Mock; createQueryBuilder: jest.Mock };
   projectRepo: { findOneBy: jest.Mock };
   usersService: { findById: jest.Mock };
+  subtaskRepo: { count: jest.Mock };
 }
 
 function makeService(
@@ -82,6 +83,9 @@ function makeService(
   };
   const projectRepo = { findOneBy: jest.fn(async () => project) };
   const usersService = { findById: jest.fn(async (id: string) => ({ id, active: true })) };
+  const subtaskRepo = {
+    count: jest.fn(async () => 0),
+  }
   const permissions = makePermissions(members);
 
   const service = new TasksService(
@@ -91,9 +95,10 @@ function makeService(
     usersService as never,
     permissions as never,
     { logEvent: jest.fn() } as never,
+    subtaskRepo as unknown as import('typeorm').Repository<SubtaskEntity>,
   );
 
-  return { service, taskRepo, projectRepo, usersService };
+  return { service, taskRepo, projectRepo, usersService, subtaskRepo };
 }
 
 describe('TasksService - create (canCreateTask)', () => {
@@ -176,65 +181,9 @@ describe('TasksService - create (canCreateTask)', () => {
       service.create({ ...dto, assignedToId: LEADER_ID }, makeUser('admin-1', [RoleName.ADMIN])),
     ).resolves.toBeDefined();
   });
-
-  describe('subtareas (jerarquía de un solo nivel)', () => {
-    const PARENT_ID = 'parent-task-1';
-
-    it('crea la subtarea si la tarea padre existe, es del mismo proyecto y no es a su vez una subtarea', async () => {
-      const { service, taskRepo } = makeService([]);
-      taskRepo.findOneBy.mockResolvedValue({ id: PARENT_ID, projectId: PROJECT_ID, parentTaskId: null });
-
-      const result = await service.create(
-        { ...dto, parentTaskId: PARENT_ID },
-        makeUser('admin-1', [RoleName.ADMIN]),
-      );
-
-      expect(taskRepo.findOneBy).toHaveBeenCalledWith({ id: PARENT_ID });
-      expect(result.parentTaskId).toBe(PARENT_ID);
-    });
-
-    it('404 si la tarea padre no existe, no guarda', async () => {
-      const { service, taskRepo } = makeService([]);
-      taskRepo.findOneBy.mockResolvedValue(null);
-
-      await expect(
-        service.create({ ...dto, parentTaskId: PARENT_ID }, makeUser('admin-1', [RoleName.ADMIN])),
-      ).rejects.toThrow(NotFoundException);
-      expect(taskRepo.save).not.toHaveBeenCalled();
-    });
-
-    it('400 si la tarea padre es de otro proyecto, no guarda', async () => {
-      const { service, taskRepo } = makeService([]);
-      taskRepo.findOneBy.mockResolvedValue({ id: PARENT_ID, projectId: 'otro-proyecto', parentTaskId: null });
-
-      await expect(
-        service.create({ ...dto, parentTaskId: PARENT_ID }, makeUser('admin-1', [RoleName.ADMIN])),
-      ).rejects.toThrow(BadRequestException);
-      expect(taskRepo.save).not.toHaveBeenCalled();
-    });
-
-    it('400 si se intenta anidar una subtarea dentro de otra subtarea, no guarda', async () => {
-      const { service, taskRepo } = makeService([]);
-      taskRepo.findOneBy.mockResolvedValue({ id: PARENT_ID, projectId: PROJECT_ID, parentTaskId: 'abuelo' });
-
-      await expect(
-        service.create({ ...dto, parentTaskId: PARENT_ID }, makeUser('admin-1', [RoleName.ADMIN])),
-      ).rejects.toThrow(BadRequestException);
-      expect(taskRepo.save).not.toHaveBeenCalled();
-    });
-
-    it('crear subtarea sigue exigiendo canCreateTask: COLLABORATOR con projectRole OBSERVER -> 403', async () => {
-      const { service, taskRepo } = makeService([membership('u1', ProjectMemberRole.OBSERVER)]);
-      taskRepo.findOneBy.mockResolvedValue({ id: PARENT_ID, projectId: PROJECT_ID, parentTaskId: null });
-
-      await expect(
-        service.create({ ...dto, parentTaskId: PARENT_ID }, makeUser('u1', [RoleName.COLLABORATOR])),
-      ).rejects.toThrow(ForbiddenException);
-    });
-  });
 });
 
-describe('TasksService - findAllByProject / findOne / findSubtasks (canViewTask)', () => {
+describe('TasksService - findAllByProject / findOne (canViewTask)', () => {
   it('findAllByProject: 404 si el proyecto no existe', async () => {
     const { service, projectRepo } = makeService([]);
     projectRepo.findOneBy.mockResolvedValue(null);
@@ -292,24 +241,6 @@ describe('TasksService - findAllByProject / findOne / findSubtasks (canViewTask)
     const { service, taskRepo } = makeService([]);
     taskRepo.findOne.mockResolvedValue(makeTask({ project: makeProject() }));
     await expect(service.findOne('task-1', makeUser('ajeno'))).rejects.toThrow(ForbiddenException);
-  });
-
-  it('findSubtasks: mismo criterio de acceso que la tarea padre (403 si no puede verla)', async () => {
-    const { service, taskRepo } = makeService([]);
-    taskRepo.findOne.mockResolvedValue(makeTask({ id: 'parent-1', project: makeProject() }));
-    await expect(service.findSubtasks('parent-1', makeUser('ajeno'))).rejects.toThrow(ForbiddenException);
-    expect(taskRepo.find).not.toHaveBeenCalled();
-  });
-
-  it('findSubtasks: devuelve las subtareas si tiene acceso a la tarea padre', async () => {
-    const { service, taskRepo } = makeService([]);
-    taskRepo.findOne.mockResolvedValue(makeTask({ id: 'parent-1', project: makeProject() }));
-    taskRepo.find.mockResolvedValue([{ id: 'sub-1' }]);
-
-    const result = await service.findSubtasks('parent-1', makeUser('admin-1', [RoleName.ADMIN]));
-
-    expect(taskRepo.find).toHaveBeenCalledWith(expect.objectContaining({ where: { parentTaskId: 'parent-1' } }));
-    expect(result).toEqual([{ id: 'sub-1' }]);
   });
 });
 
@@ -448,11 +379,11 @@ describe('TasksService - update (canEditTask)', () => {
 
   describe('RN-04: no completar con subtareas pendientes', () => {
     it('permite completar si no tiene subtareas pendientes (count = 0)', async () => {
-      const { service, taskRepo } = makeService([]);
+      const { service, taskRepo, subtaskRepo } = makeService([]);
       taskRepo.findOne.mockResolvedValue(
         makeTask({ project: makeProject(), status: TaskStatus.IN_PROGRESS }),
       );
-      taskRepo.count.mockResolvedValue(0);
+      subtaskRepo.count.mockResolvedValue(0);
 
       await expect(
         service.update('task-1', { status: TaskStatus.COMPLETED }, makeUser('admin-1', [RoleName.ADMIN])),
@@ -460,11 +391,11 @@ describe('TasksService - update (canEditTask)', () => {
     });
 
     it('400 si tiene subtareas sin completar, no guarda', async () => {
-      const { service, taskRepo } = makeService([]);
+      const { service, taskRepo, subtaskRepo } = makeService([]);
       taskRepo.findOne.mockResolvedValue(
         makeTask({ project: makeProject(), status: TaskStatus.IN_PROGRESS }),
       );
-      taskRepo.count.mockResolvedValue(2);
+      subtaskRepo.count.mockResolvedValue(2);
 
       await expect(
         service.update('task-1', { status: TaskStatus.COMPLETED }, makeUser('admin-1', [RoleName.ADMIN])),
@@ -472,36 +403,36 @@ describe('TasksService - update (canEditTask)', () => {
       expect(taskRepo.save).not.toHaveBeenCalled();
     });
 
-    it('consulta subtareas pendientes de ESTA tarea (parentTaskId = task.id, status != COMPLETED)', async () => {
-      const { service, taskRepo } = makeService([]);
+    it('consulta subtareas pendientes en subtaskRepo (taskId = task.id, completed = false)', async () => {
+      const { service, taskRepo, subtaskRepo } = makeService([]);
       taskRepo.findOne.mockResolvedValue(
         makeTask({ project: makeProject(), status: TaskStatus.IN_PROGRESS }),
       );
 
       await service.update('task-1', { status: TaskStatus.COMPLETED }, makeUser('admin-1', [RoleName.ADMIN]));
 
-      expect(taskRepo.count).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { parentTaskId: 'task-1', status: expect.anything() } }),
+      expect(subtaskRepo.count).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { taskId: 'task-1', completed: false } }),
       );
     });
 
     it('no chequea subtareas si el update no cambia el status a COMPLETED', async () => {
-      const { service, taskRepo } = makeService([]);
+      const { service, taskRepo, subtaskRepo } = makeService([]);
       taskRepo.findOne.mockResolvedValue(makeTask({ project: makeProject() }));
 
       await service.update('task-1', { title: 'nuevo' }, makeUser('admin-1', [RoleName.ADMIN]));
 
-      expect(taskRepo.count).not.toHaveBeenCalled();
+      expect(subtaskRepo.count).not.toHaveBeenCalled();
     });
 
-    it('RN-04 se evalúa DESPUÉS de canEditTask: COLLABORATOR sin permiso -> 403, ni siquiera consulta subtareas', async () => {
-      const { service, taskRepo } = makeService([membership('collab-1', ProjectMemberRole.COLLABORATOR)]);
+    it('se evalúa DESPUÉS de canEditTask: COLLABORATOR sin permiso -> 403, ni siquiera consulta subtareas', async () => {
+      const { service, taskRepo, subtaskRepo } = makeService([membership('collab-1', ProjectMemberRole.COLLABORATOR)]);
       taskRepo.findOne.mockResolvedValue(makeTask({ project: makeProject(), createdBy: 'otro', assignedToId: 'otro' }));
 
       await expect(
         service.update('task-1', { status: TaskStatus.COMPLETED }, makeUser('collab-1', [RoleName.COLLABORATOR])),
       ).rejects.toThrow(ForbiddenException);
-      expect(taskRepo.count).not.toHaveBeenCalled();
+      expect(subtaskRepo.count).not.toHaveBeenCalled();
     });
   });
 });

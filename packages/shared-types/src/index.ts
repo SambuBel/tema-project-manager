@@ -151,7 +151,6 @@ export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export interface Task {
   id: ID;
   projectId: ID;
-  parentTaskId: ID | null;
   title: string;
   description: string | null;
   status: TaskStatus;
@@ -168,8 +167,6 @@ export interface Task {
 
 export interface CreateTaskDto {
   projectId: ID;
-  /** Si viene, esta tarea se crea como subtarea de parentTaskId (mismo proyecto, un solo nivel). */
-  parentTaskId?: ID;
   title: string;
   description?: string;
   status?: TaskStatus;

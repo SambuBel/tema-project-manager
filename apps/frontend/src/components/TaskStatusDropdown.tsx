@@ -56,6 +56,15 @@ export function TaskStatusDropdown({ taskId, currentStatus }: TaskStatusDropdown
       setOpen(false);
     },
   });
+  
+  useEffect(() => {
+    if (mutation.error) {
+      const timer = setTimeout(() => {
+        mutation.reset();
+      }, 4000)
+      return () => clearTimeout(timer);
+    }
+  }, [mutation.error]);
 
   if (validTargets.length === 0) {
     return (
