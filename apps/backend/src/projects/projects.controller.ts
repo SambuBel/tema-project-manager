@@ -8,6 +8,7 @@ import { RoleName } from '../database/enums';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
+import { InviteProjectMemberDto } from './invite-project-member.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
 import { UpdateProjectDtoImpl } from './update-project.dto';
 import { ChangeProjectLeaderDto } from './change-project-leader.dto';
@@ -62,7 +63,7 @@ export class ProjectsController {
   }
 
   @Post(':id/invitations')
-  inviteMember(@Param('id') id: string, @Body() dto: any, @CurrentUser() user: RequestUser) {
+  inviteMember(@Param('id') id: string, @Body() dto: InviteProjectMemberDto, @CurrentUser() user: RequestUser) {
     return this.projects.inviteMember(id, dto, user);
   }
 

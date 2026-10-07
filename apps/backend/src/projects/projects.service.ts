@@ -9,6 +9,7 @@ import { UserEntity } from '../database/entities/user.entity';
 import { TaskEntity } from '../tasks/task.entity';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
+import { InviteProjectMemberDto } from './invite-project-member.dto';
 import { UpdateProjectDtoImpl } from './update-project.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
 import { ChangeProjectLeaderDto } from './change-project-leader.dto';
@@ -312,7 +313,7 @@ export class ProjectsService {
     });
   }
 
-  async inviteMember(projectId: string, dto: any, user: RequestUser) {
+  async inviteMember(projectId: string, dto: InviteProjectMemberDto, user: RequestUser) {
     return this.dataSource.transaction(async (manager) => {
       const project = await manager.findOneBy(ProjectEntity, { id: projectId });
       if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
@@ -385,12 +386,16 @@ export class ProjectsService {
       
       let targetUser = await usersRepo.findOneBy({ email: invitation.email });
       if (!targetUser) {
-        const prefix = invitation.email.split('@')[0];
-        const formattedName = prefix.charAt(0).toUpperCase() + prefix.slice(1);
-        // Create dummy user for test
+        if (!invitation.name || invitation.name.trim() === '') {
+          throw new BadRequestException(
+            'Esta invitación es antigua y no tiene un nombre asociado. No se puede crear un usuario de prueba automáticamente. Por favor, cancelá esta invitación y creá una nueva.'
+          );
+        }
+        
+        // Create dummy user for test using the typed name
         targetUser = usersRepo.create({
           email: invitation.email,
-          name: invitation.name || formattedName,
+          name: invitation.name.trim(),
           active: true,
         });
         await usersRepo.save(targetUser);
