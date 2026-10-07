@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../lib/api';
 import type { Project, InviteProjectMemberDto, ProjectMemberRole } from '@tema/shared-types';
 
@@ -22,26 +22,6 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
 
   const inviteMutation = useMutation({
     mutationFn: (dto: InviteProjectMemberDto) => api.inviteProjectMember(project.id, dto),
-  const [selectedUserId, setSelectedUserId] = useState('');
-  const [selectedRole, setSelectedRole] = useState<ProjectMemberRole>('COLLABORATOR');
-
-  // GET /users ya existe (ver HU de roles/permisos) — antes este formulario
-  // estaba bloqueado a mano porque esta dependencia todavía no estaba resuelta.
-  const users = useQuery({ queryKey: ['users'], queryFn: () => api.listUsers() });
-  const members = useQuery({
-    queryKey: ['project-members', project.id],
-    queryFn: () => api.getProjectMembers(project.id),
-  });
-
-  // No ofrecer como candidatos a quien ya es miembro activo ni al líder
-  // (el líder no se administra desde acá, ver Project.leaderId / "Cambiar líder").
-  const existingMemberIds = new Set((members.data ?? []).map((m) => m.userId));
-  const candidates = (users.data ?? []).filter(
-    (u) => u.id !== project.leaderId && !existingMemberIds.has(u.id),
-  );
-
-  const inviteMutation = useMutation({
-    mutationFn: () => api.addProjectMember(project.id, { userId: selectedUserId, projectRole: selectedRole }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['project-invitations', project.id] });
       onBack();
@@ -59,9 +39,6 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
 
     inviteMutation.mutate({ email, projectRole: selectedRole });
   };
-    if (!selectedUserId) return;
-    inviteMutation.mutate();
-  };
 
   const errorMessage =
     inviteMutation.error instanceof ApiRequestError
@@ -76,11 +53,11 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
         <span className="mx-2">/</span>
         <button onClick={onBack} className="hover:underline">{project.name}</button>
         <span className="mx-2">/</span>
-        <span>Agregar miembro</span>
+        <span>Invitar miembro</span>
       </div>
 
       <div>
-        <h1 className="text-3xl font-semibold text-[#172B42]">Agregar miembro</h1>
+        <h1 className="text-3xl font-semibold text-[#172B42]">Invitar miembro</h1>
         <p className="mt-2 text-sm text-[#607185]">
           Sumá una persona al proyecto con el acceso adecuado.
         </p>
@@ -124,43 +101,6 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
                 onChange={(e) => setSelectedRole(e.target.value as ProjectMemberRole)}
                 className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78] bg-white"
               >
-                <option value="COLLABORATOR">Colaborador</option>
-                <option value="OBSERVER">Observador</option>
-              <label htmlFor="invite-user" className="text-sm font-medium text-[#172B42]">Usuario *</label>
-              {users.isLoading ? (
-                <p className="text-sm text-[#607185]">Cargando usuarios…</p>
-              ) : users.isError ? (
-                <p className="text-sm text-red-600">No se pudo cargar la lista de usuarios.</p>
-              ) : candidates.length === 0 ? (
-                <p className="text-sm italic text-[#607185]">
-                  No hay usuarios disponibles para agregar (ya son miembros, o no hay más usuarios activos).
-                </p>
-              ) : (
-                <select
-                  id="invite-user"
-                  required
-                  value={selectedUserId}
-                  onChange={(e) => setSelectedUserId(e.target.value)}
-                  className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-3 text-sm text-[#172B42]"
-                >
-                  <option value="">Elegí un usuario…</option>
-                  {candidates.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name} · {u.email}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label htmlFor="invite-role" className="text-sm font-medium text-[#172B42]">Rol *</label>
-              <select
-                id="invite-role"
-                value={selectedRole}
-                onChange={(e) => setSelectedRole(e.target.value as ProjectMemberRole)}
-                className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-3 text-sm text-[#172B42]"
-              >
                 {ROLE_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
@@ -172,7 +112,6 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
               <label className="text-sm font-medium text-[#172B42]">Proyecto *</label>
               <input 
                 type="text"
-              <select
                 disabled
                 value={project.name}
                 className="rounded-lg border border-[#DEE5EC] bg-gray-50 px-4 py-3 text-sm text-[#172B42] opacity-70"
@@ -187,9 +126,7 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
 
             {inviteMutation.isError && (
               <div className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
-                {inviteMutation.error?.message || 'Error al enviar la invitación'}
-              <div className="text-sm text-red-600 font-medium">
-                No se pudo agregar al miembro: {errorMessage}
+                No se pudo invitar al miembro: {errorMessage}
               </div>
             )}
 
@@ -204,10 +141,9 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
               <button
                 type="submit"
                 disabled={inviteMutation.isPending}
-                disabled={!selectedUserId || inviteMutation.isPending}
                 className="rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {inviteMutation.isPending ? 'Agregando...' : 'Agregar miembro'}
+                {inviteMutation.isPending ? 'Invitando...' : 'Invitar miembro'}
               </button>
             </div>
           </form>
@@ -216,10 +152,9 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
         {/* Panel lateral */}
         <div className="md:col-span-1">
           <div className="flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-[#172B42] mb-3">Acceso con Google</h3>
+            <h3 className="text-lg font-semibold text-[#172B42] mb-3">Invitaciones seguras</h3>
             <p className="text-sm text-[#607185] leading-relaxed">
-              Cualquier usuario que ya tenga cuenta en TEMA (ingresó alguna vez con Google) puede sumarse a un
-              proyecto. No hay invitación por correo: el acceso se da agregándolo acá.
+              El usuario recibirá una invitación por correo electrónico con un enlace único para aceptar unirse al proyecto.
             </p>
           </div>
         </div>
