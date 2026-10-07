@@ -513,6 +513,7 @@ export class ProjectsService {
 
       const member = await manager.findOne(ProjectMemberEntity, {
         where: { id: memberId, projectId },
+        relations: ['user'],
       });
 
       if (!member) {
@@ -533,7 +534,11 @@ export class ProjectsService {
           actionType: ProjectActivityAction.MEMBER_REMOVED,
           entityType: ProjectActivityEntityType.MEMBER,
           entityId: member.id,
-          metadata: { userId: member.userId, role: member.projectRole },
+          metadata: { 
+            userId: member.userId, 
+            role: member.projectRole,
+            name: member.user.name 
+          },
         },
         manager,
       );

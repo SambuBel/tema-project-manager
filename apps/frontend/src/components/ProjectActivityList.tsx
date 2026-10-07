@@ -82,6 +82,11 @@ function ActivityItem({ item }: { item: any }) {
     case 'MEMBER_ADDED': 
       actionText = `agregó a ${item.metadata?.name || 'un integrante'} al proyecto`; 
       break;
+    case 'MEMBER_REMOVED': 
+      actionText = item.metadata?.name 
+        ? `removió al miembro ${item.metadata.name}`
+        : 'removió a un miembro';
+      break;
     case 'MEMBER_ROLE_CHANGED': 
       actionText = `cambió el rol de ${item.metadata?.name || 'un integrante'} de ${translateValue('rol', item.metadata?.previousRole)} a ${translateValue('rol', item.metadata?.newRole)}`; 
       break;
