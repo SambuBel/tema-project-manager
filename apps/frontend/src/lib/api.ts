@@ -96,6 +96,8 @@ export const api = {
     request<ProjectInvitation>(`/projects/${id}/invitations`, { method: 'POST', body: JSON.stringify(dto) }),
   testAcceptProjectInvitation: (projectId: string, invitationId: string) =>
     request<void>(`/projects/${projectId}/invitations/${invitationId}/test-accept`, { method: 'POST' }),
+  revokeProjectInvitation: (projectId: string, invitationId: string) =>
+    request<void>(`/projects/${projectId}/invitations/${invitationId}`, { method: 'DELETE' }),
   updateProjectMemberRole: (projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto) =>
     request<ProjectMember>(`/projects/${projectId}/members/${memberId}/role`, { method: 'PATCH', body: JSON.stringify(dto) }),
   removeProjectMember: (projectId: string, memberId: string) =>

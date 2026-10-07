@@ -77,6 +77,16 @@ export class ProjectsController {
     return this.projects.testAcceptInvitation(id, invitationId, user);
   }
 
+  @Delete(':id/invitations/:invitationId')
+  @HttpCode(204)
+  revokeInvitation(
+    @Param('id') id: string,
+    @Param('invitationId') invitationId: string,
+    @CurrentUser() user: RequestUser
+  ) {
+    return this.projects.revokeInvitation(id, invitationId, user);
+  }
+
   @Post(':id/members')
   addMember(@Param('id') id: string, @Body() dto: AddProjectMemberDtoImpl, @CurrentUser() user: RequestUser) {
     return this.projects.addMember(id, dto, user);

@@ -4,7 +4,7 @@ export class AddNameToProjectInvitations1791415772091 implements MigrationInterf
     name = 'AddNameToProjectInvitations1791415772091'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "project_invitations" ADD "name" character varying(255)`);
+        await queryRunner.query(`ALTER TABLE "project_invitations" ADD COLUMN IF NOT EXISTS "name" character varying(255)`);
     }
 
     public async down(queryRunner: QueryRunner): Promise<void> {

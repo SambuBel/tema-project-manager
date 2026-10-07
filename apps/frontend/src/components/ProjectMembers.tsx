@@ -62,6 +62,16 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
     }
   });
 
+  const revokeMutation = useMutation({
+    mutationFn: (invitationId: string) => api.revokeProjectInvitation(project.id, invitationId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project-invitations', project.id] });
+    },
+    onError: (error: any) => {
+      alert(`Error al cancelar la invitación: ${error.message || 'Error desconocido'}`);
+    }
+  });
+
   if (!user) return null;
 
   const canManage = canManageTeamUI(user, project);
@@ -204,14 +214,28 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
                         Pendiente
                       </span>
                       {canManage && (
-                        <button
-                          type="button"
-                          disabled={acceptTestMutation.isPending}
-                          onClick={() => acceptTestMutation.mutate(invitation.id)}
-                          className="rounded-lg bg-[#245B78] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1a445b] disabled:opacity-50"
-                        >
-                          Test-AgregarMiembro
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={acceptTestMutation.isPending || revokeMutation.isPending}
+                            onClick={() => acceptTestMutation.mutate(invitation.id)}
+                            className="rounded-lg bg-[#245B78] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1a445b] disabled:opacity-50"
+                          >
+                            Test-AgregarMiembro
+                          </button>
+                          <button
+                            type="button"
+                            disabled={acceptTestMutation.isPending || revokeMutation.isPending}
+                            onClick={() => {
+                              if (window.confirm('¿Estás seguro de cancelar esta invitación?')) {
+                                revokeMutation.mutate(invitation.id);
+                              }
+                            }}
+                            className="rounded-lg border border-[#DEE5EC] bg-white px-3 py-1.5 text-xs font-medium text-[#D32F2F] hover:bg-[#fef2f2] disabled:opacity-50"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>

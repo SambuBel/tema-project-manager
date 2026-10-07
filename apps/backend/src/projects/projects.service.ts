@@ -402,12 +402,22 @@ export class ProjectsService {
       }
 
       // Add as member
-      const member = membersRepo.create({
-        projectId,
-        userId: targetUser.id,
-        projectRole: invitation.projectRole,
-      });
-      await membersRepo.save(member);
+      let member = await membersRepo.findOne({ where: { projectId, userId: targetUser.id } });
+      if (member) {
+        if (member.removedAt !== null) {
+          member.removedAt = null;
+          member.projectRole = invitation.projectRole;
+          await membersRepo.save(member);
+        }
+        // If already active, just proceed to mark invitation as accepted.
+      } else {
+        member = membersRepo.create({
+          projectId,
+          userId: targetUser.id,
+          projectRole: invitation.projectRole,
+        });
+        await membersRepo.save(member);
+      }
 
       // Mark invitation as accepted
       invitation.status = 'ACCEPTED';
@@ -430,10 +440,10 @@ export class ProjectsService {
       }
 
       const existing = await manager.findOne(ProjectMemberEntity, {
-        where: { projectId, userId: dto.userId, removedAt: IsNull() },
+        where: { projectId, userId: dto.userId },
       });
 
-      if (existing) {
+      if (existing && existing.removedAt === null) {
         throw new ConflictException(`El usuario ya es miembro activo de este proyecto`);
       }
 
@@ -441,13 +451,19 @@ export class ProjectsService {
       // 'OBSERVER'), validado por @IsEnum(ProjectMemberRole) en el DTO concreto
       // (project-member.dto.ts) contra el enum de Postgres/TypeORM del backend —
       // mismos valores, dos declaraciones (shared-types no depende de TypeORM).
-      const member = manager.create(ProjectMemberEntity, {
-        projectId,
-        userId: dto.userId,
-        projectRole: dto.projectRole as unknown as ProjectMemberRoleEnum,
-      });
-
-      const savedMember = await manager.save(member);
+      let savedMember: ProjectMemberEntity;
+      if (existing && existing.removedAt !== null) {
+        existing.removedAt = null;
+        existing.projectRole = dto.projectRole as unknown as ProjectMemberRoleEnum;
+        savedMember = await manager.save(existing);
+      } else {
+        const member = manager.create(ProjectMemberEntity, {
+          projectId,
+          userId: dto.userId,
+          projectRole: dto.projectRole as unknown as ProjectMemberRoleEnum,
+        });
+        savedMember = await manager.save(member);
+      }
 
       await this.activityService.logEvent(
         {
