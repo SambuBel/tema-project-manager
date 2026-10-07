@@ -384,10 +384,12 @@ export class ProjectsService {
       
       let targetUser = await usersRepo.findOneBy({ email: invitation.email });
       if (!targetUser) {
+        const prefix = invitation.email.split('@')[0];
+        const formattedName = prefix.charAt(0).toUpperCase() + prefix.slice(1);
         // Create dummy user for test
         targetUser = usersRepo.create({
           email: invitation.email,
-          name: 'Test ' + invitation.email.split('@')[0],
+          name: formattedName,
           active: true,
         });
         await usersRepo.save(targetUser);
