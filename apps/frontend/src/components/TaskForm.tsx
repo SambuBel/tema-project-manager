@@ -288,13 +288,24 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
           </div>
         )}
 
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="self-start rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isPending ? 'Guardando...' : isEditing ? 'Guardar cambios' : 'Crear tarea'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="self-start rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isPending ? 'Guardando...' : isEditing ? 'Guardar cambios' : 'Crear tarea'}
+          </button>
+          {isEditing && (
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="rounded-lg border border-[#DEE5EC] bg-white px-6 py-2.5 text-sm font-medium text-[#172B42] hover:bg-gray-50"
+            >
+              Cancelar
+            </button>
+          )}
+        </div>
       </form>
     </div>
   );
