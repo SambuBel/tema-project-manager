@@ -373,6 +373,27 @@ export class ProjectsService {
     });
   }
 
+  async revokeInvitation(projectId: string, invitationId: string, user: RequestUser): Promise<void> {
+    return this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
+      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+
+      if (!this.permissions.canManageProjectTeam(user, project)) {
+        throw new ForbiddenException('No tenés permisos para gestionar invitaciones en este proyecto.');
+      }
+
+      const invitation = await manager.findOne(ProjectInvitationEntity, {
+        where: { id: invitationId, projectId, status: 'PENDING' },
+      });
+
+      if (!invitation) {
+        throw new NotFoundException('Invitación no encontrada o ya no está pendiente');
+      }
+
+      await manager.remove(invitation);
+    });
+  }
+
   // --- TEST ENDPOINT ONLY ---
   async testAcceptInvitation(projectId: string, invitationId: string, user: RequestUser): Promise<void> {
     return this.dataSource.transaction(async (manager) => {
