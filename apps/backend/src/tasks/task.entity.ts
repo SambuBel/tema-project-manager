@@ -23,11 +23,8 @@ import { TaskPriority, TaskStatus } from '../database/enums';
  *
  * `archivedAt` es distinto de `deleted_at`: archivar no borra la tarea (sigue existiendo,
  * solo se oculta), mismo criterio que ya usa ProjectEntity.archivedAt.
- *
- * Subtareas: no hay tabla separada, son filas de `tasks` con `parentTaskId` seteado
- * (jerarquia de un solo nivel: una subtarea no puede tener sus propias subtareas,
- * se valida en TasksService). `parentTaskId` solo se define al crear, no se puede
- * reasignar via update — evita tener que resolver ciclos.
+ * 
+ * Subtareas: entidad separada, cada subtarea tiene título, responsable y estado binario
  */
 @Entity('tasks')
 @Index('ix_tasks_project_id', ['projectId'])
@@ -41,14 +38,6 @@ export class TaskEntity {
   @ManyToOne(() => ProjectEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'project_id' })
   project!: ProjectEntity;
-
-  @Index('ix_tasks_parent_task_id')
-  @Column({ name: 'parent_task_id', type: 'uuid', nullable: true })
-  parentTaskId!: string | null;
-
-  @ManyToOne(() => TaskEntity, { onDelete: 'CASCADE', nullable: true })
-  @JoinColumn({ name: 'parent_task_id' })
-  parentTask!: TaskEntity | null;
 
   @Column({ name: 'title', type: 'varchar', length: 200 })
   title!: string;
