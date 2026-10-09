@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { ChevronIcon, CloseIcon, MenuIcon } from './icons';
 import { Sidebar } from './Sidebar';
+import { ChatPanel } from '../assistant/ChatPanel';
 
 export function AppLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -34,8 +35,8 @@ export function AppLayout() {
     return () => window.removeEventListener('keydown', onKey);
   }, [drawerOpen]);
 
-  // Punto de extension: aca se abrira el panel de chat del asistente.
-  const openAssistant = () => {};
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const openAssistant = () => setAssistantOpen(true);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -94,6 +95,8 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+
+      <ChatPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
     </div>
   );
 }

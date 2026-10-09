@@ -7,6 +7,7 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TasksModule } from './tasks/tasks.module';
+import { AiModule } from './ai/ai.module';
 import { envValidationSchema } from './config/env.validation';
 
 @Module({
@@ -30,6 +31,7 @@ import { envValidationSchema } from './config/env.validation';
     AuthModule,
     ProjectsModule,
     TasksModule,
+    AiModule,
   ],
   controllers: [HealthController],
 })

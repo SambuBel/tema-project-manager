@@ -144,4 +144,8 @@ export const api = {
   getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
   getTaskTimeline: (taskId: string) => request<TaskTimelineItem[]>(`/tasks/${taskId}/timeline`),
   addTaskComment: (taskId: string, content: string) => request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
+
+  // --- Asistente ---
+  sendChatMessage: (message: string, projectId?: string) =>
+    request<{ reply: string }>('/ai/chat', { method: 'POST', body: JSON.stringify({ message, projectId }) }),
 };
