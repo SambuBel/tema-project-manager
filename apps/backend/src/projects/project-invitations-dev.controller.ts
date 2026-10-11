@@ -1,4 +1,4 @@
-import { Controller, Param, Post, UseGuards } from '@nestjs/common';
+import { Controller, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/types/authenticated-request-user';
@@ -16,6 +16,7 @@ export class ProjectInvitationsDevController {
   constructor(private readonly projects: ProjectsService) {}
 
   @Post(':id/invitations/:invitationId/test-accept')
+  @HttpCode(204)
   testAcceptInvitation(
     @Param('id') id: string,
     @Param('invitationId') invitationId: string,

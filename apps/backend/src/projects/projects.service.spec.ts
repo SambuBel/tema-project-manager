@@ -696,8 +696,8 @@ describe('ProjectsService - Members (canManageProjectTeam)', () => {
       expect(manager.save).not.toHaveBeenCalled();
     });
 
-    it('ConflictException si el miembro ya existe', async () => {
-      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, { id: 'm1' });
+    it('ConflictException si el miembro ya existe y está activo (removedAt null)', async () => {
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, { id: 'm1', removedAt: null });
       mockDataSource.transaction.mockImplementation((fn) => fn(manager));
       permissions.canManageProjectTeam.mockReturnValue(true);
       mockUsersService.findById.mockResolvedValue({ id: 'u1' });
@@ -705,6 +705,21 @@ describe('ProjectsService - Members (canManageProjectTeam)', () => {
       await expect(
         service.addMember('1', { userId: 'u1', projectRole: 'COLLABORATOR' as never }, makeUser('leader1')),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('miembro dado de baja antes (removedAt): se reactiva la MISMA fila con el nuevo rol, sin crear otra (evita la unique)', async () => {
+      const removed = { id: 'm1', projectId: '1', userId: 'u1', projectRole: 'OBSERVER', removedAt: new Date() };
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, removed);
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+      permissions.canManageProjectTeam.mockReturnValue(true);
+      mockUsersService.findById.mockResolvedValue({ id: 'u1', name: 'Ana' });
+
+      const result = await service.addMember('1', { userId: 'u1', projectRole: 'COLLABORATOR' as never }, makeUser('leader1'));
+
+      expect(result).toBe(removed);
+      expect(removed.removedAt).toBeNull();
+      expect(removed.projectRole).toBe('COLLABORATOR');
+      expect(manager.create).not.toHaveBeenCalled();
     });
 
     it('NotFoundException si el usuario no existe', async () => {

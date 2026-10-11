@@ -12,7 +12,7 @@ import { AuthService } from '../auth/auth.service';
 import { PermissionsService } from '../auth/permissions.service';
 import { ProjectActivityService } from './project-activity.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
-import { InviteProjectMemberDtoImpl } from './invite-project-member.dto';
+import { InviteProjectMemberDto } from './invite-project-member.dto';
 
 /**
  * Usa el PermissionsService REAL (no mockeado) a propósito: acá importa demostrar que la
@@ -37,7 +37,7 @@ const observer = user('observer', [RoleName.OBSERVER]);
 describe('ProjectsService - invitaciones (autorización)', () => {
   let service: ProjectsService;
   let invitationsFind: jest.Mock;
-  let manager: { findOneBy: jest.Mock; findOne: jest.Mock; create: jest.Mock; save: jest.Mock; getRepository: jest.Mock };
+  let manager: { findOneBy: jest.Mock; findOne: jest.Mock; create: jest.Mock; save: jest.Mock; getRepository: jest.Mock; remove?: jest.Mock };
 
   const projects: Record<string, ProjectEntity> = { [PROJECT_A.id]: PROJECT_A, [PROJECT_B.id]: PROJECT_B };
 
@@ -116,7 +116,7 @@ describe('ProjectsService - invitaciones (autorización)', () => {
   });
 
   describe('POST invitations (inviteMember)', () => {
-    const dto: InviteProjectMemberDtoImpl = { email: 'nuevo@gmail.com', projectRole: ProjectMemberRole.COLLABORATOR };
+    const dto: InviteProjectMemberDto = { email: 'nuevo@gmail.com', name: 'Nuevo', projectRole: ProjectMemberRole.COLLABORATOR };
 
     it.each([
       ['ADMIN', admin],
@@ -138,6 +138,58 @@ describe('ProjectsService - invitaciones (autorización)', () => {
 
     it('aislamiento: el líder de B no puede invitar a A', async () => {
       await expect(service.inviteMember(PROJECT_A.id, dto, leaderOfB)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('DELETE invitations (revokeInvitation)', () => {
+    it.each([
+      ['ADMIN', admin],
+      ['PROGRAM_MANAGER', pm],
+      ['líder real', leaderOfA],
+    ])('%s: puede cancelar una invitación pendiente', async (_label, actor) => {
+      const invitation = { id: 'inv-1', projectId: PROJECT_A.id, status: 'PENDING' };
+      manager.findOne.mockResolvedValue(invitation);
+      manager.remove = jest.fn(async (entity) => entity);
+
+      await expect(service.revokeInvitation(PROJECT_A.id, 'inv-1', actor)).resolves.toBeUndefined();
+      expect(manager.remove).toHaveBeenCalledWith(invitation);
+    });
+
+    it.each([
+      ['PROJECT_LEADER ajeno', foreignLeader],
+      ['COLLABORATOR', collaborator],
+      ['OBSERVER', observer],
+    ])('%s: 403 y no toca nada', async (_label, actor) => {
+      manager.remove = jest.fn();
+      await expect(service.revokeInvitation(PROJECT_A.id, 'inv-1', actor)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(manager.findOne).not.toHaveBeenCalled();
+      expect(manager.remove).not.toHaveBeenCalled();
+    });
+
+    it('aislamiento: el líder de A no cancela invitaciones de B', async () => {
+      manager.remove = jest.fn();
+      await expect(service.revokeInvitation(PROJECT_B.id, 'inv-1', leaderOfA)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(manager.remove).not.toHaveBeenCalled();
+    });
+
+    it('invitación inexistente o ya no pendiente (acotada por projectId): 404', async () => {
+      manager.remove = jest.fn();
+      await expect(service.revokeInvitation(PROJECT_A.id, 'inv-x', admin)).rejects.toBeInstanceOf(NotFoundException);
+      expect(manager.findOne).toHaveBeenCalledWith(
+        ProjectInvitationEntity,
+        expect.objectContaining({ where: { id: 'inv-x', projectId: PROJECT_A.id, status: 'PENDING' } }),
+      );
+      expect(manager.remove).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST invitations: persiste el nombre del invitado', () => {
+    it('guarda name junto al email y el rol', async () => {
+      await service.inviteMember(PROJECT_A.id, { email: 'nuevo@gmail.com', name: 'Nuevo Nombre', projectRole: ProjectMemberRole.OBSERVER }, admin);
+      expect(manager.create).toHaveBeenCalledWith(
+        ProjectInvitationEntity,
+        expect.objectContaining({ email: 'nuevo@gmail.com', name: 'Nuevo Nombre', projectRole: ProjectMemberRole.OBSERVER }),
+      );
     });
   });
 

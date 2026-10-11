@@ -9,10 +9,9 @@ import { UserEntity } from '../database/entities/user.entity';
 import { TaskEntity } from '../tasks/task.entity';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
-import { InviteProjectMemberDto } from './invite-project-member.dto';
 import { UpdateProjectDtoImpl } from './update-project.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
-import { InviteProjectMemberDtoImpl } from './invite-project-member.dto';
+import { InviteProjectMemberDto } from './invite-project-member.dto';
 import { ChangeProjectLeaderDto } from './change-project-leader.dto';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
 import {
@@ -345,7 +344,7 @@ export class ProjectsService {
     });
   }
 
-  async inviteMember(projectId: string, dto: InviteProjectMemberDtoImpl, user: RequestUser) {
+  async inviteMember(projectId: string, dto: InviteProjectMemberDto, user: RequestUser) {
     return this.dataSource.transaction(async (manager) => {
       const project = await manager.findOneBy(ProjectEntity, { id: projectId });
       if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
@@ -382,6 +381,7 @@ export class ProjectsService {
       const invitation = manager.create(ProjectInvitationEntity, {
         projectId,
         email: dto.email,
+        name: dto.name,
         projectRole: dto.projectRole,
         invitedBy: user.id,
         token,
@@ -406,6 +406,28 @@ export class ProjectsService {
       where: { projectId, status: 'PENDING' },
       relations: ['inviter'],
       order: { createdAt: 'DESC' },
+    });
+  }
+
+  /** DELETE /projects/:id/invitations/:invitationId: cancelar una invitación pendiente (administrar equipo). */
+  async revokeInvitation(projectId: string, invitationId: string, user: RequestUser): Promise<void> {
+    return this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
+      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+
+      if (!this.permissions.canManageProjectTeam(user, project)) {
+        throw new ForbiddenException('No tenés permisos para gestionar invitaciones en este proyecto.');
+      }
+
+      const invitation = await manager.findOne(ProjectInvitationEntity, {
+        where: { id: invitationId, projectId, status: 'PENDING' },
+      });
+
+      if (!invitation) {
+        throw new NotFoundException('Invitación no encontrada o ya no está pendiente');
+      }
+
+      await manager.remove(invitation);
     });
   }
 
