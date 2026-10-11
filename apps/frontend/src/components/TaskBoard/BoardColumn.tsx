@@ -29,7 +29,7 @@ export function BoardColumn({ status, title, tasks, onSelectTask }: BoardColumnP
               ref={provided.innerRef}
               {...provided.droppableProps}
               // -mx-3 expands the drop zone to cover the margin gap. px-7 (28px) restores the visual padding (12px margin + 16px padding).
-              className="flex flex-1 flex-col gap-3 overflow-y-auto -mx-3 px-7 pb-4 z-10"
+              className="flex flex-1 flex-col gap-3 -mx-3 px-7 pb-4 z-10"
             >
               {tasks.length === 0 ? (
                 <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-[#DEE5EC] bg-white/50 text-sm text-[#607185]">

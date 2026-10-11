@@ -141,7 +141,7 @@ export function ProjectPage() {
   /* Layout principal */
 
   return (
-    <div className="flex flex-col gap-8 text-[#172B42]">
+    <div className="flex w-full min-w-0 flex-col gap-8 text-[#172B42]">
       {/* Breadcrumb */}
       <div className="flex items-center text-sm text-[#607185]">
         <button onClick={() => navigate('/')} className="hover:underline">
@@ -248,10 +248,12 @@ export function ProjectPage() {
       )}
 
       {view === 'tablero' && (
-        <TaskBoard
-          projectId={projectId}
-          onSelectTask={openTask}
-        />
+        <div className="w-full min-w-0">
+          <TaskBoard
+            projectId={projectId}
+            onSelectTask={openTask}
+          />
+        </div>
       )}
 
       {view === 'tasks' && (

@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Outlet, useLocation, useSearchParams } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { ChevronIcon, CloseIcon, MenuIcon } from './icons';
 import { Sidebar } from './Sidebar';
 
 export function AppLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { pathname } = useLocation();
-  const [searchParams] = useSearchParams();
-  const isKanbanView = pathname.startsWith('/projects/') && searchParams.get('view') === 'tablero';
 
   // ... (some state omitted)
   const [collapsed, setCollapsed] = useState(() => {
@@ -94,7 +92,7 @@ export function AppLayout() {
           </button>
           <span className="ml-3 text-sm font-semibold text-slate-800">TEMA Project Manager</span>
         </header>
-        <main className={`mx-auto p-4 sm:p-8 transition-[max-width] duration-300 ${isKanbanView ? 'max-w-full' : 'max-w-6xl'}`}>
+        <main className="mx-auto w-full max-w-6xl min-w-0 p-4 sm:p-8">
           <Outlet />
         </main>
       </div>

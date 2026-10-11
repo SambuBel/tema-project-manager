@@ -58,9 +58,9 @@ export function TaskBoard({ projectId, onSelectTask }: TaskBoardProps) {
   }, {} as Record<TaskStatus, Task[]>);
 
   return (
-    <div className="relative">
+    <div className="relative w-full min-w-0">
       {toast && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 rounded-lg shadow-lg bg-[#172B42] text-white px-5 py-3 text-sm font-medium animate-in fade-in slide-in-from-top-4 flex items-center gap-3">
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 rounded-lg shadow-lg bg-[#172B42] text-white px-5 py-3 text-sm font-medium animate-in fade-in slide-in-from-top-4 flex items-center gap-3">
           <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
@@ -68,7 +68,7 @@ export function TaskBoard({ projectId, onSelectTask }: TaskBoardProps) {
         </div>
       )}
       <DragDropContext onDragEnd={handleDragEnd}>
-        <div className="flex pb-4">
+        <div className="flex min-h-[500px] w-full min-w-0 overflow-x-auto pb-4 px-1 overscroll-x-contain">
           {COLUMNS.map((status) => (
             <BoardColumn
               key={status}
