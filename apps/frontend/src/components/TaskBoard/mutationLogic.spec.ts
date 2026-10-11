@@ -53,6 +53,36 @@ describe('mutationLogic', () => {
     expect(setToastMock).toHaveBeenCalledWith('Error al mover la tarea: Network error');
   });
 
+  it('debe hacer rollback y mostrar mensaje explicativo si falta permisos (RF-TB-05)', () => {
+    const options = getMutationOptions(qcMock, 'proj1', apiUpdateTaskStatusMock, setToastMock);
+    const mockPreviousTasks = [{ id: 't1', status: 'PENDING' }];
+    const permissionError = Object.assign(new Error('403 Forbidden'), {
+      details: ['No podés cambiar el estado de esta tarea.'],
+    });
+
+    options.onError(permissionError, { taskId: 't1', status: 'IN_PROGRESS' }, { previousTasks: mockPreviousTasks });
+
+    expect(qcMock.setQueryData).toHaveBeenCalledWith(['tasks', 'proj1'], mockPreviousTasks);
+    expect(setToastMock).toHaveBeenCalledWith(
+      'Error al mover la tarea: No podés cambiar el estado de esta tarea.'
+    );
+  });
+
+  it('debe hacer rollback y mostrar mensaje explicativo si se viola RN-04', () => {
+    const options = getMutationOptions(qcMock, 'proj1', apiUpdateTaskStatusMock, setToastMock);
+    const mockPreviousTasks = [{ id: 't1', status: 'IN_PROGRESS' }];
+    const businessRuleError = Object.assign(new Error('400 Bad Request'), {
+      details: ['No se puede completar una tarea con subtareas pendientes'],
+    });
+
+    options.onError(businessRuleError, { taskId: 't1', status: 'COMPLETED' }, { previousTasks: mockPreviousTasks });
+
+    expect(qcMock.setQueryData).toHaveBeenCalledWith(['tasks', 'proj1'], mockPreviousTasks);
+    expect(setToastMock).toHaveBeenCalledWith(
+      'Error al mover la tarea: No se puede completar una tarea con subtareas pendientes'
+    );
+  });
+
   it('debe invalidar las queries en onSettled', () => {
     const options = getMutationOptions(qcMock, 'proj1', apiUpdateTaskStatusMock, setToastMock);
     

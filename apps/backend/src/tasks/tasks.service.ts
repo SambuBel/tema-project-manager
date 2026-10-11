@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { TaskEntity } from './task.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { CommentEntity } from '../database/entities/comment.entity';
@@ -219,9 +219,10 @@ export class TasksService {
     }
 
     // RN-04: no se puede completar una tarea si tiene subtareas sin completar.
+    // Solo se consideran subtareas activas (no archivadas).
     if (dto.status === TaskStatus.COMPLETED) {
       const pendingSubtasks = await this.repo.count({
-        where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED) },
+        where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED), archivedAt: IsNull() },
       });
       if (pendingSubtasks > 0) {
         throw new BadRequestException('No se puede completar una tarea con subtareas pendientes');
@@ -365,6 +366,17 @@ export class TasksService {
     }
 
     this.validateTransition(task.status, dto.status);
+
+    // RN-04: no se puede completar una tarea si tiene subtareas sin completar.
+    // Solo se consideran subtareas activas (no archivadas).
+    if (dto.status === TaskStatus.COMPLETED) {
+      const pendingSubtasks = await this.repo.count({
+        where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED), archivedAt: IsNull() },
+      });
+      if (pendingSubtasks > 0) {
+        throw new BadRequestException('No se puede completar una tarea con subtareas pendientes');
+      }
+    }
 
     const oldStatus = task.status;
     task.status = dto.status;

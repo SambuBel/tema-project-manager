@@ -25,7 +25,11 @@ export function getMutationOptions(
       if (context?.previousTasks) {
         qc.setQueryData(['tasks', projectId], context.previousTasks);
       }
-      setToast('Error al mover la tarea: ' + err.message);
+      const message =
+        'details' in err && Array.isArray((err as any).details) && (err as any).details.length > 0
+          ? (err as any).details[0]
+          : err.message;
+      setToast('Error al mover la tarea: ' + message);
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['tasks', projectId] });

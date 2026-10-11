@@ -17,8 +17,20 @@ describe('task-transitions', () => {
       });
     });
 
-    it('COMPLETED debería ser estado final (sin transiciones)', () => {
-      expect(VALID_TRANSITIONS[TaskStatus.COMPLETED]).toEqual([]);
+    it('cada estado debería permitir transiciones a todos los demás estados', () => {
+      const allStatuses = Object.values(TaskStatus);
+      allStatuses.forEach((status) => {
+        const allowed = VALID_TRANSITIONS[status];
+        expect(allowed).toHaveLength(allStatuses.length - 1);
+        expect(allowed).not.toContain(status);
+      });
+    });
+
+    it('COMPLETED no es un estado final y permite transicionar a otros estados', () => {
+      expect(VALID_TRANSITIONS[TaskStatus.COMPLETED]).toContain(TaskStatus.IN_PROGRESS);
+      expect(VALID_TRANSITIONS[TaskStatus.COMPLETED]).toContain(TaskStatus.PENDING);
+      expect(VALID_TRANSITIONS[TaskStatus.COMPLETED]).toContain(TaskStatus.IN_REVIEW);
+      expect(VALID_TRANSITIONS[TaskStatus.COMPLETED]).toContain(TaskStatus.BLOCKED);
     });
   });
 
@@ -33,36 +45,39 @@ describe('task-transitions', () => {
 
   describe('isValidTransition', () => {
     it.each([
+      [TaskStatus.PENDING, TaskStatus.COMPLETED],
+      [TaskStatus.COMPLETED, TaskStatus.IN_PROGRESS],
+      [TaskStatus.BLOCKED, TaskStatus.IN_REVIEW],
+      [TaskStatus.IN_REVIEW, TaskStatus.PENDING],
+      [TaskStatus.IN_PROGRESS, TaskStatus.PENDING],
       [TaskStatus.PENDING, TaskStatus.IN_PROGRESS],
       [TaskStatus.PENDING, TaskStatus.BLOCKED],
+      [TaskStatus.PENDING, TaskStatus.IN_REVIEW],
       [TaskStatus.IN_PROGRESS, TaskStatus.IN_REVIEW],
       [TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED],
       [TaskStatus.IN_PROGRESS, TaskStatus.COMPLETED],
       [TaskStatus.IN_REVIEW, TaskStatus.COMPLETED],
       [TaskStatus.IN_REVIEW, TaskStatus.IN_PROGRESS],
-      [TaskStatus.BLOCKED, TaskStatus.PENDING],
-    ])('debería permitir la transición %s → %s', (from, to) => {
-      expect(isValidTransition(from, to)).toBe(true);
-    });
-
-    it.each([
-      [TaskStatus.PENDING, TaskStatus.COMPLETED],
-      [TaskStatus.PENDING, TaskStatus.IN_REVIEW],
-      [TaskStatus.IN_PROGRESS, TaskStatus.PENDING],
       [TaskStatus.IN_REVIEW, TaskStatus.BLOCKED],
-      [TaskStatus.IN_REVIEW, TaskStatus.PENDING],
+      [TaskStatus.BLOCKED, TaskStatus.PENDING],
       [TaskStatus.BLOCKED, TaskStatus.IN_PROGRESS],
       [TaskStatus.BLOCKED, TaskStatus.COMPLETED],
-      [TaskStatus.COMPLETED, TaskStatus.IN_PROGRESS],
       [TaskStatus.COMPLETED, TaskStatus.PENDING],
-    ])('debería rechazar la transición %s → %s', (from, to) => {
-      expect(isValidTransition(from, to)).toBe(false);
+      [TaskStatus.COMPLETED, TaskStatus.IN_REVIEW],
+      [TaskStatus.COMPLETED, TaskStatus.BLOCKED],
+    ])('debería permitir la transición %s → %s', (from, to) => {
+      expect(isValidTransition(from, to)).toBe(true);
     });
 
     it('debería rechazar la transición al mismo estado', () => {
       Object.values(TaskStatus).forEach((status) => {
         expect(isValidTransition(status, status)).toBe(false);
       });
+    });
+
+    it('debería rechazar si el estado origen o destino no es válido', () => {
+      expect(isValidTransition('INVALID' as any, TaskStatus.PENDING)).toBe(false);
+      expect(isValidTransition(TaskStatus.PENDING, 'INVALID' as any)).toBe(false);
     });
   });
 });
