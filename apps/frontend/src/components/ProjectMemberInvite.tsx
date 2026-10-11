@@ -37,7 +37,7 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
       return;
     }
 
-    inviteMutation.mutate({ email, projectRole: selectedRole });
+    inviteMutation.mutate({ email, name, projectRole: selectedRole });
   };
 
   const errorMessage =
