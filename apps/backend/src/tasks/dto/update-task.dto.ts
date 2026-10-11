@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsDateString, IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { TaskPriority, TaskStatus } from '../../database/enums';
 
 export class UpdateTaskDto {
@@ -24,11 +24,13 @@ export class UpdateTaskDto {
   @IsUUID()
   assignedToId?: string | null;
 
+  /** Campo de PLANIFICACION: cambiarlo exige canManageTaskPlanning (ver TasksService.update). null = limpiar. */
   @IsOptional()
-  @IsString()
+  @IsDateString({ strict: true }, { message: 'La fecha de inicio no es válida (formato AAAA-MM-DD)' })
   startDate?: string | null;
 
+  /** Campo de PLANIFICACION. El orden contra startDate se valida en el service (puede venir solo uno de los dos). */
   @IsOptional()
-  @IsString()
+  @IsDateString({ strict: true }, { message: 'La fecha de vencimiento no es válida (formato AAAA-MM-DD)' })
   dueDate?: string | null;
 }

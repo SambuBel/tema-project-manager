@@ -28,22 +28,37 @@ const BASE = '/api';
 export class ApiRequestError extends Error {
   readonly status: number;
   readonly details: string[];
+  /** `code` y datos extra de errores de dominio estructurados (ej. USER_LEADS_PROJECTS), si el backend los manda. */
+  readonly code?: string;
+  readonly data?: Record<string, unknown>;
 
-  constructor(status: number, statusText: string, details: string[] = []) {
+  constructor(status: number, statusText: string, details: string[] = [], code?: string, data?: Record<string, unknown>) {
     super(`${status} ${statusText}`);
     this.name = 'ApiRequestError';
     this.status = status;
     this.details = details;
+    this.code = code;
+    this.data = data;
   }
 }
 
-async function readErrorDetails(res: Response): Promise<string[]> {
+interface ErrorBody {
+  details: string[];
+  code?: string;
+  data?: Record<string, unknown>;
+}
+
+async function readErrorBody(res: Response): Promise<ErrorBody> {
   try {
-    const body = (await res.json()) as { message?: unknown };
-    if (Array.isArray(body.message)) return body.message.filter((m): m is string => typeof m === 'string');
-    return typeof body.message === 'string' ? [body.message] : [];
+    const { message, code, ...rest } = (await res.json()) as { message?: unknown; code?: unknown } & Record<string, unknown>;
+    const details = Array.isArray(message)
+      ? message.filter((m): m is string => typeof m === 'string')
+      : typeof message === 'string'
+        ? [message]
+        : [];
+    return { details, code: typeof code === 'string' ? code : undefined, data: rest };
   } catch {
-    return [];
+    return { details: [] };
   }
 }
 
@@ -62,7 +77,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     window.location.href = '/login';
   }
 
-  if (!res.ok) throw new ApiRequestError(res.status, res.statusText, await readErrorDetails(res));
+  if (!res.ok) {
+    const body = await readErrorBody(res);
+    throw new ApiRequestError(res.status, res.statusText, body.details, body.code, body.data);
+  }
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 

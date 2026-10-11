@@ -121,6 +121,13 @@ describe('ProjectsController', () => {
       expect(service.create).toHaveBeenCalledWith(dto, mockUser);
       expect(result).toEqual(expectedResult);
     });
+
+    it('pasa el leaderId al service tal cual (la validación vive en el service, no en el controller)', async () => {
+      const dto = { name: 'New', leaderId: '11111111-1111-4111-8111-111111111111' };
+      mockProjectsService.create.mockResolvedValue({ id: 'x' });
+      await controller.create(dto as unknown as CreateProjectDto, mockUser);
+      expect(service.create).toHaveBeenCalledWith(dto, mockUser);
+    });
   });
 
   describe('changeStatus', () => {

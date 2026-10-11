@@ -140,6 +140,21 @@ export class PermissionsService {
   }
 
   /**
+   * Comentar en una tarea. Escribir, no leer: NO alcanza con canViewTask (un OBSERVER ve el
+   * proyecto pero no comenta). ADMIN/PROGRAM_MANAGER/líder real: siempre. Resto: solo con
+   * projectRole === COLLABORATOR en ESTE proyecto (el rol local manda, nunca el global). A
+   * diferencia de canEditTask NO depende de ownership: un COLLABORATOR comenta en cualquier
+   * tarea del proyecto, propia o no. Hoy coincide con canCreateTask; va separada porque es
+   * otra decisión de negocio (misma razón que canManageTaskPlanning vs canDeleteTask).
+   */
+  async canCommentOnTask(user: RequestUser, project: ProjectEntity): Promise<boolean> {
+    if (this.isAdminPmOrLeader(user, project)) return true;
+
+    const membership = await this.getProjectMembership(user.id, project.id);
+    return membership?.projectRole === ProjectMemberRole.COLLABORATOR;
+  }
+
+  /**
    * ADMIN/PROGRAM_MANAGER/líder: cualquier tarea del proyecto. COLLABORATOR (con
    * projectRole COLLABORATOR en ESTE proyecto): solo si la creó o está asignada a
    * él/ella — task.createdBy/assignedToId son los únicos campos del modelo que

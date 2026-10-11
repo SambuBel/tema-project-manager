@@ -143,6 +143,83 @@ describe('PermissionsService', () => {
     });
   });
 
+  describe('canCommentOnTask', () => {
+    const project = makeProject('leader-1');
+    const withMembership = (projectRole: ProjectMemberRole) =>
+      membersRepo.findOne.mockResolvedValue({ projectRole } as ProjectMemberEntity);
+
+    it('ADMIN y PROGRAM_MANAGER: sí, sin membership', async () => {
+      await expect(service.canCommentOnTask(makeUser([RoleName.ADMIN]), project)).resolves.toBe(true);
+      await expect(service.canCommentOnTask(makeUser([RoleName.PROGRAM_MANAGER]), project)).resolves.toBe(true);
+    });
+
+    it('líder real (leaderId): sí', async () => {
+      await expect(service.canCommentOnTask(makeUser([RoleName.PROJECT_LEADER], 'leader-1'), project)).resolves.toBe(true);
+    });
+
+    it('COLLABORATOR con projectRole COLLABORATOR: sí', async () => {
+      withMembership(ProjectMemberRole.COLLABORATOR);
+      await expect(service.canCommentOnTask(makeUser([RoleName.COLLABORATOR], 'c1'), project)).resolves.toBe(true);
+    });
+
+    it('COLLABORATOR global con projectRole OBSERVER: no (manda el rol local)', async () => {
+      withMembership(ProjectMemberRole.OBSERVER);
+      await expect(service.canCommentOnTask(makeUser([RoleName.COLLABORATOR], 'c1'), project)).resolves.toBe(false);
+    });
+
+    it('OBSERVER (membership OBSERVER): no, aunque pueda ver el proyecto', async () => {
+      withMembership(ProjectMemberRole.OBSERVER);
+      const observer = makeUser([RoleName.OBSERVER], 'obs-1');
+      await expect(service.canViewProject(observer, project)).resolves.toBe(true);
+      await expect(service.canCommentOnTask(observer, project)).resolves.toBe(false);
+    });
+
+    it('PROJECT_LEADER global que NO lidera este proyecto y sin membership: no', async () => {
+      await expect(service.canCommentOnTask(makeUser([RoleName.PROJECT_LEADER], 'otro'), project)).resolves.toBe(false);
+    });
+
+    it('usuario sin membership: no', async () => {
+      await expect(service.canCommentOnTask(makeUser([RoleName.COLLABORATOR], 'c1'), project)).resolves.toBe(false);
+    });
+  });
+
+  describe('canManageTaskPlanning (fechas / dependencias)', () => {
+    const project = makeProject('leader-1');
+
+    it('ADMIN: sí', () => {
+      expect(service.canManageTaskPlanning(makeUser([RoleName.ADMIN]), project)).toBe(true);
+    });
+
+    it('PROGRAM_MANAGER: sí', () => {
+      expect(service.canManageTaskPlanning(makeUser([RoleName.PROGRAM_MANAGER]), project)).toBe(true);
+    });
+
+    it('líder real del proyecto (leaderId): sí', () => {
+      expect(service.canManageTaskPlanning(makeUser([RoleName.PROJECT_LEADER], 'leader-1'), project)).toBe(true);
+    });
+
+    it('PROJECT_LEADER global que NO lidera este proyecto: no', () => {
+      expect(service.canManageTaskPlanning(makeUser([RoleName.PROJECT_LEADER], 'otro-leader'), project)).toBe(false);
+    });
+
+    it('COLLABORATOR: no (ni siquiera sobre tareas propias)', () => {
+      expect(service.canManageTaskPlanning(makeUser([RoleName.COLLABORATOR], 'collab-1'), project)).toBe(false);
+    });
+
+    it('OBSERVER: no', () => {
+      expect(service.canManageTaskPlanning(makeUser([RoleName.OBSERVER], 'obs-1'), project)).toBe(false);
+    });
+
+    it('multi-rol ADMIN + COLLABORATOR conserva el permiso', () => {
+      expect(service.canManageTaskPlanning(makeUser([RoleName.COLLABORATOR, RoleName.ADMIN]), project)).toBe(true);
+    });
+
+    it('no consulta membership (el rol local no influye)', () => {
+      service.canManageTaskPlanning(makeUser([RoleName.COLLABORATOR]), project);
+      expect(membersRepo.findOne).not.toHaveBeenCalled();
+    });
+  });
+
   describe('gestión de roles globales (Users)', () => {
     const ADMIN = makeUser([RoleName.ADMIN], 'admin-1');
     const PM = makeUser([RoleName.PROGRAM_MANAGER], 'pm-1');

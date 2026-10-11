@@ -18,4 +18,12 @@ export class CreateProjectDto implements ICreateProjectDto {
   @IsOptional()
   @IsDateString()
   estimatedEndDate?: string;
+
+  /**
+   * Líder del proyecto. Opcional si quien crea tiene PROJECT_LEADER (queda él mismo); obligatorio
+   * si es ADMIN/PM sin ese rol. Siempre se valida en el backend (existe, activo, PROJECT_LEADER).
+   */
+  @IsOptional()
+  @IsUUID('all', { message: 'leaderId debe ser un id de usuario válido' })
+  leaderId?: string;
 }

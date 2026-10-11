@@ -41,6 +41,8 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
   const { data: invitations } = useQuery({
     queryKey: ['project-invitations', project.id],
     queryFn: () => api.getProjectInvitations(project.id),
+    // El backend solo entrega invitaciones a quien administra el equipo (403 al resto).
+    enabled: !!user && canManageTeamUI(user, project),
   });
 
   const qc = useQueryClient();
@@ -203,7 +205,7 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
                       <span className="rounded-full px-3 py-1 text-xs font-medium bg-orange-100 text-orange-700">
                         Pendiente
                       </span>
-                      {canManage && (
+                      {canManage && import.meta.env.DEV && (
                         <button
                           type="button"
                           disabled={acceptTestMutation.isPending}

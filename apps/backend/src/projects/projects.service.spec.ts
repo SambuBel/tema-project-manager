@@ -72,6 +72,7 @@ function makeManager(entities: { project: unknown }) {
     findOneBy: jest.fn(async () => entities.project ?? null),
     create: jest.fn((_entity, data) => data),
     save: jest.fn(async (entity) => entity),
+    query: jest.fn(async () => []),
   };
 }
 
@@ -260,23 +261,49 @@ describe('ProjectsService - findOne / getMembers / getActivity (canViewProject)'
   });
 });
 
-describe('ProjectsService - create', () => {
+describe('ProjectsService - create (RN-23: leaderId siempre válido)', () => {
   let service: ProjectsService;
   let mockDataSource: { transaction: jest.Mock };
+  let mockUsersService: { findById: jest.Mock };
+  let mockAuthService: { getRoleNames: jest.Mock };
   let activityService: ReturnType<typeof makeActivityService>;
+  let manager: { create: jest.Mock; save: jest.Mock; query: jest.Mock };
+
+  /** Usuarios candidatos y sus roles globales. */
+  let users: Record<string, { id: string; active: boolean; deletedAt: Date | null } | null>;
+  let rolesByUser: Record<string, RoleName[]>;
+
+  const leaderRole = [RoleName.PROJECT_LEADER];
+  const candidate = (id: string, overrides: Partial<{ active: boolean; deletedAt: Date | null }> = {}) => ({
+    id,
+    active: true,
+    deletedAt: null,
+    ...overrides,
+  });
 
   beforeEach(async () => {
     mockDataSource = { transaction: jest.fn() };
+    mockUsersService = { findById: jest.fn(async (id: string) => users[id] ?? null) };
+    mockAuthService = { getRoleNames: jest.fn(async (id: string) => rolesByUser[id] ?? []) };
     activityService = makeActivityService();
+    users = {};
+    rolesByUser = {};
+    manager = {
+      create: jest.fn((_entity, data) => data),
+      save: jest.fn(async (entity) => entity),
+      query: jest.fn(async () => []),
+    };
+    mockDataSource.transaction.mockImplementation((fn) => fn(manager));
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProjectsService,
         { provide: getRepositoryToken(ProjectEntity), useValue: {} },
         { provide: getRepositoryToken(ProjectMemberEntity), useValue: {} },
-        { provide: UsersService, useValue: {} },
-        { provide: AuthService, useValue: {} },
-        { provide: PermissionsService, useValue: makePermissions() },
+        { provide: UsersService, useValue: mockUsersService },
+        { provide: AuthService, useValue: mockAuthService },
+        // hasAnyGlobalRole es puro: se usa el real (no hace falta el repo de membresías).
+        { provide: PermissionsService, useValue: new PermissionsService({} as never) },
         { provide: DataSource, useValue: mockDataSource },
         { provide: ProjectActivityService, useValue: activityService },
       ],
@@ -285,21 +312,151 @@ describe('ProjectsService - create', () => {
     service = module.get<ProjectsService>(ProjectsService);
   });
 
-  it('asigna leaderId y createdBy usando el usuario autenticado (también para ADMIN/PM, no solo PROJECT_LEADER) y audita PROJECT_CREATED', async () => {
-    const manager = {
-      create: jest.fn((_entity, data) => data),
-      save: jest.fn(async (entity) => entity),
-    };
-    mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+  describe('sin leaderId', () => {
+    it('PROJECT_LEADER: queda él mismo como líder, createdBy = actor, y audita PROJECT_CREATED', async () => {
+      users.leader1 = candidate('leader1');
+      rolesByUser.leader1 = leaderRole;
 
-    const result = await service.create({ name: 'Test' }, makeUser('user123', [RoleName.ADMIN]));
+      const result = await service.create({ name: 'Test' }, makeUser('leader1', leaderRole));
 
-    expect(result.leaderId).toBe('user123');
-    expect(result.createdBy).toBe('user123');
-    expect(activityService.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ actorId: 'user123', actionType: 'PROJECT_CREATED' }),
-      manager,
-    );
+      expect(result.leaderId).toBe('leader1');
+      expect(result.createdBy).toBe('leader1');
+      expect(activityService.logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: 'leader1', actionType: 'PROJECT_CREATED' }),
+        manager,
+      );
+    });
+
+    it.each([
+      ['ADMIN', RoleName.ADMIN],
+      ['PROGRAM_MANAGER', RoleName.PROGRAM_MANAGER],
+    ])('%s sin PROJECT_LEADER: 400 y no abre transacción ni persiste nada', async (_label, role) => {
+      await expect(service.create({ name: 'Test' }, makeUser('boss', [role]))).rejects.toThrow(BadRequestException);
+      expect(mockDataSource.transaction).not.toHaveBeenCalled();
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('el líder por defecto también se valida (ej. su rol cambió entre el login y ahora)', async () => {
+      users.leader1 = candidate('leader1', { active: false });
+      await expect(service.create({ name: 'Test' }, makeUser('leader1', leaderRole))).rejects.toThrow(BadRequestException);
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('con leaderId', () => {
+    it.each([
+      ['ADMIN', RoleName.ADMIN],
+      ['PROGRAM_MANAGER', RoleName.PROGRAM_MANAGER],
+    ])('%s elige un líder activo con PROJECT_LEADER: OK; createdBy sigue siendo el actor', async (_label, role) => {
+      users.cand = candidate('cand');
+      rolesByUser.cand = leaderRole;
+
+      const result = await service.create({ name: 'Test', leaderId: 'cand' }, makeUser('boss', [role]));
+
+      expect(result.leaderId).toBe('cand');
+      expect(result.createdBy).toBe('boss');
+      expect(result).not.toHaveProperty('leaderId', 'boss');
+    });
+
+    it('ADMIN que TAMBIÉN tiene PROJECT_LEADER puede elegirse a sí mismo', async () => {
+      users.boss = candidate('boss');
+      rolesByUser.boss = [RoleName.ADMIN, RoleName.PROJECT_LEADER];
+
+      const result = await service.create(
+        { name: 'Test', leaderId: 'boss' },
+        makeUser('boss', [RoleName.ADMIN, RoleName.PROJECT_LEADER]),
+      );
+      expect(result.leaderId).toBe('boss');
+    });
+
+    it('ADMIN que TAMBIÉN tiene PROJECT_LEADER y no manda leaderId: queda él mismo', async () => {
+      users.boss = candidate('boss');
+      rolesByUser.boss = [RoleName.ADMIN, RoleName.PROJECT_LEADER];
+
+      const result = await service.create({ name: 'Test' }, makeUser('boss', [RoleName.ADMIN, RoleName.PROJECT_LEADER]));
+      expect(result.leaderId).toBe('boss');
+    });
+
+    it('ADMIN SIN PROJECT_LEADER que se pone a sí mismo como leaderId: 400 (no basta con ser ADMIN)', async () => {
+      users.boss = candidate('boss');
+      rolesByUser.boss = [RoleName.ADMIN];
+      await expect(
+        service.create({ name: 'Test', leaderId: 'boss' }, makeUser('boss', [RoleName.ADMIN])),
+      ).rejects.toThrow(BadRequestException);
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('candidato inactivo: 400, no persiste', async () => {
+      users.cand = candidate('cand', { active: false });
+      rolesByUser.cand = leaderRole;
+      await expect(
+        service.create({ name: 'Test', leaderId: 'cand' }, makeUser('admin1', [RoleName.ADMIN])),
+      ).rejects.toThrow(BadRequestException);
+      expect(manager.save).not.toHaveBeenCalled();
+      expect(activityService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('candidato con baja lógica (deletedAt): 400', async () => {
+      users.cand = candidate('cand', { deletedAt: new Date() });
+      rolesByUser.cand = leaderRole;
+      await expect(
+        service.create({ name: 'Test', leaderId: 'cand' }, makeUser('admin1', [RoleName.ADMIN])),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('candidato sin PROJECT_LEADER: 400, no persiste', async () => {
+      users.cand = candidate('cand');
+      rolesByUser.cand = [RoleName.COLLABORATOR];
+      await expect(
+        service.create({ name: 'Test', leaderId: 'cand' }, makeUser('admin1', [RoleName.ADMIN])),
+      ).rejects.toThrow(BadRequestException);
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('candidato inexistente: 404 (mismo criterio que changeLeader), no persiste', async () => {
+      await expect(
+        service.create({ name: 'Test', leaderId: 'fantasma' }, makeUser('admin1', [RoleName.ADMIN])),
+      ).rejects.toThrow(NotFoundException);
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('PROJECT_LEADER que NO es ADMIN/PM no puede asignar a otro como líder: 403, sin transacción', async () => {
+      users.cand = candidate('cand');
+      rolesByUser.cand = leaderRole;
+      await expect(
+        service.create({ name: 'Test', leaderId: 'cand' }, makeUser('leader1', leaderRole)),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockDataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('PROJECT_LEADER que se pasa a sí mismo explícitamente: OK', async () => {
+      users.leader1 = candidate('leader1');
+      rolesByUser.leader1 = leaderRole;
+      const result = await service.create({ name: 'Test', leaderId: 'leader1' }, makeUser('leader1', leaderRole));
+      expect(result.leaderId).toBe('leader1');
+    });
+  });
+
+  describe('concurrencia (FOR SHARE sobre el candidato)', () => {
+    it('toma el lock del candidato ANTES de leer su estado y su rol, y antes de persistir', async () => {
+      users.cand = candidate('cand');
+      rolesByUser.cand = leaderRole;
+
+      await service.create({ name: 'Test', leaderId: 'cand' }, makeUser('admin1', [RoleName.ADMIN]));
+
+      expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('FOR SHARE'), ['cand']);
+      const lock = manager.query.mock.invocationCallOrder[0]!;
+      expect(lock).toBeLessThan(mockUsersService.findById.mock.invocationCallOrder[0]!);
+      expect(lock).toBeLessThan(mockAuthService.getRoleNames.mock.invocationCallOrder[0]!);
+      expect(lock).toBeLessThan(manager.save.mock.invocationCallOrder[0]!);
+    });
+
+    it('el lock del líder por defecto (self) también se toma', async () => {
+      users.leader1 = candidate('leader1');
+      rolesByUser.leader1 = leaderRole;
+      await service.create({ name: 'Test' }, makeUser('leader1', leaderRole));
+      expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('FOR SHARE'), ['leader1']);
+    });
   });
 });
 
@@ -698,6 +855,18 @@ describe('ProjectsService - changeLeader', () => {
       }),
       manager,
     );
+  });
+
+  it('RN-23 / concurrencia: toma FOR SHARE sobre el nuevo líder ANTES de validarlo', async () => {
+    const manager = makeManager({ project: { id: '1', leaderId: 'old-leader' } });
+    mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+    mockUsersService.findById.mockResolvedValue({ id: 'u2', active: true, deletedAt: null });
+    mockAuthService.getRoleNames.mockResolvedValue([RoleName.PROJECT_LEADER]);
+
+    await service.changeLeader('1', { newLeaderId: 'u2' }, makeUser('pm-1', [RoleName.PROGRAM_MANAGER]));
+
+    expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('FOR SHARE'), ['u2']);
+    expect(manager.query.mock.invocationCallOrder[0]!).toBeLessThan(mockUsersService.findById.mock.invocationCallOrder[0]!);
   });
 
   it('nuevo líder === líder actual: no-op, no escribe ni audita', async () => {

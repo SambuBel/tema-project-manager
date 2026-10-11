@@ -12,6 +12,7 @@ import { UpdateProjectStatusDto } from './update-project-status.dto';
 import { UpdateProjectDtoImpl } from './update-project.dto';
 import { ChangeProjectLeaderDto } from './change-project-leader.dto';
 
+import { InviteProjectMemberDtoImpl } from './invite-project-member.dto';
 import { AddProjectMemberDtoImpl, UpdateProjectMemberRoleDtoImpl } from './project-member.dto';
 
 /**
@@ -57,22 +58,13 @@ export class ProjectsController {
   }
 
   @Get(':id/invitations')
-  getInvitations(@Param('id') id: string) {
-    return this.projects.getPendingInvitations(id);
+  getInvitations(@Param('id') id: string, @CurrentUser() user: RequestUser) {
+    return this.projects.getPendingInvitations(id, user);
   }
 
   @Post(':id/invitations')
-  inviteMember(@Param('id') id: string, @Body() dto: any, @CurrentUser() user: RequestUser) {
+  inviteMember(@Param('id') id: string, @Body() dto: InviteProjectMemberDtoImpl, @CurrentUser() user: RequestUser) {
     return this.projects.inviteMember(id, dto, user);
-  }
-
-  @Post(':id/invitations/:invitationId/test-accept')
-  testAcceptInvitation(
-    @Param('id') id: string,
-    @Param('invitationId') invitationId: string,
-    @CurrentUser() user: RequestUser
-  ) {
-    return this.projects.testAcceptInvitation(id, invitationId, user);
   }
 
   @Post(':id/members')

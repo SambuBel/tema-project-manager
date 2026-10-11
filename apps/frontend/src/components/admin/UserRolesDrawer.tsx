@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { AuthenticatedUser, RoleName, UserWithRoles } from '@tema/shared-types';
 import { api } from '../../lib/api';
+import { leadsProjectsMessage } from '../../lib/userErrors';
 import { roleLabels } from '../../lib/roles';
 import {
   canAssignGlobalRoleUI,
@@ -56,6 +57,8 @@ export function UserRolesDrawer({ actor, user, onClose }: UserRolesDrawerProps) 
       invalidate();
       setConfirmDeactivate(false);
     },
+    // Cerrar también en error: si no, el diálogo tapa el motivo del rechazo (ej. USER_LEADS_PROJECTS).
+    onError: () => setConfirmDeactivate(false),
   });
 
   const isSelf = actor.id === user.id;
@@ -174,7 +177,10 @@ export function UserRolesDrawer({ actor, user, onClose }: UserRolesDrawerProps) 
           )}
 
           {(assignRole.isError || removeRole.isError) && (
-            <p className="mt-2 text-sm text-red-600">No se pudo actualizar el rol. Intentá de nuevo.</p>
+            <p className="mt-2 text-sm text-red-600">
+              {leadsProjectsMessage(removeRole.error, 'quitarle el rol de Líder') ??
+                'No se pudo actualizar el rol. Intentá de nuevo.'}
+            </p>
           )}
         </div>
 
@@ -202,7 +208,11 @@ export function UserRolesDrawer({ actor, user, onClose }: UserRolesDrawerProps) 
                 Reactivar usuario
               </button>
             )}
-            {updateStatus.isError && <p className="mt-2 text-sm text-red-600">No se pudo actualizar el estado.</p>}
+            {updateStatus.isError && (
+              <p className="mt-2 text-sm text-red-600">
+                {leadsProjectsMessage(updateStatus.error, 'desactivarlo') ?? 'No se pudo actualizar el estado.'}
+              </p>
+            )}
           </div>
         )}
       </div>

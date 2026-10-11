@@ -5,11 +5,13 @@ import {
   canAssignProjectLeaderRoleUI,
   canChangeLeaderUI,
   canCreateProjectUI,
+  canCommentOnTaskUI,
   canCreateTaskUI,
   canDeleteTaskUI,
   canEditTaskUI,
   canManageGlobalRolesUI,
   canManageProjectUI,
+  canManageTaskPlanningUI,
   canManageTeamUI,
   canManageUserStatusUI,
   canRemoveGlobalRoleUI,
@@ -330,5 +332,75 @@ describe('Users: gestión de roles globales', () => {
       expect(canManageGlobalRolesUI(multi, TARGET_ID)).toBe(true);
       expect(canAssignGlobalRoleUI(multi, TARGET_ID, 'COLLABORATOR')).toBe(true);
     });
+  });
+});
+
+describe('canManageTaskPlanningUI (espeja PermissionsService.canManageTaskPlanning)', () => {
+  const project = makeProject();
+
+  it('ADMIN y PROGRAM_MANAGER: sí', () => {
+    expect(canManageTaskPlanningUI(makeUser('admin-1', ['ADMIN']), project)).toBe(true);
+    expect(canManageTaskPlanningUI(makeUser('pm-1', ['PROGRAM_MANAGER']), project)).toBe(true);
+  });
+
+  it('líder real del proyecto (leaderId): sí', () => {
+    expect(canManageTaskPlanningUI(makeUser(LEADER_ID, ['PROJECT_LEADER']), project)).toBe(true);
+  });
+
+  it('PROJECT_LEADER global que NO lidera este proyecto: no', () => {
+    expect(canManageTaskPlanningUI(makeUser('otro-leader', ['PROJECT_LEADER']), project)).toBe(false);
+  });
+
+  it('COLLABORATOR: no, aunque pueda editar la tarea', () => {
+    const collab = makeUser('u1', ['COLLABORATOR']);
+    const task = makeTask({ createdBy: 'u1' });
+    expect(canEditTaskUI(collab, task, project, makeMembership('COLLABORATOR'))).toBe(true);
+    expect(canManageTaskPlanningUI(collab, project)).toBe(false);
+  });
+
+  it('OBSERVER: no', () => {
+    expect(canManageTaskPlanningUI(makeUser('obs-1', ['OBSERVER']), project)).toBe(false);
+  });
+
+  it('multi-rol ADMIN + COLLABORATOR: sí', () => {
+    expect(canManageTaskPlanningUI(makeUser('u1', ['COLLABORATOR', 'ADMIN']), project)).toBe(true);
+  });
+});
+
+describe('canCommentOnTaskUI (espeja PermissionsService.canCommentOnTask)', () => {
+  const project = makeProject();
+
+  it('ADMIN, PROGRAM_MANAGER y líder real: sí, sin membership', () => {
+    expect(canCommentOnTaskUI(makeUser('admin-1', ['ADMIN']), project, null)).toBe(true);
+    expect(canCommentOnTaskUI(makeUser('pm-1', ['PROGRAM_MANAGER']), project, null)).toBe(true);
+    expect(canCommentOnTaskUI(makeUser(LEADER_ID, ['PROJECT_LEADER']), project, null)).toBe(true);
+  });
+
+  it('COLLABORATOR con projectRole COLLABORATOR: sí', () => {
+    expect(canCommentOnTaskUI(makeUser('u1', ['COLLABORATOR']), project, makeMembership('COLLABORATOR'))).toBe(true);
+  });
+
+  it('COLLABORATOR global con projectRole OBSERVER: no (manda el rol local)', () => {
+    expect(canCommentOnTaskUI(makeUser('u1', ['COLLABORATOR']), project, makeMembership('OBSERVER'))).toBe(false);
+  });
+
+  it('OBSERVER: no', () => {
+    expect(canCommentOnTaskUI(makeUser('obs-1', ['OBSERVER']), project, makeMembership('OBSERVER'))).toBe(false);
+  });
+
+  it('PROJECT_LEADER global que NO lidera este proyecto, sin membership: no', () => {
+    expect(canCommentOnTaskUI(makeUser('otro-leader', ['PROJECT_LEADER']), project, null)).toBe(false);
+  });
+
+  it('usuario sin membership: no', () => {
+    expect(canCommentOnTaskUI(makeUser('u1', ['COLLABORATOR']), project, null)).toBe(false);
+  });
+
+  it('a diferencia de canEditTaskUI, no depende de que la tarea sea propia/asignada', () => {
+    const collab = makeUser('u1', ['COLLABORATOR']);
+    const membership = makeMembership('COLLABORATOR');
+    const foreignTask = makeTask({ createdBy: 'otro', assignedToId: 'otro' });
+    expect(canEditTaskUI(collab, foreignTask, project, membership)).toBe(false);
+    expect(canCommentOnTaskUI(collab, project, membership)).toBe(true);
   });
 });

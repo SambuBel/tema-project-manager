@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, IsNull, Repository, DataSource } from 'typeorm';
+import { Brackets, EntityManager, IsNull, Repository, DataSource } from 'typeorm';
 import * as crypto from 'crypto';
 import { ProjectEntity } from './project.entity';
 import { ProjectMemberEntity } from '../database/entities/project-member.entity';
@@ -11,6 +11,7 @@ import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
 import { UpdateProjectDtoImpl } from './update-project.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
+import { InviteProjectMemberDtoImpl } from './invite-project-member.dto';
 import { ChangeProjectLeaderDto } from './change-project-leader.dto';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
 import {
@@ -105,22 +106,40 @@ export class ProjectsService {
   }
 
   /**
-   * leaderId siempre es el usuario autenticado que crea el proyecto, incluido
-   * ADMIN/PROGRAM_MANAGER (no solo PROJECT_LEADER) — comportamiento ya existente,
-   * no lo cambio en este paso. Un ADMIN/PM que crea un proyecto queda como su
-   * leaderId aunque no tenga el rol global PROJECT_LEADER; no rompe nada porque
-   * canManageProject ya les da acceso total igual.
+   * El líder (leaderId) tiene que ser siempre un usuario válido (ver getValidProjectLeader):
+   *  - leaderId no viene y quien crea tiene PROJECT_LEADER: queda él mismo.
+   *  - leaderId no viene y quien crea NO tiene PROJECT_LEADER (ADMIN/PM solos): 400, no se
+   *    convierte en líder por defecto.
+   *  - leaderId viene: se valida igual (también si es el propio actor). Elegir a OTRO usuario
+   *    como líder es una decisión de ADMIN/PM (como PATCH :id/leader): un PROJECT_LEADER que no
+   *    es ADMIN/PM solo puede ponerse a sí mismo.
+   * La autorización de "puede crear proyectos" sigue en @Roles del controller.
    */
   async create(dto: CreateProjectDto, user: RequestUser): Promise<ProjectEntity> {
+    const { leaderId: requestedLeaderId, ...projectData } = dto;
+    const actorCanLead = this.permissions.hasAnyGlobalRole(user, [RoleName.PROJECT_LEADER]);
+    const isAdminOrPm = this.permissions.hasAnyGlobalRole(user, [RoleName.ADMIN, RoleName.PROGRAM_MANAGER]);
+
+    const leaderId = requestedLeaderId ?? (actorCanLead ? user.id : undefined);
+    if (!leaderId) {
+      throw new BadRequestException(
+        'Indicá el líder del proyecto (leaderId): no tenés el rol de Líder, así que no podés quedar como líder por defecto.',
+      );
+    }
+    if (leaderId !== user.id && !isAdminOrPm) {
+      throw new ForbiddenException('Solo ADMIN o PROGRAM_MANAGER pueden asignar a otro usuario como líder del proyecto.');
+    }
+
     return this.dataSource.transaction(async (manager) => {
+      const leader = await this.getValidProjectLeader(manager, leaderId);
+
       const project = manager.create(ProjectEntity, {
-        ...dto,
-        description: dto.description ?? null,
-        leaderId: user.id,
+        ...projectData,
+        description: projectData.description ?? null,
+        leaderId: leader.id,
         createdBy: user.id,
       });
       const savedProject = await manager.save(project);
-
       await this.activityService.logEvent(
         {
           projectId: savedProject.id,
@@ -132,7 +151,6 @@ export class ProjectsService {
         },
         manager,
       );
-
       return savedProject;
     });
   }
@@ -247,6 +265,33 @@ export class ProjectsService {
   }
 
   /**
+   * Invariante de RN-23: todo leaderId apunta a un usuario existente, ACTIVO y con PROJECT_LEADER.
+   * Lo comparten create y changeLeader. Toma FOR SHARE sobre el candidato ANTES de validar: se
+   * serializa con "quitar PROJECT_LEADER" / "desactivar" (UsersService, FOR UPDATE), así que o
+   * validamos antes de que le quiten el rol, o esperamos y lo vemos ya sin rol (400). Varios
+   * proyectos asignándole el mismo líder no se bloquean entre sí. Debe llamarse dentro de la
+   * transacción que persiste el leaderId.
+   */
+  private async getValidProjectLeader(manager: EntityManager, userId: string): Promise<UserEntity> {
+    await manager.query('SELECT id FROM users WHERE id = $1 FOR SHARE', [userId]);
+
+    const leader = await this.usersService.findById(userId, manager);
+    if (!leader) {
+      throw new NotFoundException(`Usuario ${userId} no encontrado`);
+    }
+    if (!leader.active || leader.deletedAt) {
+      throw new BadRequestException('El líder debe ser un usuario activo.');
+    }
+    const roles = await this.authService.getRoleNames(leader.id);
+    if (!roles.includes(RoleName.PROJECT_LEADER)) {
+      throw new BadRequestException(
+        `El usuario ${leader.id} no tiene el rol PROJECT_LEADER: no se le puede asignar el liderazgo de un proyecto.`,
+      );
+    }
+    return leader;
+  }
+
+  /**
    * Solo ADMIN/PROGRAM_MANAGER llegan acá (gateado por @Roles en el controller).
    * Reglas: el nuevo líder debe existir, estar activo y tener RoleName.PROJECT_LEADER
    * — nunca se lo otorga como efecto secundario. Todo dentro de una transacción:
@@ -259,20 +304,7 @@ export class ProjectsService {
       const project = await manager.findOneBy(ProjectEntity, { id });
       if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
 
-      const newLeader = await this.usersService.findById(dto.newLeaderId, manager);
-      if (!newLeader) {
-        throw new NotFoundException(`Usuario ${dto.newLeaderId} no encontrado`);
-      }
-      if (!newLeader.active || newLeader.deletedAt) {
-        throw new BadRequestException('El nuevo líder debe ser un usuario activo.');
-      }
-
-      const newLeaderRoles = await this.authService.getRoleNames(newLeader.id);
-      if (!newLeaderRoles.includes(RoleName.PROJECT_LEADER)) {
-        throw new BadRequestException(
-          `El usuario ${newLeader.id} no tiene el rol PROJECT_LEADER: no se le puede asignar el liderazgo de un proyecto.`,
-        );
-      }
+      const newLeader = await this.getValidProjectLeader(manager, dto.newLeaderId);
 
       if (project.leaderId === newLeader.id) {
         return project;
@@ -312,7 +344,7 @@ export class ProjectsService {
     });
   }
 
-  async inviteMember(projectId: string, dto: any, user: RequestUser) {
+  async inviteMember(projectId: string, dto: InviteProjectMemberDtoImpl, user: RequestUser) {
     return this.dataSource.transaction(async (manager) => {
       const project = await manager.findOneBy(ProjectEntity, { id: projectId });
       if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
@@ -349,7 +381,7 @@ export class ProjectsService {
       const invitation = manager.create(ProjectInvitationEntity, {
         projectId,
         email: dto.email,
-        projectRole: dto.projectRole as unknown as ProjectMemberRoleEnum,
+        projectRole: dto.projectRole,
         invitedBy: user.id,
         token,
         status: 'PENDING',
@@ -363,7 +395,12 @@ export class ProjectsService {
     });
   }
 
-  async getPendingInvitations(projectId: string): Promise<ProjectInvitationEntity[]> {
+  /** GET /projects/:id/invitations: mismo criterio que administrar el equipo (expone emails de invitados). */
+  async getPendingInvitations(projectId: string, user: RequestUser): Promise<ProjectInvitationEntity[]> {
+    const project = await this.findProjectOrThrow(projectId);
+    if (!this.permissions.canManageProjectTeam(user, project)) {
+      throw new ForbiddenException('No podés ver las invitaciones de este proyecto.');
+    }
     return this.dataSource.getRepository(ProjectInvitationEntity).find({
       where: { projectId, status: 'PENDING' },
       relations: ['inviter'],
@@ -371,9 +408,15 @@ export class ProjectsService {
     });
   }
 
-  // --- TEST ENDPOINT ONLY ---
+  // --- SOLO DESARROLLO: ver ProjectInvitationsDevController (deshabilitado en producción) ---
   async testAcceptInvitation(projectId: string, invitationId: string, user: RequestUser): Promise<void> {
     return this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
+      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+      if (!this.permissions.canManageProjectTeam(user, project)) {
+        throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
+      }
+
       const invitation = await manager.findOne(ProjectInvitationEntity, {
         where: { id: invitationId, projectId, status: 'PENDING' },
       });
