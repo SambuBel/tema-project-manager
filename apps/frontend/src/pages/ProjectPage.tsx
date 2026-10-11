@@ -7,6 +7,7 @@ import { ProjectMembers } from '../components/ProjectMembers';
 import { TaskList } from '../components/TaskList';
 import { TaskDetail } from '../components/TaskDetail';
 import { ProjectActivityList } from '../components/ProjectActivityList';
+import { ProjectGantt } from '../components/gantt/ProjectGantt';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { canManageProjectUI } from '../lib/permissions';
 import type { ProjectStatus } from '@tema/shared-types';
@@ -23,16 +24,17 @@ const statusLabels: Record<ProjectStatus, string> = {
 
 /* Tipos de vista */
 
-type ProjectView = 'resumen' | 'tasks' | 'task-detail' | 'actividad' | 'equipo';
+type ProjectView = 'resumen' | 'tasks' | 'task-detail' | 'actividad' | 'equipo' | 'gantt';
 
 const TABS = [
   { key: 'RESUMEN', label: 'Resumen', view: 'resumen' as ProjectView },
   { key: 'TAREAS', label: 'Tareas', view: 'tasks' as ProjectView },
+  { key: 'GANTT', label: 'Gantt', view: 'gantt' as ProjectView },
   { key: 'EQUIPO', label: 'Equipo', view: 'equipo' as ProjectView },
   { key: 'ACTIVIDAD', label: 'Actividad', view: 'actividad' as ProjectView },
 ] as const;
 
-const DISABLED_TABS = ['Tablero', 'Gantt', 'Archivos'];
+const DISABLED_TABS = ['Tablero', 'Archivos'];
 
 /* Componente */
 
@@ -97,6 +99,7 @@ export function ProjectPage() {
   const activeTabKey: string =
     view === 'resumen' ? 'RESUMEN'
     : view === 'tasks' || view === 'task-detail' ? 'TAREAS'
+    : view === 'gantt' ? 'GANTT'
     : view === 'equipo' ? 'EQUIPO'
     : 'ACTIVIDAD';
 
@@ -225,6 +228,8 @@ export function ProjectPage() {
           onBack={() => setView('tasks')}
         />
       )}
+
+      {view === 'gantt' && <ProjectGantt projectId={project.id} />}
 
       {view === 'equipo' && <ProjectMembers project={project} />}
 

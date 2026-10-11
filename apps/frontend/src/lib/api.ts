@@ -16,6 +16,7 @@ import type {
   UserWithRoles,
   ListUsersQuery,
   RoleName,
+  GanttResponse,
 } from '@tema/shared-types';
 import type { Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
 
@@ -106,6 +107,7 @@ export const api = {
     request<Project>(`/projects/${id}/status`, { method: 'PATCH', body: JSON.stringify(dto) }),
   archiveProject: (id: string) =>
     request<Project>(`/projects/${id}/archive`, { method: 'PATCH' }),
+  getGantt: (projectId: string) => request<GanttResponse>(`/projects/${projectId}/gantt`),
   getProjectMembers: (id: string) => request<ProjectMember[]>(`/projects/${id}/members`),
   getProjectInvitations: (id: string) => request<ProjectInvitation[]>(`/projects/${id}/invitations`),
   addProjectMember: (id: string, dto: AddProjectMemberDto) =>
