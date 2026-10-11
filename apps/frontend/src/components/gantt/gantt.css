@@ -1,0 +1,15 @@
+/*
+ * Día actual: SVAR aplica la clase que devuelve highlightTime tanto a la celda del encabezado como,
+ * en el cuerpo, a un <div> hijo de .wx-gantt-holidays con `left`/`width` inline pero SIN posición ni
+ * alto (los tiene que dar quien usa la clase). Resultado: columna resaltada con una línea roja a
+ * la izquierda, de punta a punta del gráfico.
+ */
+.tema-gantt-today {
+  background-color: rgba(220, 38, 38, 0.1);
+  box-shadow: inset 2px 0 0 #dc2626;
+}
+.wx-gantt-holidays > .tema-gantt-today {
+  position: absolute;
+  top: 0;
+  height: 100%;
+}
