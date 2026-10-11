@@ -404,3 +404,39 @@ describe('canCommentOnTaskUI (espeja PermissionsService.canCommentOnTask)', () =
     expect(canCommentOnTaskUI(collab, project, membership)).toBe(true);
   });
 });
+
+describe('líder REAL = PROJECT_LEADER + leaderId (leaderId histórico sin rol no administra)', () => {
+  const project = makeProject({ leaderId: 'u1' });
+  const stale = makeUser('u1', ['COLLABORATOR']); // leaderId propio pero ya sin PROJECT_LEADER
+  const staleObserver = makeUser('u1', ['OBSERVER']);
+  const realLeader = makeUser('u1', ['PROJECT_LEADER']);
+  const otherLeader = makeUser('u2', ['PROJECT_LEADER']);
+
+  it.each([
+    ['canManageProjectUI', canManageProjectUI],
+    ['canManageTeamUI', canManageTeamUI],
+    ['canManageTaskPlanningUI', canManageTaskPlanningUI],
+    ['canDeleteTaskUI', canDeleteTaskUI],
+  ])('%s: COLLABORATOR/OBSERVER con leaderId propio -> false; líder real -> true; PROJECT_LEADER ajeno -> false', (_n, policy) => {
+    expect(policy(stale, project)).toBe(false);
+    expect(policy(staleObserver, project)).toBe(false);
+    expect(policy(realLeader, project)).toBe(true);
+    expect(policy(otherLeader, project)).toBe(false);
+  });
+
+  it('ADMIN y PM sin PROJECT_LEADER y con leaderId ajeno: administran (bypass intacto)', () => {
+    for (const role of ['ADMIN', 'PROGRAM_MANAGER'] as RoleName[]) {
+      const actor = makeUser('boss', [role]);
+      expect(canManageProjectUI(actor, project)).toBe(true);
+      expect(canManageTeamUI(actor, project)).toBe(true);
+    }
+  });
+
+  it('el rol local COLLABORATOR conserva lo de colaborador pero no convierte en líder', () => {
+    const membership = makeMembership('COLLABORATOR');
+    expect(canCreateTaskUI(stale, project, membership)).toBe(true);
+    expect(canCommentOnTaskUI(stale, project, membership)).toBe(true);
+    expect(canEditTaskUI(stale, makeTask({ createdBy: 'otro', assignedToId: 'otro' }), project, membership)).toBe(false);
+    expect(canManageProjectUI(stale, project)).toBe(false);
+  });
+});

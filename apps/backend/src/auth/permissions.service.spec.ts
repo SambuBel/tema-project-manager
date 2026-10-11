@@ -143,6 +143,66 @@ describe('PermissionsService', () => {
     });
   });
 
+  describe('líder REAL = PROJECT_LEADER global Y leaderId (dato histórico inválido no da permisos)', () => {
+    const project = makeProject('u1');
+    const stale = makeUser([RoleName.COLLABORATOR], 'u1'); // leaderId = u1 pero ya sin PROJECT_LEADER
+    const staleObserver = makeUser([RoleName.OBSERVER], 'u1');
+    const realLeader = makeUser([RoleName.PROJECT_LEADER], 'u1');
+    const otherLeader = makeUser([RoleName.PROJECT_LEADER], 'u2');
+
+    it('isProjectLeader exige AMBAS condiciones', () => {
+      expect(service.isProjectLeader(realLeader, project)).toBe(true);
+      expect(service.isProjectLeader(stale, project)).toBe(false); // leaderId sin rol
+      expect(service.isProjectLeader(otherLeader, project)).toBe(false); // rol sin leaderId
+      expect(service.isProjectLeader(makeUser([RoleName.COLLABORATOR, RoleName.PROJECT_LEADER], 'u1'), project)).toBe(true);
+    });
+
+    it.each(['canManageProject', 'canManageProjectTeam', 'canManageCosts', 'canViewEconomicData', 'canDeleteTask', 'canManageTaskPlanning'] as const)(
+      '%s: COLLABORATOR/OBSERVER con leaderId propio -> false; líder real -> true; PROJECT_LEADER ajeno -> false',
+      (policy) => {
+        expect(service[policy](stale, project)).toBe(false);
+        expect(service[policy](staleObserver, project)).toBe(false);
+        expect(service[policy](realLeader, project)).toBe(true);
+        expect(service[policy](otherLeader, project)).toBe(false);
+      },
+    );
+
+    it('ADMIN y PROGRAM_MANAGER siguen con bypass, sin PROJECT_LEADER y con leaderId ajeno', () => {
+      for (const roles of [[RoleName.ADMIN], [RoleName.PROGRAM_MANAGER]]) {
+        const actor = makeUser(roles, 'boss');
+        expect(service.canManageProject(actor, project)).toBe(true);
+        expect(service.canManageProjectTeam(actor, project)).toBe(true);
+        expect(service.canManageTaskPlanning(actor, project)).toBe(true);
+      }
+    });
+
+    it('lectura: el leaderId almacenado sigue pudiendo VER el proyecto aunque no tenga el rol', async () => {
+      await expect(service.canViewProject(stale, project)).resolves.toBe(true);
+      await expect(service.canViewProject(staleObserver, project)).resolves.toBe(true);
+    });
+
+    it('un PROJECT_LEADER ajeno sin membership no ve el proyecto', async () => {
+      await expect(service.canViewProject(otherLeader, project)).resolves.toBe(false);
+    });
+
+    it('tareas: COLLABORATOR con leaderId propio (y membership COLLABORATOR) solo conserva lo de colaborador', async () => {
+      membersRepo.findOne.mockResolvedValue({ projectRole: ProjectMemberRole.COLLABORATOR } as ProjectMemberEntity);
+      const task = { createdBy: 'otro', assignedToId: 'otro' } as never;
+
+      await expect(service.canCreateTask(stale, project)).resolves.toBe(true); // por su rol LOCAL
+      await expect(service.canEditTask(stale, task, project)).resolves.toBe(false); // no es líder: tarea ajena
+      await expect(service.canCommentOnTask(stale, project)).resolves.toBe(true); // por su rol LOCAL
+      expect(service.canDeleteTask(stale, project)).toBe(false);
+    });
+
+    it('tareas: COLLABORATOR con leaderId propio y SIN membership no crea, edita ni comenta', async () => {
+      const task = { createdBy: 'otro', assignedToId: 'otro' } as never;
+      await expect(service.canCreateTask(stale, project)).resolves.toBe(false);
+      await expect(service.canEditTask(stale, task, project)).resolves.toBe(false);
+      await expect(service.canCommentOnTask(stale, project)).resolves.toBe(false);
+    });
+  });
+
   describe('canCommentOnTask', () => {
     const project = makeProject('leader-1');
     const withMembership = (projectRole: ProjectMemberRole) =>

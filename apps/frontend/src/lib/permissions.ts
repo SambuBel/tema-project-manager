@@ -22,9 +22,12 @@ const GLOBAL_ROLES = {
   ADMIN_PM: ['ADMIN', 'PROGRAM_MANAGER'] as const,
 };
 
-/** Espeja PermissionsService.isProjectLeader: único criterio de liderazgo, nunca projectRole. */
+/**
+ * Espeja PermissionsService.isProjectLeader: líder REAL = rol global PROJECT_LEADER Y project.leaderId
+ * === user.id (nunca projectRole). Un leaderId histórico sin el rol NO administra el proyecto.
+ */
 function isProjectLeader(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
-  return project.leaderId === user.id;
+  return project.leaderId === user.id && hasAnyRole(user.roles, ['PROJECT_LEADER']);
 }
 
 /** Espeja PermissionsService.isAdminPmOrLeader (privado en el backend, se repite acá por claridad). */

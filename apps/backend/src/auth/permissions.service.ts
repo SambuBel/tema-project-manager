@@ -17,11 +17,13 @@ import { RequestUser } from './types/authenticated-request-user';
  * a buscar, y un guard separado la volvería a consultar.
  *
  * Reglas de PROJECT_LEADER, en toda esta clase:
- *   - "es líder de este proyecto" = project.leaderId === user.id, SIEMPRE.
- *   - RoleName.PROJECT_LEADER (rol GLOBAL) nunca por sí solo habilita administrar
- *     un proyecto concreto: solo dice que el usuario PUEDE desempeñarse como líder
- *     (habilita crear proyectos, y es requisito para que se lo pueda nombrar líder
- *     de uno vía changeLeader). Ver auth/auth.service.ts y projects/projects.service.ts.
+ *   - "es líder REAL de este proyecto" (isProjectLeader) exige AMBAS cosas:
+ *     project.leaderId === user.id Y el rol GLOBAL PROJECT_LEADER. Cualquier permiso de
+ *     ESCRITURA reservado al Líder pasa por ahí.
+ *   - El rol global solo, nunca habilita administrar un proyecto concreto; y leaderId solo
+ *     (dato histórico: el usuario perdió el rol y siguió como líder almacenado) tampoco: un
+ *     COLLABORATOR con leaderId propio no administra nada.
+ *   - La LECTURA es la excepción: canViewProject compara el leaderId a secas (ver ahí).
  */
 @Injectable()
 export class PermissionsService {
@@ -35,9 +37,13 @@ export class PermissionsService {
     return roles.some((role) => user.roles.includes(role));
   }
 
-  /** Único criterio válido de liderazgo: nunca ProjectMember.projectRole. */
+  /**
+   * Líder REAL del proyecto: project.leaderId === user.id Y rol global PROJECT_LEADER. Nunca
+   * projectRole. Para decisiones de AUTORIZACIÓN. Comparar solo el ID (project.leaderId ===
+   * user.id) queda para lógica de datos/lectura donde el rol no importa.
+   */
   isProjectLeader(user: RequestUser, project: ProjectEntity): boolean {
-    return project.leaderId === user.id;
+    return project.leaderId === user.id && this.hasAnyGlobalRole(user, [RoleName.PROJECT_LEADER]);
   }
 
   /**
@@ -56,12 +62,14 @@ export class PermissionsService {
   }
 
   /**
-   * ADMIN/PROGRAM_MANAGER: cualquier proyecto. Líder (leaderId): el propio. Resto:
-   * solo si tiene una fila de membership (COLLABORATOR u OBSERVER, ambos pueden ver).
+   * ADMIN/PROGRAM_MANAGER: cualquier proyecto. leaderId almacenado: el propio, SIN exigir el
+   * rol (es lectura: no otorga ningún privilegio y evita dejar sin acceso a quien hay que
+   * regularizar; coincide con el filtro de ProjectsService.findAll). Resto: solo si tiene una
+   * fila de membership (COLLABORATOR u OBSERVER, ambos pueden ver).
    */
   async canViewProject(user: RequestUser, project: ProjectEntity): Promise<boolean> {
     if (this.hasAnyGlobalRole(user, [RoleName.ADMIN, RoleName.PROGRAM_MANAGER])) return true;
-    if (this.isProjectLeader(user, project)) return true;
+    if (project.leaderId === user.id) return true;
 
     const membership = await this.getProjectMembership(user.id, project.id);
     return membership !== null;
@@ -79,9 +87,9 @@ export class PermissionsService {
   }
 
   /**
-   * ADMIN/PROGRAM_MANAGER: cualquier proyecto. PROJECT_LEADER (rol global) NO
-   * alcanza por sí solo: solo el leaderId de ESTE proyecto. Collaborator/Observer:
-   * nunca, sin importar su membership.
+   * ADMIN/PROGRAM_MANAGER: cualquier proyecto. Líder real: PROJECT_LEADER Y leaderId de
+   * ESTE proyecto (ninguno de los dos alcanza por sí solo). Collaborator/Observer:
+   * nunca, sin importar su membership ni que figuren como leaderId.
    */
   canManageProject(user: RequestUser, project: ProjectEntity): boolean {
     return this.isAdminPmOrLeader(user, project);
