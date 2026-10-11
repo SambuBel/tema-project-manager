@@ -6,6 +6,8 @@ import type { TaskPriority, TaskStatus } from '../types/task';
 
 interface TaskTimelineProps {
   taskId: string;
+  /** canCommentOnTaskUI del usuario actual. Sin permiso se oculta el composer (la lectura no cambia). */
+  canComment: boolean;
 }
 
 function formatRelativeTime(dateStr: string) {
@@ -60,7 +62,7 @@ const formatValue = (field: string, value: any) => {
   return value;
 };
 
-export function TaskTimeline({ taskId }: TaskTimelineProps) {
+export function TaskTimeline({ taskId, canComment }: TaskTimelineProps) {
   const qc = useQueryClient();
   const [newComment, setNewComment] = useState('');
 
@@ -169,22 +171,24 @@ export function TaskTimeline({ taskId }: TaskTimelineProps) {
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
-        <textarea
-          value={newComment}
-          onChange={(e) => setNewComment(e.target.value)}
-          placeholder="Escribí un comentario..."
-          className="w-full resize-none rounded-lg border border-[#DEE5EC] bg-white p-3 text-sm text-[#172B42] placeholder:text-[#607185] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78]"
-          rows={3}
-        />
-        <button
-          type="submit"
-          disabled={!newComment.trim() || addCommentMutation.isPending}
-          className="self-end rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white hover:bg-[#1A4258] disabled:opacity-50"
-        >
-          {addCommentMutation.isPending ? 'Enviando...' : 'Comentar'}
-        </button>
-      </form>
+      {canComment && (
+        <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
+          <textarea
+            value={newComment}
+            onChange={(e) => setNewComment(e.target.value)}
+            placeholder="Escribí un comentario..."
+            className="w-full resize-none rounded-lg border border-[#DEE5EC] bg-white p-3 text-sm text-[#172B42] placeholder:text-[#607185] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78]"
+            rows={3}
+          />
+          <button
+            type="submit"
+            disabled={!newComment.trim() || addCommentMutation.isPending}
+            className="self-end rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white hover:bg-[#1A4258] disabled:opacity-50"
+          >
+            {addCommentMutation.isPending ? 'Enviando...' : 'Comentar'}
+          </button>
+        </form>
+      )}
     </div>
   );
 }

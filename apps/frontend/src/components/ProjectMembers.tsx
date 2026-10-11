@@ -41,6 +41,8 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
   const { data: invitations } = useQuery({
     queryKey: ['project-invitations', project.id],
     queryFn: () => api.getProjectInvitations(project.id),
+    // El backend solo entrega invitaciones a quien administra el equipo (403 al resto).
+    enabled: !!user && canManageTeamUI(user, project),
   });
 
   const qc = useQueryClient();
@@ -213,29 +215,15 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
                       <span className="rounded-full px-3 py-1 text-xs font-medium bg-orange-100 text-orange-700">
                         Pendiente
                       </span>
-                      {canManage && (
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            disabled={acceptTestMutation.isPending || revokeMutation.isPending}
-                            onClick={() => acceptTestMutation.mutate(invitation.id)}
-                            className="rounded-lg bg-[#245B78] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1a445b] disabled:opacity-50"
-                          >
-                            Test-AgregarMiembro
-                          </button>
-                          <button
-                            type="button"
-                            disabled={acceptTestMutation.isPending || revokeMutation.isPending}
-                            onClick={() => {
-                              if (window.confirm('¿Estás seguro de cancelar esta invitación?')) {
-                                revokeMutation.mutate(invitation.id);
-                              }
-                            }}
-                            className="rounded-lg border border-[#DEE5EC] bg-white px-3 py-1.5 text-xs font-medium text-[#D32F2F] hover:bg-[#fef2f2] disabled:opacity-50"
-                          >
-                            Cancelar
-                          </button>
-                        </div>
+                      {canManage && import.meta.env.DEV && (
+                        <button
+                          type="button"
+                          disabled={acceptTestMutation.isPending}
+                          onClick={() => acceptTestMutation.mutate(invitation.id)}
+                          className="rounded-lg bg-[#245B78] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1a445b] disabled:opacity-50"
+                        >
+                          Test-AgregarMiembro
+                        </button>
                       )}
                     </div>
                   </div>

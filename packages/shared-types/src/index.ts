@@ -79,6 +79,8 @@ export interface CreateProjectDto {
   description?: string;
   startDate?: string;
   estimatedEndDate?: string;
+  /** Líder del proyecto. Omitido = el propio usuario, solo si tiene PROJECT_LEADER; ADMIN/PM sin ese rol deben enviarlo. */
+  leaderId?: ID;
 }
 
 export interface UpdateProjectDto {
