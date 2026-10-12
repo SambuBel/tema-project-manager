@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { ProjectDetail } from '../components/ProjectDetail';
 import { ProjectMembers } from '../components/ProjectMembers';
 import { TaskList } from '../components/TaskList';
 import { TaskDetail } from '../components/TaskDetail';
+import { TaskBoard } from '../components/TaskBoard/TaskBoard';
 import { ProjectActivityList } from '../components/ProjectActivityList';
 import { ProjectGantt } from '../components/gantt/ProjectGantt';
 import { useCurrentUser } from '../hooks/useCurrentUser';
@@ -24,17 +25,18 @@ const statusLabels: Record<ProjectStatus, string> = {
 
 /* Tipos de vista */
 
-type ProjectView = 'resumen' | 'tasks' | 'task-detail' | 'actividad' | 'equipo' | 'gantt';
+type ProjectView = 'resumen' | 'tablero' | 'tasks' | 'gantt' | 'task-detail' | 'actividad' | 'equipo';
 
 const TABS = [
   { key: 'RESUMEN', label: 'Resumen', view: 'resumen' as ProjectView },
+  { key: 'TABLERO', label: 'Tablero', view: 'tablero' as ProjectView },
   { key: 'TAREAS', label: 'Tareas', view: 'tasks' as ProjectView },
   { key: 'GANTT', label: 'Gantt', view: 'gantt' as ProjectView },
   { key: 'EQUIPO', label: 'Equipo', view: 'equipo' as ProjectView },
   { key: 'ACTIVIDAD', label: 'Actividad', view: 'actividad' as ProjectView },
 ] as const;
 
-const DISABLED_TABS = ['Tablero', 'Archivos'];
+const DISABLED_TABS = ['Archivos'];
 
 /* Componente */
 
@@ -46,10 +48,45 @@ const DISABLED_TABS = ['Tablero', 'Archivos'];
 export function ProjectPage() {
   const { projectId = '' } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const { user } = useCurrentUser();
-  const [view, setView] = useState<ProjectView>('resumen');
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+
+  const viewParam = searchParams.get('view');
+  const taskIdParam = searchParams.get('taskId');
+
+  const validViews = ['resumen', 'tablero', 'tasks', 'gantt', 'equipo', 'actividad'];
+  const baseView = (validViews.includes(viewParam as string) ? viewParam : 'resumen') as ProjectView;
+
+  const view = taskIdParam ? 'task-detail' : baseView;
+  const selectedTaskId = taskIdParam;
+
+  const setView = (newView: ProjectView) => {
+    if (newView === 'task-detail') return; // Should use openTask
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('view', newView);
+      next.delete('taskId');
+      return next;
+    });
+  };
+
+  const openTask = (taskId: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('view', baseView);
+      next.set('taskId', taskId);
+      return next;
+    });
+  };
+
+  const closeTask = () => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.delete('taskId');
+      return next;
+    });
+  };
 
   const { data: project, isLoading, isError } = useQuery({
     queryKey: ['project', projectId],
@@ -98,6 +135,7 @@ export function ProjectPage() {
 
   const activeTabKey: string =
     view === 'resumen' ? 'RESUMEN'
+    : view === 'tablero' ? 'TABLERO'
     : view === 'tasks' || view === 'task-detail' ? 'TAREAS'
     : view === 'gantt' ? 'GANTT'
     : view === 'equipo' ? 'EQUIPO'
@@ -106,7 +144,7 @@ export function ProjectPage() {
   /* Layout principal */
 
   return (
-    <div className="flex flex-col gap-8 text-[#172B42]">
+    <div className="flex w-full min-w-0 flex-col gap-8 text-[#172B42]">
       {/* Breadcrumb */}
       <div className="flex items-center text-sm text-[#607185]">
         <button onClick={() => navigate('/')} className="hover:underline">
@@ -115,12 +153,12 @@ export function ProjectPage() {
         <span className="mx-2">/</span>
         {view === 'task-detail' ? (
           <>
-            <button onClick={() => setView('tasks')} className="hover:underline">
+            <button onClick={closeTask} className="hover:underline">
               {project.name}
             </button>
             <span className="mx-2">/</span>
-            <button onClick={() => setView('tasks')} className="hover:underline">
-              Tareas
+            <button onClick={closeTask} className="hover:underline">
+              {baseView === 'tablero' ? 'Tablero' : 'Tareas'}
             </button>
             <span className="mx-2">/</span>
             <span>Detalle</span>
@@ -212,20 +250,26 @@ export function ProjectPage() {
         <ProjectDetail project={project} onManageTeam={() => setView('equipo')} />
       )}
 
+      {view === 'tablero' && (
+        <div className="w-full min-w-0">
+          <TaskBoard
+            projectId={projectId}
+            onSelectTask={openTask}
+          />
+        </div>
+      )}
+
       {view === 'tasks' && (
         <TaskList
           projectId={projectId}
-          onSelectTask={(taskId) => {
-            setSelectedTaskId(taskId);
-            setView('task-detail');
-          }}
+          onSelectTask={openTask}
         />
       )}
 
       {view === 'task-detail' && selectedTaskId && (
         <TaskDetail
           taskId={selectedTaskId}
-          onBack={() => setView('tasks')}
+          onBack={closeTask}
         />
       )}
 

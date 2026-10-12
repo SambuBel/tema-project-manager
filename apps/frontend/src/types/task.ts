@@ -55,13 +55,15 @@ export const taskPriorityLabels: Record<TaskPriority, string> = {
 };
 
 
+const ALL_STATUSES: TaskStatus[] = ['PENDING', 'IN_PROGRESS', 'IN_REVIEW', 'BLOCKED', 'COMPLETED'];
+
 /* En caso de cambiar algo acá, cambiar el backend también task-transitions.ts */
 export const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
-  PENDING: ['IN_PROGRESS', 'BLOCKED'],
-  IN_PROGRESS: ['IN_REVIEW', 'BLOCKED', 'COMPLETED'],
-  IN_REVIEW: ['COMPLETED', 'IN_PROGRESS'],
-  BLOCKED: ['PENDING'],
-  COMPLETED: []
+  PENDING:     ALL_STATUSES.filter((s) => s !== 'PENDING'),
+  IN_PROGRESS: ALL_STATUSES.filter((s) => s !== 'IN_PROGRESS'),
+  IN_REVIEW:   ALL_STATUSES.filter((s) => s !== 'IN_REVIEW'),
+  BLOCKED:     ALL_STATUSES.filter((s) => s !== 'BLOCKED'),
+  COMPLETED:   ALL_STATUSES.filter((s) => s !== 'COMPLETED'),
 };
 
 export interface TaskTimelineItem {

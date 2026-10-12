@@ -6,6 +6,8 @@ import { Sidebar } from './Sidebar';
 export function AppLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { pathname } = useLocation();
+
+  // ... (some state omitted)
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem('sidebar-collapsed') === 'true';
@@ -90,7 +92,7 @@ export function AppLayout() {
           </button>
           <span className="ml-3 text-sm font-semibold text-slate-800">TEMA Project Manager</span>
         </header>
-        <main className="mx-auto max-w-6xl p-4 sm:p-8">
+        <main className="mx-auto w-full max-w-6xl min-w-0 p-4 sm:p-8">
           <Outlet />
         </main>
       </div>
