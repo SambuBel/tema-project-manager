@@ -18,6 +18,7 @@ import type {
   RoleName,
   GanttResponse,
   LoginDto,
+  CreateUserDto,
 } from '@tema/shared-types';
 import type { Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
 
@@ -137,6 +138,9 @@ export const api = {
     const qs = params.toString();
     return request<UserWithRoles[]>(`/users${qs ? `?${qs}` : ''}`);
   },
+  /** Alta de usuario (solo ADMIN). Se manda `password` en claro por HTTPS: el backend la hashea; nunca existe passwordHash acá. */
+  createUser: (dto: CreateUserDto) =>
+    request<UserWithRoles>('/users', { method: 'POST', body: JSON.stringify(dto) }),
   getUser: (id: string) => request<UserWithRoles>(`/users/${id}`),
   updateUserStatus: (id: string, active: boolean) =>
     request<UserWithRoles>(`/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ active }) }),

@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { RoleName } from '@tema/shared-types';
 import { api } from '../lib/api';
 import { roleLabels } from '../lib/roles';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { UserRolesDrawer } from '../components/admin/UserRolesDrawer';
+import { CreateUserDrawer } from '../components/admin/CreateUserDrawer';
+import { canCreateUsersUI } from '../lib/permissions';
 
 function initials(name: string): string {
   return name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase();
@@ -27,6 +29,15 @@ export function AdminUsersPage() {
   const { user: actor } = useCurrentUser();
   const [search, setSearch] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  // Mismo patrón de aviso que el tablero de tareas: estado local + temporizador, sin librería de toasts.
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 3500);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const { data: users, isLoading, isError } = useQuery({
     queryKey: ['users', { search }],
@@ -39,12 +50,30 @@ export function AdminUsersPage() {
 
   return (
     <div className="flex flex-col gap-6 text-[#172B42]">
-      <div>
-        <h1 className="text-3xl font-bold">Usuarios y permisos</h1>
-        <p className="mt-1 text-gray-500">
-          Los permisos se derivan del rol — acá se administran roles, no acciones individuales.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold">Usuarios y permisos</h1>
+          <p className="mt-1 text-gray-500">
+            Los permisos se derivan del rol — acá se administran roles, no acciones individuales.
+          </p>
+        </div>
+        {/* Solo ADMIN (espeja POST /users): PROGRAM_MANAGER entra a esta pantalla pero no da de alta. */}
+        {canCreateUsersUI(actor) && (
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white hover:bg-[#1a445b]"
+          >
+            + Nuevo usuario
+          </button>
+        )}
       </div>
+
+      {notice && (
+        <p role="status" className="rounded-lg border border-green-200 bg-green-50 px-4 py-2.5 text-sm font-medium text-green-700">
+          {notice}
+        </p>
+      )}
 
       <input
         type="search"
@@ -166,6 +195,16 @@ export function AdminUsersPage() {
           </>
         )}
       </div>
+
+      {creating && (
+        <CreateUserDrawer
+          onClose={() => setCreating(false)}
+          onCreated={() => {
+            setCreating(false);
+            setNotice('Usuario creado correctamente.');
+          }}
+        />
+      )}
 
       {selectedUser && (
         <UserRolesDrawer actor={actor} user={selectedUser} onClose={() => setSelectedUserId(null)} />

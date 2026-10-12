@@ -142,6 +142,14 @@ export function canDeleteTaskUI(user: AuthenticatedUser, project: Pick<Project, 
 // "ya lo va a rechazar" para decidir qué mostrar.
 // ---------------------------------------------------------------------------
 
+/**
+ * Espeja POST /users: el alta de usuarios es solo ADMIN (@Roles(ADMIN) en UsersController). PROGRAM_MANAGER ve
+ * la pantalla pero NO el botón "Nuevo usuario". Es solo visual: el backend rechaza igual con 403.
+ */
+export function canCreateUsersUI(user: AuthenticatedUser): boolean {
+  return hasAnyRole(user.roles, ['ADMIN']);
+}
+
 /** ¿Puede abrir la pantalla "Usuarios y permisos" en algún modo (ADMIN completo, PM restringido)? */
 export function canViewUsersUI(user: AuthenticatedUser): boolean {
   return hasAnyRole(user.roles, ['ADMIN', 'PROGRAM_MANAGER']);
