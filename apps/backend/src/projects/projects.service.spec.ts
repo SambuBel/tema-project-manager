@@ -160,6 +160,96 @@ describe('ProjectsService - findAll', () => {
   });
 });
 
+/**
+ * La lista de proyectos traía solo leaderId y la tarjeta decía "Sin asignar". Los líderes se resuelven en UNA
+ * consulta por ids, con bajas lógicas incluidas (un líder desactivado tiene deleted_at).
+ */
+describe('ProjectsService - líder en la lista y el detalle', () => {
+  let service: ProjectsService;
+  let permissions: ReturnType<typeof makePermissions>;
+  let userFind: jest.Mock;
+  let projects: Array<Record<string, unknown>>;
+
+  const leaders: Record<string, Record<string, unknown>> = {
+    'u-alicia': { id: 'u-alicia', name: 'Alicia Sambuceti', email: 'alicia@tema.com', avatarUrl: null, active: true },
+    'u-baja': { id: 'u-baja', name: 'Líder Desactivado', email: 'baja@tema.com', avatarUrl: null, active: false },
+  };
+
+  beforeEach(async () => {
+    projects = [
+      { id: 'p1', name: 'A', leaderId: 'u-alicia' },
+      { id: 'p2', name: 'B', leaderId: 'u-alicia' },
+      { id: 'p3', name: 'C', leaderId: 'u-baja' },
+    ];
+    userFind = jest.fn(async ({ where }: { where: { id: { _value: string[] } } }) => where.id._value.map((id) => leaders[id]).filter(Boolean));
+    const statsQb = { select: jest.fn().mockReturnThis(), addSelect: jest.fn().mockReturnThis(), from: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(), andWhere: jest.fn().mockReturnThis(), groupBy: jest.fn().mockReturnThis(), getRawMany: jest.fn(async () => []) };
+    const dataSource = {
+      getRepository: jest.fn(() => ({ find: userFind })),
+      createQueryBuilder: jest.fn(() => statsQb),
+    };
+    permissions = makePermissions();
+    permissions.hasAnyGlobalRole.mockReturnValue(true);
+    permissions.canViewProject.mockResolvedValue(true);
+
+    const repoQb = makeQueryBuilderMock(projects);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ProjectsService,
+        { provide: getRepositoryToken(ProjectEntity), useValue: { createQueryBuilder: jest.fn(() => repoQb), findOne: jest.fn(async () => projects[2]), findOneBy: jest.fn() } },
+        { provide: getRepositoryToken(ProjectMemberEntity), useValue: {} },
+        { provide: UsersService, useValue: {} },
+        { provide: AuthService, useValue: {} },
+        { provide: PermissionsService, useValue: permissions },
+        { provide: DataSource, useValue: dataSource },
+        { provide: ProjectActivityService, useValue: makeActivityService() },
+      ],
+    }).compile();
+    service = module.get(ProjectsService);
+  });
+
+  it('cada proyecto de la lista trae su líder (nombre incluido): ya no queda "Sin asignar"', async () => {
+    const result = (await service.findAll({}, makeUser('admin-1', [RoleName.ADMIN]))) as unknown as Array<{ id: string; leader?: { name: string } }>;
+    expect(result.map((p) => [p.id, p.leader?.name])).toEqual([
+      ['p1', 'Alicia Sambuceti'],
+      ['p2', 'Alicia Sambuceti'],
+      ['p3', 'Líder Desactivado'],
+    ]);
+  });
+
+  it('resuelve todos los líderes en UNA sola consulta, sin repetir ids', async () => {
+    await service.findAll({}, makeUser('admin-1', [RoleName.ADMIN]));
+    expect(userFind).toHaveBeenCalledTimes(1);
+    const options = userFind.mock.calls[0]![0] as { where: { id: { _value: string[] } }; withDeleted: boolean; select: Record<string, boolean> };
+    expect(options.where.id._value.sort()).toEqual(['u-alicia', 'u-baja']);
+  });
+
+  it('incluye líderes desactivados (baja lógica) y pide solo columnas públicas', async () => {
+    await service.findAll({}, makeUser('admin-1', [RoleName.ADMIN]));
+    const options = userFind.mock.calls[0]![0] as { withDeleted: boolean; select: Record<string, boolean> };
+    expect(options.withDeleted).toBe(true);
+    expect(Object.keys(options.select).sort()).toEqual(['active', 'avatarUrl', 'email', 'id', 'name']);
+    expect(JSON.stringify(options.select)).not.toMatch(/password|hash/i);
+  });
+
+  it('sin proyectos no consulta usuarios', async () => {
+    const empty = makeQueryBuilderMock([]);
+    (service as unknown as { repo: { createQueryBuilder: jest.Mock } }).repo.createQueryBuilder = jest.fn(() => empty);
+    await service.findAll({}, makeUser('admin-1', [RoleName.ADMIN]));
+    expect(userFind).not.toHaveBeenCalled();
+  });
+
+  it('detalle: un líder desactivado (que relations no trae) se completa igual', async () => {
+    const detail = (await service.findOne('p3', makeUser('admin-1', [RoleName.ADMIN]))) as unknown as { leader?: { name: string } };
+    expect(detail.leader?.name).toBe('Líder Desactivado');
+  });
+
+  it('detalle: si el líder ya viene cargado no hace la consulta extra', async () => {
+    (projects[2] as { leader?: unknown }).leader = leaders['u-alicia'];
+    await service.findOne('p3', makeUser('admin-1', [RoleName.ADMIN]));
+    expect(userFind).not.toHaveBeenCalled();
+  });
+});
+
 describe('ProjectsService - findOne / getMembers / getActivity (canViewProject)', () => {
   let service: ProjectsService;
   let mockRepo: { findOne: jest.Mock };
