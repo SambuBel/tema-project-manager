@@ -8,7 +8,7 @@ import { SubtaskList } from './SubtaskList';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
-import { canDeleteTaskUI, canEditTaskUI } from '../lib/permissions';
+import { canCommentOnTaskUI, canDeleteTaskUI, canEditTaskUI } from '../lib/permissions';
 
 import { TaskStatusDropdown } from './TaskStatusDropdown';
 import { TaskTimeline } from './TaskTimeline';
@@ -88,6 +88,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
 
   const canEdit = !!user && canEditTaskUI(user, task, task.project, membership);
   const canDelete = !!user && canDeleteTaskUI(user, task.project);
+  const canComment = !!user && canCommentOnTaskUI(user, task.project, membership);
 
   return (
     <div className="flex flex-col gap-8 text-[#172B42]">
@@ -100,7 +101,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-4xl font-semibold">{task.title}</h1>
-          <TaskStatusDropdown taskId={taskId} currentStatus={task.status} />
+          <TaskStatusDropdown taskId={taskId} currentStatus={task.status} canChange={canEdit} />
           <span className={`rounded-full px-3 py-1 text-xs font-medium ${priorityColors[task.priority]}`}>
             {taskPriorityLabels[task.priority]}
           </span>
@@ -212,7 +213,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
       <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
         <h3 className="text-lg font-semibold text-[#172B42]">Actividad y Comentarios</h3>
         <div className="mt-4">
-          <TaskTimeline taskId={taskId} />
+          <TaskTimeline taskId={taskId} canComment={canComment} />
         </div>
       </div>
 

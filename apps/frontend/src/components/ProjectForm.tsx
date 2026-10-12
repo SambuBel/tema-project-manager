@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, ApiRequestError } from '../lib/api';
+import { resolveCreationLeader } from '../lib/projectLeader';
 import type { CreateProjectDto, UpdateProjectDto, Project, ProjectStatus } from '@tema/shared-types';
 
 const statusLabels: Record<ProjectStatus, string> = {
@@ -56,6 +57,22 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
     }
   }, [user, isEditing]);
 
+  // Líder al CREAR (RN-23: siempre un usuario válido; el backend lo valida de nuevo). ADMIN/PM
+  // eligen entre los usuarios activos con PROJECT_LEADER; si ellos mismos lo son, arrancan con su
+  // propio usuario. Un PROJECT_LEADER común no elige: queda él mismo (no se envía leaderId).
+  const [chosenLeaderId, setChosenLeaderId] = useState('');
+  const creationLeader = !isEditing && user ? resolveCreationLeader(user, chosenLeaderId) : null;
+  const canChooseLeader = !!creationLeader?.canChoose;
+  const leaderId = creationLeader?.leaderId ?? '';
+  const leaderMissing = !!creationLeader?.missing;
+  const { data: leaderCandidates } = useQuery({
+    queryKey: ['users', { role: 'PROJECT_LEADER' }],
+    queryFn: () => api.listUsers({ role: 'PROJECT_LEADER' }),
+    enabled: canChooseLeader,
+  });
+  const activeCandidates = (leaderCandidates ?? []).filter((u) => u.active);
+  const selectedLeaderName = activeCandidates.find((u) => u.id === leaderId)?.name ?? (leaderId === user?.id ? user?.name : undefined);
+
   const create = useMutation({
     mutationFn: (data: CreateProjectDto) => api.createProject(data),
     onSuccess: (newProject) => {
@@ -81,6 +98,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
       description: formData.description || undefined,
       startDate: formData.startDate || undefined,
       estimatedEndDate: formData.estimatedEndDate || undefined,
+      ...(canChooseLeader && leaderId ? { leaderId } : {}),
     };
 
     if (isEditing) {
@@ -136,12 +154,28 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label htmlFor="responsable" className="text-sm font-medium text-gray-700">Responsable *</label>
-                  <input
-                    id="responsable"
-                    className="rounded-md border border-gray-300 px-3 py-2.5 focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card"
-                    value={formData.responsable}
-                    onChange={(e) => setFormData({ ...formData, responsable: e.target.value })}
-                  />
+                  {canChooseLeader ? (
+                    <select
+                      id="responsable"
+                      required
+                      className="rounded-md border border-gray-300 px-3 py-2.5 bg-white focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card"
+                      value={leaderId}
+                      onChange={(e) => setChosenLeaderId(e.target.value)}
+                    >
+                      <option value="">Elegí un líder…</option>
+                      {activeCandidates.map((candidate) => (
+                        <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      id="responsable"
+                      readOnly={!isEditing}
+                      className="rounded-md border border-gray-300 px-3 py-2.5 focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card read-only:bg-gray-50"
+                      value={formData.responsable}
+                      onChange={(e) => setFormData({ ...formData, responsable: e.target.value })}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -224,10 +258,10 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
             
             <div className="flex items-center gap-3 mb-3">
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">
-                {(isEditing ? initialData.leader?.name : user?.name)?.split(' ').map((n: string) => n[0]).join('').substring(0,2).toUpperCase() || 'U'}
+                {(isEditing ? initialData.leader?.name : canChooseLeader ? selectedLeaderName : user?.name)?.split(' ').map((n: string) => n[0]).join('').substring(0,2).toUpperCase() || 'U'}
               </div>
               <div className="text-sm">
-                <span className="font-medium text-gray-900">{isEditing ? initialData.leader?.name : user?.name || 'Usuario'}</span> <span className="text-gray-500">Responsable</span>
+                <span className="font-medium text-gray-900">{isEditing ? initialData.leader?.name : canChooseLeader ? selectedLeaderName ?? 'Sin definir' : user?.name || 'Usuario'}</span> <span className="text-gray-500">Responsable</span>
               </div>
             </div>
 
@@ -260,7 +294,11 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
         
         <div className="flex gap-3 mr-4">
           {isError && (
-            <span className="self-center text-sm text-red-600 mr-2">Error al {isEditing ? 'guardar' : 'crear'}.</span>
+            <span className="self-center text-sm text-red-600 mr-2">
+              {create.error instanceof ApiRequestError && create.error.details[0]
+                ? create.error.details[0]
+                : `Error al ${isEditing ? 'guardar' : 'crear'}.`}
+            </span>
           )}
           <button
             type="button"
@@ -272,7 +310,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
           <button
             type="submit"
             className="rounded-md bg-sidebar-card px-6 py-2.5 text-sm font-medium text-white hover:bg-sidebar-hover focus:outline-none disabled:opacity-50 transition-colors"
-            disabled={isFormDisabled || isPending || !formData.name.trim() || !formData.description.trim() || !formData.startDate || !formData.estimatedEndDate}
+            disabled={isFormDisabled || isPending || leaderMissing || !formData.name.trim() || !formData.description.trim() || !formData.startDate || !formData.estimatedEndDate}
           >
             {isPending ? 'Guardando...' : (isEditing ? 'Guardar proyecto' : 'Crear proyecto')}
           </button>

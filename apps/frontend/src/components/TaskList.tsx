@@ -280,7 +280,15 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
             >
               {/* Tarea */}
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-[#172B42]">{task.title}</p>
+                <div className="flex min-w-0 items-center gap-2">
+                  <p className="truncate text-sm font-medium text-[#172B42]">{task.title}</p>
+                  {/* Condición adicional, NO un TaskStatus: el estado real se sigue mostrando en su columna. */}
+                  {task.archivedAt && (
+                    <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-500">
+                      Archivada
+                    </span>
+                  )}
+                </div>
                 {task.description && (
                   <p className="mt-0.5 truncate text-xs text-[#607185]">{task.description}</p>
                 )}

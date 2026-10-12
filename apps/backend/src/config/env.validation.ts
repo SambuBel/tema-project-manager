@@ -9,6 +9,8 @@ export const envValidationSchema = Joi.object({
   BACKEND_PORT: Joi.number().default(3000),
   DATABASE_URL: Joi.string().uri().required(),
   CORS_ORIGIN: Joi.string().uri().required(),
+  // Habilitación explícita de helpers de desarrollo (ver NonProductionGuard). Apagado por defecto.
+  ENABLE_DEV_ENDPOINTS: Joi.boolean().default(false),
 
   FRONTEND_URL: Joi.string().uri().required(),
 

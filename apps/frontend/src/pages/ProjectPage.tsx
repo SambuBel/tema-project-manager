@@ -8,6 +8,7 @@ import { TaskList } from '../components/TaskList';
 import { TaskDetail } from '../components/TaskDetail';
 import { TaskBoard } from '../components/TaskBoard/TaskBoard';
 import { ProjectActivityList } from '../components/ProjectActivityList';
+import { ProjectGantt } from '../components/gantt/ProjectGantt';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { canManageProjectUI } from '../lib/permissions';
 import type { ProjectStatus } from '@tema/shared-types';
@@ -24,17 +25,18 @@ const statusLabels: Record<ProjectStatus, string> = {
 
 /* Tipos de vista */
 
-type ProjectView = 'resumen' | 'tablero' | 'tasks' | 'task-detail' | 'actividad' | 'equipo';
+type ProjectView = 'resumen' | 'tablero' | 'tasks' | 'gantt' | 'task-detail' | 'actividad' | 'equipo';
 
 const TABS = [
   { key: 'RESUMEN', label: 'Resumen', view: 'resumen' as ProjectView },
   { key: 'TABLERO', label: 'Tablero', view: 'tablero' as ProjectView },
   { key: 'TAREAS', label: 'Tareas', view: 'tasks' as ProjectView },
+  { key: 'GANTT', label: 'Gantt', view: 'gantt' as ProjectView },
   { key: 'EQUIPO', label: 'Equipo', view: 'equipo' as ProjectView },
   { key: 'ACTIVIDAD', label: 'Actividad', view: 'actividad' as ProjectView },
 ] as const;
 
-const DISABLED_TABS = ['Gantt', 'Archivos'];
+const DISABLED_TABS = ['Archivos'];
 
 /* Componente */
 
@@ -53,7 +55,7 @@ export function ProjectPage() {
   const viewParam = searchParams.get('view');
   const taskIdParam = searchParams.get('taskId');
 
-  const validViews = ['resumen', 'tablero', 'tasks', 'equipo', 'actividad'];
+  const validViews = ['resumen', 'tablero', 'tasks', 'gantt', 'equipo', 'actividad'];
   const baseView = (validViews.includes(viewParam as string) ? viewParam : 'resumen') as ProjectView;
 
   const view = taskIdParam ? 'task-detail' : baseView;
@@ -135,6 +137,7 @@ export function ProjectPage() {
     view === 'resumen' ? 'RESUMEN'
     : view === 'tablero' ? 'TABLERO'
     : view === 'tasks' || view === 'task-detail' ? 'TAREAS'
+    : view === 'gantt' ? 'GANTT'
     : view === 'equipo' ? 'EQUIPO'
     : 'ACTIVIDAD';
 
@@ -269,6 +272,8 @@ export function ProjectPage() {
           onBack={closeTask}
         />
       )}
+
+      {view === 'gantt' && <ProjectGantt projectId={project.id} />}
 
       {view === 'equipo' && <ProjectMembers project={project} />}
 

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../lib/api';
+import { useCurrentUser } from '../hooks/useCurrentUser';
+import { canManageTaskPlanningUI } from '../lib/permissions';
 import type { CreateTaskDto, Task, TaskPriority, TaskStatus, UpdateTaskDto, User } from '@tema/shared-types';
 
 interface TaskFormProps {
@@ -83,6 +85,12 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
     queryFn: () => api.getProjectMembers(projectId),
   });
 
+  // Fechas = planificación: al EDITAR, solo ADMIN/PM/líder real (espejo de canManageTaskPlanning).
+  // Mientras carga el usuario o el proyecto queda bloqueado (falla cerrado). Al crear no cambia
+  // (ver gap documentado: ¿puede un COLLABORATOR definir fechas al crear?).
+  const { user } = useCurrentUser();
+  const datesLocked = isEditing && !(user && project && canManageTaskPlanningUI(user, project));
+
   // Responsables posibles: el lider del proyecto + sus miembros activos (sin repetidos).
   const assignees = new Map<string, User>();
   if (project?.leader) assignees.set(project.leader.id, project.leader);
@@ -115,7 +123,7 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
   const isError = create.isError || update.isError;
   const currentError = create.error ?? update.error;
 
-  const datesInvalid = !!form.startDate && !!form.dueDate && form.dueDate < form.startDate;
+  const datesInvalid = !datesLocked && !!form.startDate && !!form.dueDate && form.dueDate < form.startDate;
   const canSubmit = form.title.trim().length > 0 && !datesInvalid && !isPending;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -129,8 +137,8 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
         status: form.status,
         priority: form.priority,
         assignedToId: form.assignedToId || null,
-        startDate: form.startDate || null,
-        dueDate: form.dueDate || null,
+        // Sin permiso de planificación ni se envían: el backend rechaza (403) cualquier cambio de fechas.
+        ...(datesLocked ? {} : { startDate: form.startDate || null, dueDate: form.dueDate || null }),
       });
       return;
     }
@@ -257,6 +265,7 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
               type="date"
               className={inputClass}
               value={form.startDate}
+              disabled={datesLocked}
               onChange={(e) => setForm({ ...form, startDate: e.target.value })}
             />
           </div>
@@ -269,10 +278,17 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
               min={form.startDate || undefined}
               className={inputClass}
               value={form.dueDate}
+              disabled={datesLocked}
               onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
             />
           </div>
         </div>
+
+        {datesLocked && (
+          <p className="text-sm text-[#607185]">
+            Solo un administrador, el program manager o el líder del proyecto pueden cambiar las fechas.
+          </p>
+        )}
 
         {datesInvalid && (
           <p className="text-sm font-medium text-red-600">
@@ -288,13 +304,24 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
           </div>
         )}
 
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="self-start rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isPending ? 'Guardando...' : isEditing ? 'Guardar cambios' : 'Crear tarea'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="self-start rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isPending ? 'Guardando...' : isEditing ? 'Guardar cambios' : 'Crear tarea'}
+          </button>
+          {isEditing && (
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="rounded-lg border border-[#DEE5EC] bg-white px-6 py-2.5 text-sm font-medium text-[#172B42] hover:bg-gray-50"
+            >
+              Cancelar
+            </button>
+          )}
+        </div>
       </form>
     </div>
   );

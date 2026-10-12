@@ -63,9 +63,10 @@ function membership(userId: string, projectRole: ProjectMemberRole): Partial<Pro
 
 interface Deps {
   taskRepo: { findOne: jest.Mock; find: jest.Mock; findOneBy: jest.Mock; count: jest.Mock; save: jest.Mock; createQueryBuilder: jest.Mock };
-  projectRepo: { findOneBy: jest.Mock };
+  projectRepo: { findOneBy: jest.Mock; manager: { find: jest.Mock } };
   usersService: { findById: jest.Mock };
   activityService: { logEvent: jest.Mock };
+  commentRepo: { create: jest.Mock; save: jest.Mock; find: jest.Mock };
 }
 
 function makeService(
@@ -87,7 +88,12 @@ function makeService(
     save: jest.fn(async (t: unknown) => t),
     createQueryBuilder: jest.fn(() => qb),
   };
-  const projectRepo = { findOneBy: jest.fn(async () => project) };
+  const projectRepo = { findOneBy: jest.fn(async () => project), manager: { find: jest.fn(async () => []) } };
+  const commentRepo = {
+    create: jest.fn((c: unknown) => c),
+    save: jest.fn(async (c: unknown) => c),
+    find: jest.fn(async () => [] as unknown[]),
+  };
   const usersService = { findById: jest.fn(async (id: string) => ({ id, active: true })) };
   const permissions = makePermissions(members);
   const activityService = { logEvent: jest.fn() };
@@ -95,13 +101,13 @@ function makeService(
   const service = new TasksService(
     taskRepo as unknown as import('typeorm').Repository<TaskEntity>,
     projectRepo as unknown as import('typeorm').Repository<ProjectEntity>,
-    { create: jest.fn(), save: jest.fn(), find: jest.fn() } as never,
+    commentRepo as never,
     usersService as never,
     permissions as never,
     activityService as never,
   );
 
-  return { service, taskRepo, projectRepo, usersService, activityService };
+  return { service, taskRepo, projectRepo, usersService, activityService, commentRepo };
 }
 
 describe('TasksService - create (canCreateTask)', () => {
@@ -532,6 +538,255 @@ describe('TasksService - update (canEditTask)', () => {
         service.update('task-1', { status: TaskStatus.COMPLETED }, makeUser('collab-1', [RoleName.COLLABORATOR])),
       ).rejects.toThrow(ForbiddenException);
       expect(taskRepo.count).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('TasksService - update: planificación (fechas) separada de edición', () => {
+  const ADMIN = makeUser('admin-1', [RoleName.ADMIN]);
+  const PM = makeUser('pm-1', [RoleName.PROGRAM_MANAGER]);
+  const LEADER = makeUser(LEADER_ID, [RoleName.PROJECT_LEADER]);
+  const FOREIGN_LEADER = makeUser('otro-leader', [RoleName.PROJECT_LEADER]);
+  const COLLAB = makeUser('collab-1', [RoleName.COLLABORATOR]);
+  const OBSERVER = makeUser('obs-1', [RoleName.OBSERVER]);
+
+  /** Tarea propia del COLLABORATOR, con fechas ya cargadas. */
+  const ownTask = (overrides: Partial<TaskEntity> = {}) =>
+    makeTask({
+      project: makeProject(),
+      createdBy: 'collab-1',
+      description: 'original',
+      startDate: '2026-10-10',
+      dueDate: '2026-10-20',
+      ...overrides,
+    });
+
+  describe('quienes administran la planificación', () => {
+    it.each([
+      ['ADMIN', ADMIN],
+      ['PROGRAM_MANAGER', PM],
+      ['líder real', LEADER],
+    ])('%s: cambia startDate y dueDate', async (_label, actor) => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(ownTask({ createdBy: 'otro' }));
+      await expect(
+        service.update('task-1', { startDate: '2026-10-12', dueDate: '2026-10-30' }, actor),
+      ).resolves.toMatchObject({ startDate: '2026-10-12', dueDate: '2026-10-30' });
+    });
+
+    it('PROJECT_LEADER ajeno: 403, no guarda', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(service.update('task-1', { dueDate: '2026-10-30' }, FOREIGN_LEADER)).rejects.toThrow(ForbiddenException);
+      expect(taskRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('COLLABORATOR sobre tarea propia', () => {
+    const collabMembership = [membership('collab-1', ProjectMemberRole.COLLABORATOR)];
+
+    it('puede editar title y description', async () => {
+      const { service, taskRepo } = makeService(collabMembership);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(
+        service.update('task-1', { title: 'nuevo', description: 'otra' }, COLLAB),
+      ).resolves.toMatchObject({ title: 'nuevo', description: 'otra' });
+    });
+
+    it.each([
+      ['startDate', { startDate: '2026-10-12' }],
+      ['dueDate', { dueDate: '2026-10-30' }],
+      ['limpiar dueDate (null)', { dueDate: null }],
+    ])('cambiar %s: 403 y no guarda', async (_label, dto) => {
+      const { service, taskRepo } = makeService(collabMembership);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(service.update('task-1', dto, COLLAB)).rejects.toThrow(ForbiddenException);
+      expect(taskRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('request mixto (description + dueDate): 403 y NO modifica nada (ni la parte permitida)', async () => {
+      const { service, taskRepo } = makeService(collabMembership);
+      const task = ownTask();
+      taskRepo.findOne.mockResolvedValue(task);
+      await expect(
+        service.update('task-1', { description: 'Cambio', dueDate: '2026-10-30' }, COLLAB),
+      ).rejects.toThrow(ForbiddenException);
+      expect(taskRepo.save).not.toHaveBeenCalled();
+      expect(task.description).toBe('original');
+      expect(task.dueDate).toBe('2026-10-20');
+    });
+
+    it('reenviar las MISMAS fechas (como hace el form de edición) no cuenta como cambio de planificación', async () => {
+      const { service, taskRepo } = makeService(collabMembership);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(
+        service.update('task-1', { description: 'x', startDate: '2026-10-10', dueDate: '2026-10-20' }, COLLAB),
+      ).resolves.toMatchObject({ description: 'x', startDate: '2026-10-10', dueDate: '2026-10-20' });
+    });
+  });
+
+  describe('sin permiso de edición (siguen siendo 403, también con fechas)', () => {
+    it('OBSERVER: 403', async () => {
+      const { service, taskRepo } = makeService([membership('obs-1', ProjectMemberRole.OBSERVER)]);
+      taskRepo.findOne.mockResolvedValue(ownTask({ createdBy: 'obs-1' }));
+      await expect(service.update('task-1', { dueDate: '2026-10-30' }, OBSERVER)).rejects.toThrow(ForbiddenException);
+      expect(taskRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('COLLABORATOR global con projectRole OBSERVER en este proyecto: 403', async () => {
+      const { service, taskRepo } = makeService([membership('collab-1', ProjectMemberRole.OBSERVER)]);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(service.update('task-1', { description: 'x' }, COLLAB)).rejects.toThrow(ForbiddenException);
+      await expect(service.update('task-1', { dueDate: '2026-10-30' }, COLLAB)).rejects.toThrow(ForbiddenException);
+      expect(taskRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('validación de fechas (400)', () => {
+    it('startDate posterior al dueDate enviado en el mismo request', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(
+        service.update('task-1', { startDate: '2026-10-30', dueDate: '2026-10-05' }, ADMIN),
+      ).rejects.toThrow(BadRequestException);
+      expect(taskRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('update parcial: startDate nuevo (25) queda después del dueDate existente (20)', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(service.update('task-1', { startDate: '2026-10-25' }, ADMIN)).rejects.toThrow(BadRequestException);
+      expect(taskRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('update parcial: dueDate nuevo (05) queda antes del startDate existente (10)', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(service.update('task-1', { dueDate: '2026-10-05' }, ADMIN)).rejects.toThrow(BadRequestException);
+    });
+
+    it('mensaje claro con ambas fechas', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(service.update('task-1', { dueDate: '2026-10-05' }, ADMIN)).rejects.toThrow(
+        'La fecha de vencimiento (2026-10-05) no puede ser anterior a la de inicio (2026-10-10).',
+      );
+    });
+
+    it('fechas compatibles con las existentes: OK (misma fecha también)', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(service.update('task-1', { dueDate: '2026-10-10' }, ADMIN)).resolves.toMatchObject({
+        dueDate: '2026-10-10',
+      });
+    });
+
+    it('sin startDate existente, cualquier dueDate es válido', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(ownTask({ startDate: null }));
+      await expect(service.update('task-1', { dueDate: '2026-01-01' }, ADMIN)).resolves.toBeDefined();
+    });
+
+    it('el permiso se evalúa ANTES que las fechas: sin permiso de planificación es 403, no 400', async () => {
+      const { service, taskRepo } = makeService([membership('collab-1', ProjectMemberRole.COLLABORATOR)]);
+      taskRepo.findOne.mockResolvedValue(ownTask());
+      await expect(service.update('task-1', { dueDate: '2026-10-05' }, COLLAB)).rejects.toThrow(ForbiddenException);
+    });
+  });
+});
+
+describe('TasksService - comentarios (canCommentOnTask) vs lectura (canViewTask)', () => {
+  const ADMIN = makeUser('admin-1', [RoleName.ADMIN]);
+  const PM = makeUser('pm-1', [RoleName.PROGRAM_MANAGER]);
+  const LEADER = makeUser(LEADER_ID, [RoleName.PROJECT_LEADER]);
+  const FOREIGN_LEADER = makeUser('otro-leader', [RoleName.PROJECT_LEADER]);
+  const COLLAB = makeUser('collab-1', [RoleName.COLLABORATOR]);
+  const OBSERVER = makeUser('obs-1', [RoleName.OBSERVER]);
+  const STRANGER = makeUser('nadie', [RoleName.COLLABORATOR]);
+
+  // Tarea AJENA a todos: comentar no depende de ownership.
+  const foreignTask = () => makeTask({ project: makeProject(), createdBy: 'otro', assignedToId: 'otro' });
+
+  describe('addComment', () => {
+    it.each([
+      ['ADMIN', ADMIN, []],
+      ['PROGRAM_MANAGER', PM, []],
+      ['líder real', LEADER, []],
+      ['COLLABORATOR local, sobre tarea ajena', COLLAB, [membership('collab-1', ProjectMemberRole.COLLABORATOR)]],
+    ])('%s: puede comentar', async (_label, actor, members) => {
+      const { service, taskRepo, commentRepo } = makeService(members);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      await expect(service.addComment('task-1', '  hola  ', actor)).resolves.toMatchObject({
+        taskId: 'task-1',
+        authorUserId: actor.id,
+        content: 'hola',
+      });
+      expect(commentRepo.save).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['OBSERVER local', OBSERVER, [membership('obs-1', ProjectMemberRole.OBSERVER)]],
+      ['COLLABORATOR global con projectRole OBSERVER', COLLAB, [membership('collab-1', ProjectMemberRole.OBSERVER)]],
+      ['PROJECT_LEADER ajeno sin membership', FOREIGN_LEADER, []],
+      ['usuario sin acceso al proyecto', STRANGER, []],
+    ])('%s: 403 y no guarda', async (_label, actor, members) => {
+      const { service, taskRepo, commentRepo } = makeService(members);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      await expect(service.addComment('task-1', 'hola', actor)).rejects.toThrow(ForbiddenException);
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('PROJECT_LEADER global con membership OBSERVER en este proyecto: 403 (el rol global no habilita)', async () => {
+      const { service, taskRepo } = makeService([membership('otro-leader', ProjectMemberRole.OBSERVER)]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      await expect(service.addComment('task-1', 'hola', FOREIGN_LEADER)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('la autorización va antes que la validación: OBSERVER con comentario vacío recibe 403, no 400', async () => {
+      const { service, taskRepo } = makeService([membership('obs-1', ProjectMemberRole.OBSERVER)]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      await expect(service.addComment('task-1', '   ', OBSERVER)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('con permiso, un comentario vacío sigue siendo 400', async () => {
+      const { service, taskRepo, commentRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      await expect(service.addComment('task-1', '   ', ADMIN)).rejects.toThrow(BadRequestException);
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('404 si la tarea no existe', async () => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(null);
+      await expect(service.addComment('missing', 'hola', ADMIN)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('getTimeline (lectura: canViewTask, el OBSERVER sigue pudiendo leer)', () => {
+    it.each([
+      ['OBSERVER local', OBSERVER, [membership('obs-1', ProjectMemberRole.OBSERVER)]],
+      ['COLLABORATOR global con projectRole OBSERVER', COLLAB, [membership('collab-1', ProjectMemberRole.OBSERVER)]],
+      ['COLLABORATOR local', COLLAB, [membership('collab-1', ProjectMemberRole.COLLABORATOR)]],
+      ['ADMIN', ADMIN, []],
+      ['PROGRAM_MANAGER', PM, []],
+      ['líder real', LEADER, []],
+    ])('%s: puede leer comentarios y actividad', async (_label, actor, members) => {
+      const { service, taskRepo, commentRepo } = makeService(members);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.find.mockResolvedValue([
+        { id: 'c1', content: 'existente', createdAt: new Date(), author: { id: 'x', name: 'Ana Gómez' } },
+      ]);
+      const timeline = await service.getTimeline('task-1', actor);
+      expect(timeline).toEqual([expect.objectContaining({ type: 'COMMENT', content: 'existente' })]);
+    });
+
+    it.each([
+      ['PROJECT_LEADER ajeno sin membership', FOREIGN_LEADER],
+      ['usuario sin acceso', STRANGER],
+    ])('%s: 403 (sin lectura tampoco ve la timeline)', async (_label, actor) => {
+      const { service, taskRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      await expect(service.getTimeline('task-1', actor)).rejects.toThrow(ForbiddenException);
     });
   });
 });

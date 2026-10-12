@@ -2,9 +2,12 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { ProjectForm } from '../components/ProjectForm';
+import { useCurrentUser } from '../hooks/useCurrentUser';
+import { canManageProjectUI } from '../lib/permissions';
 
 export function EditProjectPage() {
   const { projectId = '' } = useParams<{ projectId: string }>();
+  const { user } = useCurrentUser();
 
   const { data: project, isLoading, isError } = useQuery({
     queryKey: ['project', projectId],
@@ -12,12 +15,18 @@ export function EditProjectPage() {
     enabled: !!projectId,
   });
 
-  if (isLoading) {
+  if (isLoading || !user) {
     return <div className="p-8 text-gray-500">Cargando datos del proyecto...</div>;
   }
 
   if (isError || !project) {
     return <div className="p-8 text-red-600">Error al cargar el proyecto para edicin.</div>;
+  }
+
+  // Misma regla que el botón "Editar proyecto" y que el backend (PATCH /projects/:id → 403). Entrar por
+  // URL directa no muestra el formulario a quien no administra el proyecto.
+  if (!canManageProjectUI(user, project)) {
+    return <div className="p-8 text-red-600">No tenés permiso para editar este proyecto.</div>;
   }
 
   return (
