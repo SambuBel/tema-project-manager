@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, EntityManager, IsNull, Repository, DataSource } from 'typeorm';
+import { Brackets, EntityManager, In, IsNull, Repository, DataSource } from 'typeorm';
 import * as crypto from 'crypto';
 import { ProjectEntity } from './project.entity';
 import { ProjectMemberEntity } from '../database/entities/project-member.entity';
@@ -73,6 +73,7 @@ export class ProjectsService {
 
     qb.orderBy('project.createdAt', 'DESC');
     const projects = await qb.getMany();
+    await this.attachLeaders(projects);
     return (await this.enrichProjectsStats(projects)) as any;
   }
 
@@ -260,8 +261,31 @@ export class ProjectsService {
     if (!allowed) {
       throw new ForbiddenException('No tenés acceso a este proyecto.');
     }
+    await this.attachLeaders([project]);
     const enriched = await this.enrichProjectsStats([project]);
     return enriched[0] as any;
+  }
+
+  /**
+   * Completa `project.leader` donde falte (en la lista siempre; en el detalle, solo si el líder está desactivado).
+   * Antes la lista traía únicamente leaderId y la tarjeta decía "Sin asignar". Se resuelve en UNA consulta por ids y
+   * con bajas lógicas incluidas: un líder desactivado tiene deleted_at, y ni relations ni ningún join de TypeORM lo
+   * devuelven. Solo columnas públicas (las mismas que el detalle muestra a cualquier miembro).
+   */
+  private async attachLeaders(projects: ProjectEntity[]): Promise<void> {
+    const missing = projects.filter((project) => !project.leader && project.leaderId);
+    if (missing.length === 0) return;
+
+    const leaders = await this.dataSource.getRepository(UserEntity).find({
+      where: { id: In([...new Set(missing.map((project) => project.leaderId))]) },
+      select: { id: true, name: true, email: true, avatarUrl: true, active: true },
+      withDeleted: true,
+    });
+    const byId = new Map(leaders.map((leader) => [leader.id, leader]));
+    for (const project of missing) {
+      const leader = byId.get(project.leaderId);
+      if (leader) project.leader = leader;
+    }
   }
 
   /** GET /projects/:id/activity: mismo criterio de acceso que ver el proyecto. Acepta UUID o slug. */
