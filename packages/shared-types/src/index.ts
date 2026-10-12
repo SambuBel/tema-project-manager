@@ -40,9 +40,13 @@ export interface UserWithRoles {
   avatarUrl: string | null;
   active: boolean;
   roles: RoleName[];
+  /** ISO. Ya viaja en la respuesta de GET /users (es la entidad completa). */
+  createdAt: string;
 }
 
 export interface ListUsersQuery {
+  /** Incluye también a los usuarios desactivados (la pantalla de administración los necesita; el resto, no). */
+  includeInactive?: boolean;
   search?: string;
   /** Filtra a quienes tengan ese rol global — ej. candidatos para liderar un proyecto. */
   role?: RoleName;

@@ -40,8 +40,14 @@ export class UsersService {
     return repo.findOneBy({ email });
   }
 
+  /**
+   * Incluye usuarios desactivados: desactivar es una baja lógica (deleted_at), y la administración tiene que
+   * poder verlos, editar sus roles y, sobre todo, REACTIVARLOS (antes daba 404). Primero la búsqueda normal;
+   * solo si no aparece se reintenta con bajas incluidas.
+   */
   private async findByIdOrThrow(id: string): Promise<UserEntity> {
-    const user = await this.usersRepository.findOneBy({ id });
+    const user =
+      (await this.usersRepository.findOneBy({ id })) ?? (await this.usersRepository.findOne({ where: { id }, withDeleted: true }));
     if (!user) {
       throw new NotFoundException(`Usuario ${id} no encontrado`);
     }
@@ -107,6 +113,8 @@ export class UsersService {
    */
   async findAllWithRoles(query: ListUsersQueryDto): Promise<Array<UserEntity & { roles: RoleName[] }>> {
     const base = this.usersRepository.createQueryBuilder('user').orderBy('user.name', 'ASC');
+    // Desactivados = deleted_at: solo se listan si el cliente lo pide (pantalla "Usuarios y permisos").
+    if (query.includeInactive) base.withDeleted();
 
     if (query.search) {
       base.andWhere('(user.name ILIKE :search OR user.email ILIKE :search)', { search: `%${query.search}%` });
