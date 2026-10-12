@@ -17,6 +17,7 @@ import type {
   ListUsersQuery,
   RoleName,
   GanttResponse,
+  LoginDto,
 } from '@tema/shared-types';
 import type { Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
 
@@ -74,7 +75,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // que no sea la propia /auth/me, que ya maneja useCurrentUser + RequireAuth
   // sin necesitar un reload duro). Reload completo, no navigate(): así se
   // descarta cualquier estado en memoria de una sesión que ya no es válida.
-  if (res.status === 401 && path !== '/auth/me' && window.location.pathname !== '/login') {
+  if (res.status === 401 && path !== '/auth/me' && path !== '/auth/login' && window.location.pathname !== '/login') {
     window.location.href = '/login';
   }
 
@@ -87,6 +88,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getMe: () => request<AuthenticatedUser>('/auth/me'),
+  /** Email + contraseña: el backend emite la misma cookie de sesión que Google. 401 = credenciales incorrectas. */
+  login: (dto: LoginDto) => request<AuthenticatedUser>('/auth/login', { method: 'POST', body: JSON.stringify(dto) }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   listProjects: (query?: ListProjectsQuery) => {
     const params = new URLSearchParams();

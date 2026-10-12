@@ -48,6 +48,21 @@ export interface ListUsersQuery {
   role?: RoleName;
 }
 
+/** POST /auth/login. */
+export interface LoginDto {
+  email: string;
+  password: string;
+}
+
+/** POST /users (solo ADMIN). La contraseña la hashea el backend; nunca se devuelve. */
+export interface CreateUserDto {
+  email: string;
+  name: string;
+  password: string;
+  /** Roles globales iniciales. Si se omite: ['COLLABORATOR']. */
+  roles?: RoleName[];
+}
+
 export interface UpdateUserStatusDto {
   active: boolean;
 }

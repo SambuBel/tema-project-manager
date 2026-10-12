@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, Logger, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, HttpCode, Logger, Post, Req, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
@@ -8,6 +8,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { UserEntity } from '../database/entities/user.entity';
 import { GoogleProfileDto } from './dto/google-profile.dto';
+import { LoginDto } from './dto/login.dto';
 import { AUTH_ERROR_CODES, AuthError, AuthErrorCode } from './auth.errors';
 
 type CallbackRequest = Request & { user?: GoogleProfileDto | null; authErrorCode?: AuthErrorCode };
@@ -65,6 +66,33 @@ export class AuthController {
       this.logger.error('Fallo inesperado en el login con Google.', error instanceof Error ? error.stack : error);
       this.redirectWithError(res, frontendUrl, AUTH_ERROR_CODES.GOOGLE_AUTH_FAILED);
     }
+  }
+
+  /**
+   * Login con email + contraseña: emite la MISMA sesión (JWT propio en cookie HttpOnly) que Google.
+   * Solo entra quien ya existe; no crea nada. Mensaje único para email inexistente / sin contraseña /
+   * contraseña incorrecta (no revela qué emails existen). Nunca se loguea el email ni la contraseña.
+   */
+  @Post('login')
+  @HttpCode(200)
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
+    let user: UserEntity;
+    try {
+      user = await this.authService.loginWithPassword(dto.email, dto.password);
+    } catch (error) {
+      if (error instanceof AuthError) {
+        this.logger.warn(`Login con contraseña rechazado con code=${error.code}.`);
+        if (error.code === AUTH_ERROR_CODES.USER_DISABLED) {
+          throw new ForbiddenException('Tu usuario está deshabilitado. Contactá a un administrador.');
+        }
+        throw new UnauthorizedException('Email o contraseña incorrectos');
+      }
+      throw error;
+    }
+
+    this.authService.setSessionCookie(res, this.authService.signSessionToken(user.id));
+    const roles = await this.authService.getRoleNames(user.id);
+    return this.authService.toAuthenticatedUserDto(user, roles);
   }
 
   @Get('me')

@@ -1,8 +1,15 @@
 import React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { GoogleLoginButton } from '../components/login/GoogleLoginButton';
+import { EmailPasswordForm } from '../components/login/EmailPasswordForm';
+import { googleErrorMessage } from '../lib/loginForm';
 import { ProjectProgressCard } from '../components/login/ProjectProgressCard';
 
 export const LoginPage: React.FC = () => {
+  // El backend redirige a /login?error=CODIGO cuando falla el login con Google.
+  const [searchParams] = useSearchParams();
+  const googleError = googleErrorMessage(searchParams.get('error'));
+
   return (
     <div className="min-h-screen w-full grid grid-cols-1 md:grid-cols-2 bg-slate-50 font-sans">
       {/* Panel Izquierdo: Branding & Hero */}
@@ -66,6 +73,20 @@ export const LoginPage: React.FC = () => {
           </div>
 
           <div className="space-y-4">
+            {googleError && (
+              <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">
+                {googleError}
+              </p>
+            )}
+
+            <EmailPasswordForm />
+
+            <div className="flex items-center gap-3 text-xs text-slate-400" aria-hidden="true">
+              <span className="h-px flex-1 bg-slate-200" />
+              <span>o</span>
+              <span className="h-px flex-1 bg-slate-200" />
+            </div>
+
             <GoogleLoginButton />
             
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 leading-relaxed">

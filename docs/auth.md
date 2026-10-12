@@ -89,17 +89,28 @@ GET /api/auth/google/callback?code=...&state=...
   -> AuthService.loginWithGoogle(perfil):
        1. rechaza si email_verified=false
        2. rechaza si el dominio del email no está en authorized_domains (active=true)
-       3. dentro de una transacción:
-          - busca ExternalAccount por (provider, providerSubject)
-            -> si existe: usa ese User (rechaza si active=false, sin reactivar)
-          - si no, busca User por email
-            -> si existe: vincula un ExternalAccount nuevo (rechaza si active=false)
-            -> si no existe: crea User + rol COLLABORATOR + ExternalAccount
+       3. busca ExternalAccount por (provider, providerSubject)
+          -> si existe: usa ese User (rechaza si active=false, sin reactivar)
+       4. si no, busca User por email (sin distinguir mayúsculas)
+          -> si existe y está activo: vincula un ExternalAccount nuevo
+          -> si está desactivado: rechaza (USER_DISABLED)
+          -> si NO existe: rechaza (USER_NOT_REGISTERED) y NO persiste nada
+       El login autentica, NO provisiona: nunca crea users, user_roles ni roles. El dominio
+       autorizado es una validación adicional, no alcanza para crear una cuenta. Las altas son
+       administrativas: POST /api/users (solo ADMIN).
   -> firma un JWT propio (sub=userId), lo pone en la cookie `tema_session`
      (HttpOnly, SameSite=Lax, Secure en producción) y redirige a FRONTEND_URL
 
 GET /api/auth/me        (requiere cookie tema_session válida)
   -> devuelve { id, email, name, avatarUrl, roles }
+
+POST /api/auth/login    body { email, password }
+  -> solo entra un usuario que YA existe, activo, con password_hash y contraseña correcta
+     (argon2id; la contraseña nunca se guarda ni se loguea)
+  -> emite la misma cookie `tema_session` que Google y devuelve { id, email, name, avatarUrl, roles }
+  -> 401 "Email o contraseña incorrectos" (mismo mensaje para email inexistente, usuario sin
+     contraseña —solo Google— o contraseña incorrecta); 403 si el usuario está deshabilitado
+     (solo se informa después de acertar la contraseña)
 
 POST /api/auth/logout
   -> borra la cookie tema_session
@@ -112,7 +123,8 @@ POST /api/auth/logout
 | `UNAUTHORIZED_DOMAIN` | El dominio del email no está en `authorized_domains` (o no está activo). |
 | `EMAIL_NOT_VERIFIED` | Google devolvió `email_verified=false`. |
 | `USER_DISABLED` | El `User` existe pero `active=false` (o tiene `deletedAt`). No se reactiva solo. |
-| `GOOGLE_AUTH_FAILED` | `state` inválido/faltante, Google devolvió error, falla el intercambio de tokens, o cualquier error inesperado (incluida falta del rol COLLABORATOR en la base). |
+| `USER_NOT_REGISTERED` | Google autenticó el email pero no existe un `User` con él (no se auto-crea). |
+| `GOOGLE_AUTH_FAILED` | `state` inválido/faltante, Google devolvió error, falla el intercambio de tokens, o cualquier error inesperado. |
 
 Nunca se manda un stack trace ni un mensaje interno en la query string.
 
