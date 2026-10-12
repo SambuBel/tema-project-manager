@@ -131,7 +131,7 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['tasks', projectId] });
       void qc.invalidateQueries({ queryKey: ['task', initialData!.id] });
-      navigate(`/projects/${projectId}`);
+      navigate(`/projects/${project?.slug || projectId}`);
     },
   });
 

@@ -22,12 +22,12 @@ export function Sidebar({ onNavigate, onOpenAssistant }: SidebarProps) {
   // Contexto de proyecto: hoy solo detectamos la ruta. Los tabs (Resumen, Tareas...) van en la vista del proyecto, no aca.
   const projectMatch = useMatch('/projects/:projectId/*');
   const projectId = projectMatch?.params.projectId;
-  const isValidUuid = !!projectId && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(projectId);
+  const hasProject = !!projectId && projectId !== 'new';
   // Misma queryKey que la vista del proyecto: React Query comparte la cache, no hay request extra.
   const { data: project } = useQuery({
     queryKey: ['project', projectId],
     queryFn: () => api.getProject(projectId!),
-    enabled: !!isValidUuid,
+    enabled: hasProject,
   });
 
   // Solo visibilidad de UI; la autorizacion real la hace el backend.

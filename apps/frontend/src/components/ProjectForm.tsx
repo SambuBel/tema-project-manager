@@ -92,7 +92,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
     mutationFn: (data: CreateProjectDto) => api.createProject(data),
     onSuccess: (newProject) => {
       void qc.invalidateQueries({ queryKey: ['projects'] });
-      navigate(`/projects/${newProject.id}`);
+      navigate(`/projects/${newProject.slug || newProject.id}`);
     },
   });
 
@@ -117,15 +117,19 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
 
   const doUpdateProject = async (payload: UpdateProjectDto) => {
     try {
-      await update.mutateAsync(payload);
+      const updated = await update.mutateAsync(payload);
       if (formData.status !== initialData!.status) {
         await updateStatus.mutateAsync(formData.status);
       }
       void qc.invalidateQueries({ queryKey: ['projects'] });
       void qc.invalidateQueries({ queryKey: ['project', initialData!.id] });
+      void qc.invalidateQueries({ queryKey: ['project', initialData!.slug] });
+      if (updated?.slug) {
+        void qc.invalidateQueries({ queryKey: ['project', updated.slug] });
+      }
       void qc.invalidateQueries({ queryKey: ['tasks', initialData!.id] });
       void qc.invalidateQueries({ queryKey: ['tasks'] });
-      navigate(`/projects/${initialData!.id}`);
+      navigate(`/projects/${updated?.slug || initialData!.slug || initialData!.id}`);
     } catch (err) {
       // error handled by UI error state
     }
@@ -364,7 +368,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
           )}
           <button
             type="button"
-            onClick={() => isEditing ? navigate(`/projects/${initialData.id}`) : navigate('/')}
+            onClick={() => isEditing ? navigate(`/projects/${initialData.slug || initialData.id}`) : navigate('/')}
             className="rounded-md border border-gray-300 bg-white px-6 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none"
           >
             Cancelar

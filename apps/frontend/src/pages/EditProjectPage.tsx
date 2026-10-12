@@ -1,4 +1,5 @@
-import { useParams } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { ProjectForm } from '../components/ProjectForm';
@@ -7,6 +8,8 @@ import { canManageProjectUI } from '../lib/permissions';
 
 export function EditProjectPage() {
   const { projectId = '' } = useParams<{ projectId: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useCurrentUser();
 
   const { data: project, isLoading, isError } = useQuery({
@@ -14,6 +17,12 @@ export function EditProjectPage() {
     queryFn: () => api.getProject(projectId),
     enabled: !!projectId,
   });
+
+  useEffect(() => {
+    if (project?.slug && projectId !== project.slug) {
+      navigate(`/projects/${project.slug}/edit${location.search}`, { replace: true });
+    }
+  }, [project?.slug, projectId, navigate, location.search]);
 
   if (isLoading || !user) {
     return <div className="p-8 text-gray-500">Cargando datos del proyecto...</div>;

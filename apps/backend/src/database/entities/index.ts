@@ -49,13 +49,14 @@ export * from './notification.entity';
 export * from './ai-conversation.entity';
 export * from './ai-message.entity';
 
-/** Todas las entidades del dominio, usadas por DataSource (migrations) y por DatabaseModule (Nest). */
 import { ProjectActivityEntity } from './project-activity.entity';
 import { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
+import { ProjectSlugHistoryEntity } from '../../projects/project-slug-history.entity';
 
 export const ALL_ENTITIES = [
   ProjectInvitationEntity,
   ProjectActivityEntity,
+  ProjectSlugHistoryEntity,
   ProjectEntity,
   UserEntity,
   RoleEntity,
@@ -85,3 +86,4 @@ export const ALL_ENTITIES = [
 
 export * from './project-activity.entity';
 export { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
+export { ProjectSlugHistoryEntity } from '../../projects/project-slug-history.entity';
