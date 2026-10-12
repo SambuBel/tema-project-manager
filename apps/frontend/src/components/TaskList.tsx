@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
+import { isTaskExceedingProjectEnd } from '../lib/projectDates';
 
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
@@ -338,6 +339,14 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
                   {isOverdue(task) && '⚠ '}
                   {formatDate(task.dueDate)}
                 </span>
+                {isTaskExceedingProjectEnd(task.dueDate, project.data?.estimatedEndDate) && (
+                  <span
+                    className="block text-[10px] font-medium text-amber-700"
+                    title="El vencimiento supera el fin estimado del proyecto (RN-08)"
+                  >
+                    ⚠ Supera fin proy.
+                  </span>
+                )}
               </div>
             </button>
           ))}

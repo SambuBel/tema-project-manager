@@ -18,3 +18,20 @@ describe('CreateProjectDto - leaderId', () => {
     expect(await check({ name: 'P', leaderId })).toContain('leaderId');
   });
 });
+
+describe('CreateProjectDto - fechas de inicio y entrega', () => {
+  it('acepta entrega igual o posterior al inicio', async () => {
+    expect(await check({ name: 'P', startDate: '2026-10-01', estimatedEndDate: '2026-10-01' })).toHaveLength(0);
+    expect(await check({ name: 'P', startDate: '2026-10-01', estimatedEndDate: '2026-10-31' })).toHaveLength(0);
+  });
+
+  it('rechaza entrega anterior al inicio', async () => {
+    const errors = await check({ name: 'P', startDate: '2026-10-31', estimatedEndDate: '2026-10-01' });
+    expect(errors).toContain('estimatedEndDate');
+  });
+
+  it('acepta solo una de las dos fechas', async () => {
+    expect(await check({ name: 'P', startDate: '2026-10-01' })).toHaveLength(0);
+    expect(await check({ name: 'P', estimatedEndDate: '2026-10-31' })).toHaveLength(0);
+  });
+});

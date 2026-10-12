@@ -130,6 +130,10 @@ export class ProjectsService {
       throw new ForbiddenException('Solo ADMIN o PROGRAM_MANAGER pueden asignar a otro usuario como líder del proyecto.');
     }
 
+    if (projectData.startDate && projectData.estimatedEndDate && projectData.estimatedEndDate < projectData.startDate) {
+      throw new BadRequestException('La fecha de entrega no puede ser anterior a la de inicio');
+    }
+
     return this.dataSource.transaction(async (manager) => {
       const leader = await this.getValidProjectLeader(manager, leaderId);
 
@@ -162,6 +166,12 @@ export class ProjectsService {
 
       if (!this.permissions.canManageProject(user, project)) {
         throw new ForbiddenException('No podés modificar este proyecto.');
+      }
+
+      const finalStartDate = dto.startDate !== undefined ? dto.startDate : project.startDate;
+      const finalEstimatedEndDate = dto.estimatedEndDate !== undefined ? dto.estimatedEndDate : project.estimatedEndDate;
+      if (finalStartDate && finalEstimatedEndDate && finalEstimatedEndDate < finalStartDate) {
+        throw new BadRequestException('La fecha de entrega no puede ser anterior a la de inicio');
       }
 
       const changes: Record<string, { old: unknown; new: unknown }> = {};

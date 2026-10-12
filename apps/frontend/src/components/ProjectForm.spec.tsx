@@ -66,3 +66,34 @@ describe('ProjectForm (creación) - líder del proyecto', () => {
     expect(html).not.toContain('Sin definir');
   });
 });
+
+describe('ProjectForm - validación de fechas de inicio y entrega', () => {
+  it('deshabilita el botón de guardado y muestra error si la fecha de entrega es anterior al inicio', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['me'], user('boss', ['ADMIN', 'PROJECT_LEADER']));
+    client.setQueryData(['users', { role: 'PROJECT_LEADER' }], []);
+    client.setQueryData(['tasks', 'proj-1'], []);
+
+    const projectWithInvertedDates = {
+      id: 'proj-1',
+      name: 'Proyecto Invertido',
+      description: 'Desc',
+      startDate: '2026-10-31',
+      estimatedEndDate: '2026-10-01',
+      status: 'PLANNED',
+      leaderId: 'boss',
+      leader: { id: 'boss', name: 'Nombre boss' },
+    } as any;
+
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <ProjectForm initialData={projectWithInvertedDates} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(html).toContain('La fecha de entrega no puede ser anterior a la de inicio.');
+    expect(html).toMatch(/<button[^>]*type="submit"[^>]*\sdisabled(=|\s|>)/);
+  });
+});
