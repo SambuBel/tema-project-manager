@@ -9,6 +9,8 @@ import { RoleName } from '../database/enums';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
+import { CreateUserDto } from './dto/create-user.dto';
+import { hashPassword, normalizeEmail } from '../auth/password';
 
 /**
  * Acceso a usuarios reutilizable entre modulos (hoy auth y la administración de
@@ -146,6 +148,46 @@ export class UsersService {
     const user = await this.findByIdOrThrow(id);
     const roles = await this.getRoleNames(id);
     return Object.assign(user, { roles });
+  }
+
+  /**
+   * Alta de usuario (solo ADMIN, ver el @Roles del controller): única vía además de los scripts de
+   * desarrollo, ya que el login con Google YA NO crea cuentas. La contraseña se hashea acá, nunca se
+   * acepta un hash desde afuera y nunca se devuelve. Sin roles explícitos: COLLABORATOR.
+   */
+  async createUser(dto: CreateUserDto): Promise<UserEntity & { roles: RoleName[] }> {
+    // El DTO ya normaliza, pero el service no confía en quién lo llame: el email se guarda siempre en minúsculas.
+    const email = normalizeEmail(dto.email);
+    const existing = await this.usersRepository
+      .createQueryBuilder('user')
+      .withDeleted()
+      .where('LOWER(user.email) = :email', { email })
+      .getOne();
+    if (existing) {
+      throw new ConflictException('Ya existe un usuario con ese email.');
+    }
+
+    const roleNames = dto.roles && dto.roles.length > 0 ? dto.roles : [RoleName.COLLABORATOR];
+    const passwordHash = await hashPassword(dto.password);
+
+    const userId = await this.dataSource.transaction(async (manager) => {
+      const roleEntities = await Promise.all(roleNames.map((name) => manager.getRepository(RoleEntity).findOneBy({ name })));
+      if (roleEntities.some((role) => !role)) {
+        // Falta el seed de roles: error de configuración, no del request.
+        throw new BadRequestException('Alguno de los roles pedidos no existe en el catálogo.');
+      }
+
+      const user = await manager.getRepository(UserEntity).save(
+        manager.getRepository(UserEntity).create({ email, name: dto.name, active: true, passwordHash }),
+      );
+      await manager
+        .getRepository(UserRoleEntity)
+        .save(roleEntities.map((role) => manager.getRepository(UserRoleEntity).create({ userId: user.id, roleId: role!.id })));
+      return user.id;
+    });
+
+    // Se relee: la entidad guardada traería passwordHash; la lectura normal (select: false) no.
+    return this.findOneWithRoles(userId);
   }
 
   /** Activar/desactivar (baja lógica): ver UserEntity, nunca borrado físico. */

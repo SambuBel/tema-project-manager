@@ -1,5 +1,7 @@
 import { Body, Controller, ForbiddenException, Get, Param, Patch, Post, Delete, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { PermissionsService } from '../auth/permissions.service';
@@ -8,6 +10,7 @@ import { UsersService } from './users.service';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
+import { CreateUserDto } from './dto/create-user.dto';
 
 /**
  * Administración de usuarios y roles globales. Autorización en dos capas,
@@ -25,6 +28,14 @@ export class UsersController {
     private readonly usersService: UsersService,
     private readonly permissions: PermissionsService,
   ) {}
+
+  /** Alta de usuario: solo ADMIN (matriz: "Crear/eliminar usuario"). El login con Google ya no crea cuentas. */
+  @Post()
+  @UseGuards(RolesGuard)
+  @Roles(RoleName.ADMIN)
+  create(@Body() dto: CreateUserDto) {
+    return this.usersService.createUser(dto);
+  }
 
   @Get()
   async findAll(@Query() query: ListUsersQueryDto, @CurrentUser() user: RequestUser) {
