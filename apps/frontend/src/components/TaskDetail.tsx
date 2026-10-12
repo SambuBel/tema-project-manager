@@ -12,6 +12,7 @@ import { canCommentOnTaskUI, canDeleteTaskUI, canEditTaskUI } from '../lib/permi
 
 import { TaskStatusDropdown } from './TaskStatusDropdown';
 import { TaskTimeline } from './TaskTimeline';
+import { isTaskExceedingProjectEnd } from '../lib/projectDates';
 
 const priorityColors: Record<TaskPriority, string> = {
   LOW: 'bg-gray-100 text-gray-600',
@@ -179,9 +180,20 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
                 <span className="text-[#607185]">Inicio</span>
                 <span>{formatDate(task.startDate)}</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-start">
                 <span className="text-[#607185]">Vencimiento</span>
-                <span>{formatDate(task.dueDate)}</span>
+                <div className="flex flex-col items-end">
+                  <span>{formatDate(task.dueDate)}</span>
+                  {isTaskExceedingProjectEnd(task.dueDate, task.project?.estimatedEndDate) && (
+                    <span
+                      role="status"
+                      className="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800"
+                      title="El vencimiento supera el fin estimado del proyecto (RN-08)"
+                    >
+                      ⚠ Supera fin del proyecto
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           </div>

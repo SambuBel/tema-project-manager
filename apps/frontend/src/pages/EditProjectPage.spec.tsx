@@ -13,6 +13,7 @@ const user = (id: string, roles: RoleName[]): AuthenticatedUser => ({ id, email:
 const project = {
   id: PROJECT_ID,
   name: 'Proyecto Alfa',
+  slug: 'proyecto-alfa',
   description: 'desc',
   startDate: '2026-01-01',
   estimatedEndDate: '2026-12-31',
@@ -28,7 +29,9 @@ function render(me: AuthenticatedUser, path: string) {
   client.setQueryData(['auth', 'me'], me);
   client.setQueryData(['me'], me);
   client.setQueryData(['project', PROJECT_ID], project);
+  client.setQueryData(['project', 'proyecto-alfa'], project);
   client.setQueryData(['project-members', PROJECT_ID], []);
+  client.setQueryData(['project-members', 'proyecto-alfa'], []);
   return renderToString(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
@@ -43,6 +46,8 @@ function render(me: AuthenticatedUser, path: string) {
 
 const EDIT = `/projects/${PROJECT_ID}/edit`;
 const DETAIL = `/projects/${PROJECT_ID}`;
+const EDIT_SLUG = `/projects/proyecto-alfa/edit`;
+const DETAIL_SLUG = `/projects/proyecto-alfa`;
 
 describe('/projects/:id/edit (acceso por URL)', () => {
   it.each([
@@ -90,5 +95,44 @@ describe('ProjectPage (resumen): botones de edición', () => {
     expect(tab('Tablero')).not.toBe('');
     expect(tab('Tablero')).not.toContain('disabled');
     expect(tab('Archivos')).toContain('disabled');
+  });
+
+  it('permite acceder al detalle utilizando una URL con slug histórico', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['auth', 'me'], user('u1', ['PROJECT_LEADER']));
+    client.setQueryData(['me'], user('u1', ['PROJECT_LEADER']));
+    client.setQueryData(['project', 'antiguo-slug-alfa'], project);
+    client.setQueryData(['project-members', 'antiguo-slug-alfa'], []);
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/projects/antiguo-slug-alfa']}>
+          <Routes>
+            <Route path="projects/:projectId/*" element={<ProjectPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(html).toContain('Proyecto Alfa');
+    expect(html).toContain('Editar proyecto');
+  });
+
+  it('permite acceder a la edición utilizando una URL con slug histórico', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['auth', 'me'], user('u1', ['PROJECT_LEADER']));
+    client.setQueryData(['me'], user('u1', ['PROJECT_LEADER']));
+    client.setQueryData(['project', 'antiguo-slug-alfa'], project);
+    client.setQueryData(['project-members', 'antiguo-slug-alfa'], []);
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/projects/antiguo-slug-alfa/edit']}>
+          <Routes>
+            <Route path="projects/:projectId/edit" element={<EditProjectPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(html).toContain('<form');
+    expect(html).toContain('Guardar proyecto');
+    expect(html).toContain('Proyecto Alfa');
   });
 });

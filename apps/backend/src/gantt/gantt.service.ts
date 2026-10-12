@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TaskEntity } from '../tasks/task.entity';
 import { ProjectEntity } from '../projects/project.entity';
+import { ProjectSlugHistoryEntity } from '../projects/project-slug-history.entity';
 import { TaskDependencyEntity } from '../database/entities/task-dependency.entity';
 import { DependencyType, TaskStatus } from '../database/enums';
 import { PermissionsService } from '../auth/permissions.service';
@@ -23,17 +24,39 @@ export class GanttService {
     private readonly permissions: PermissionsService,
   ) {}
 
-  async getGantt(projectId: string, user: RequestUser): Promise<GanttResponseDto> {
-    const project = await this.projectRepo.findOneBy({ id: projectId });
+  async getGantt(projectIdOrSlug: string, user: RequestUser): Promise<GanttResponseDto> {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectIdOrSlug);
+    const where = (isUuid ? { id: projectIdOrSlug } : { slug: projectIdOrSlug }) as any;
+    let project =
+      typeof this.projectRepo.findOne === 'function'
+        ? await this.projectRepo.findOne({ where })
+        : await this.projectRepo.findOneBy(where);
+
+    if (!project && !isUuid && typeof this.projectRepo.manager?.findOne === 'function') {
+      try {
+        const history = await this.projectRepo.manager.findOne(ProjectSlugHistoryEntity, {
+          where: { slug: projectIdOrSlug },
+        });
+        if (history && history.projectId) {
+          project =
+            typeof this.projectRepo.findOne === 'function'
+              ? await this.projectRepo.findOne({ where: { id: history.projectId } })
+              : await this.projectRepo.findOneBy({ id: history.projectId } as any);
+        }
+      } catch {
+        // Silently ignore
+      }
+    }
+
     if (!project) {
-      throw new NotFoundException(`Project ${projectId} no encontrado`);
+      throw new NotFoundException(`Project ${projectIdOrSlug} no encontrado`);
     }
     if (!(await this.permissions.canViewProject(user, project))) {
       throw new ForbiddenException('No tenés acceso a este proyecto.');
     }
 
-    const tasks = await this.findTasks(projectId);
-    const dependencies = await this.findDependencies(projectId);
+    const tasks = await this.findTasks(project.id);
+    const dependencies = await this.findDependencies(project.id);
     const blockedTaskIds = this.computeBlockedTaskIds(tasks, dependencies);
 
     return {

@@ -4,6 +4,7 @@ import { DataSource, IsNull } from 'typeorm';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import { ProjectEntity } from './project.entity';
+import { ProjectSlugHistoryEntity } from './project-slug-history.entity';
 import { ProjectMemberEntity } from '../database/entities/project-member.entity';
 import { ProjectStatus, RoleName } from '../database/enums';
 import { UsersService } from '../users/users.service';
@@ -72,6 +73,7 @@ function makeManager(entities: { project: unknown }) {
     findOneBy: jest.fn(async () => entities.project ?? null),
     create: jest.fn((_entity, data) => data),
     save: jest.fn(async (entity) => entity),
+    delete: jest.fn(async () => ({ affected: 1 })),
     query: jest.fn(async () => []),
   };
 }
@@ -193,15 +195,28 @@ describe('ProjectsService - findOne / getMembers / getActivity (canViewProject)'
       await expect(service.findOne('1', makeUser('u1'))).rejects.toThrow(NotFoundException);
     });
 
-    it('200 (devuelve el proyecto) si existe y canViewProject da true', async () => {
-      const project = { id: '1', name: 'Test' };
+    it('200 (devuelve el proyecto) si existe buscando por UUID', async () => {
+      const uuid = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+      const project = { id: uuid, name: 'Test', slug: 'test' };
       mockRepo.findOne.mockResolvedValue(project);
       permissions.canViewProject.mockResolvedValue(true);
 
-      const result = await service.findOne('1', makeUser('u1'));
+      const result = await service.findOne(uuid, makeUser('u1'));
 
       expect(result).toEqual(project);
-      expect(mockRepo.findOne).toHaveBeenCalledWith({ where: { id: '1' }, relations: ['leader'] });
+      expect(mockRepo.findOne).toHaveBeenCalledWith({ where: { id: uuid }, relations: ['leader'] });
+    });
+
+    it('200 (devuelve el proyecto) si existe buscando por slug', async () => {
+      const slug = 'test-5';
+      const project = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', name: 'Test 5', slug };
+      mockRepo.findOne.mockResolvedValue(project);
+      permissions.canViewProject.mockResolvedValue(true);
+
+      const result = await service.findOne(slug, makeUser('u1'));
+
+      expect(result).toEqual(project);
+      expect(mockRepo.findOne).toHaveBeenCalledWith({ where: { slug }, relations: ['leader'] });
     });
 
     it('403 si existe pero canViewProject da false (no confundir con 404)', async () => {
@@ -911,5 +926,237 @@ describe('ProjectsService - changeLeader', () => {
       leaderId: string;
     };
     expect(savedProject.leaderId).toBeTruthy();
+  });
+});
+
+describe('ProjectsService - Slugs y Redirección Histórica', () => {
+  let service: ProjectsService;
+  let mockRepo: { findOne: jest.Mock };
+  let mockHistoryRepo: { findOne: jest.Mock };
+  let mockDataSource: { transaction: jest.Mock; getRepository: jest.Mock };
+  let permissions: ReturnType<typeof makePermissions>;
+
+  beforeEach(async () => {
+    mockRepo = { findOne: jest.fn() };
+    mockHistoryRepo = { findOne: jest.fn() };
+    mockDataSource = {
+      transaction: jest.fn(),
+      getRepository: jest.fn().mockImplementation((entity) => {
+        if (entity === ProjectSlugHistoryEntity) return mockHistoryRepo;
+        return mockRepo;
+      }),
+    };
+    permissions = makePermissions();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ProjectsService,
+        { provide: getRepositoryToken(ProjectEntity), useValue: mockRepo },
+        { provide: getRepositoryToken(ProjectMemberEntity), useValue: {} },
+        { provide: UsersService, useValue: {} },
+        { provide: AuthService, useValue: {} },
+        { provide: PermissionsService, useValue: permissions },
+        { provide: DataSource, useValue: mockDataSource },
+        { provide: ProjectActivityService, useValue: makeActivityService() },
+      ],
+    }).compile();
+
+    service = module.get<ProjectsService>(ProjectsService);
+  });
+
+  describe('generateUniqueSlug', () => {
+    it('asigna el slug base si no existe colisión', async () => {
+      const mockManager = {
+        query: jest.fn().mockResolvedValue([]),
+      } as any;
+
+      const slug = await service.generateUniqueSlug('Sistema de Gestión TEMA', mockManager);
+      expect(slug).toBe('sistema-de-gestion-tema');
+    });
+
+    it('asigna sufijo -2 si el slug base ya existe en projects o historial', async () => {
+      const mockManager = {
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('tema_project_slugs') || sql.includes('pg_advisory_xact_lock')) return Promise.resolve([]);
+          return Promise.resolve([{ slug: 'test-5', project_id: 'other-uuid', source: 'project' }]);
+        }),
+      } as any;
+
+      const slug = await service.generateUniqueSlug('Test 5', mockManager);
+      expect(slug).toBe('test-5-2');
+    });
+
+    it('asigna sufijo incremental -3 si ya existen base y -2', async () => {
+      const mockManager = {
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('tema_project_slugs') || sql.includes('pg_advisory_xact_lock')) return Promise.resolve([]);
+          return Promise.resolve([
+            { slug: 'test-5', project_id: 'p1', source: 'project' },
+            { slug: 'test-5-2', project_id: 'p2', source: 'history' },
+          ]);
+        }),
+      } as any;
+
+      const slug = await service.generateUniqueSlug('Test 5', mockManager);
+      expect(slug).toBe('test-5-3');
+    });
+
+    it('permite reutilizar el slug base si pertenece al mismo proyecto (recuperación de slug propio)', async () => {
+      const mockManager = {
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('tema_project_slugs') || sql.includes('pg_advisory_xact_lock')) return Promise.resolve([]);
+          return Promise.resolve([
+            { slug: 'test-5', project_id: 'uuid-1', source: 'history' },
+          ]);
+        }),
+      } as any;
+
+      const slug = await service.generateUniqueSlug('Test 5', mockManager, 'uuid-1');
+      expect(slug).toBe('test-5');
+    });
+
+    it('reserva slugs históricos de otros proyectos (tombstoning: asigna sufijo si pertenece a otro proyecto)', async () => {
+      const mockManager = {
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('tema_project_slugs') || sql.includes('pg_advisory_xact_lock')) return Promise.resolve([]);
+          return Promise.resolve([
+            { slug: 'test-5', project_id: 'other-project-id', source: 'history' },
+          ]);
+        }),
+      } as any;
+
+      const slug = await service.generateUniqueSlug('Test 5', mockManager, 'uuid-1');
+      expect(slug).toBe('test-5-2');
+    });
+  });
+
+  describe('update (slugs dinámicos e historial)', () => {
+    it('al renombrar el proyecto actualiza el slug y archiva el anterior en project_slug_histories', async () => {
+      const project = { id: 'uuid-1', name: 'Test 5', slug: 'test-5' };
+      const savedHistory: any[] = [];
+      const manager = {
+        findOneBy: jest.fn().mockResolvedValue(project),
+        findOne: jest.fn().mockResolvedValue(project),
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('tema_project_slugs') || sql.includes('pg_advisory_xact_lock')) return Promise.resolve([]);
+          return Promise.resolve([{ slug: 'test-5', project_id: 'uuid-1', source: 'project' }]);
+        }),
+        create: jest.fn((entityClass, data) => data),
+        save: jest.fn().mockImplementation((arg1, arg2) => {
+          const entity = arg2 !== undefined ? arg2 : arg1;
+          if (arg1 === ProjectSlugHistoryEntity || (entity && entity.projectId && entity.slug === 'test-5')) {
+            savedHistory.push(entity);
+          }
+          return Promise.resolve(entity);
+        }),
+        delete: jest.fn().mockResolvedValue({ affected: 0 }),
+      } as any;
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+      permissions.canManageProject.mockReturnValue(true);
+
+      const updated = await service.update('uuid-1', { name: 'Sistema de Ventas' } as any, makeUser('u1'));
+
+      expect(updated.name).toBe('Sistema de Ventas');
+      expect(updated.slug).toBe('sistema-de-ventas');
+      expect(manager.create).toHaveBeenCalledWith(ProjectSlugHistoryEntity, {
+        projectId: 'uuid-1',
+        slug: 'test-5',
+      });
+      expect(savedHistory.length).toBeGreaterThan(0);
+    });
+
+    it('al volver a su nombre original recupera el slug histórico y lo elimina del historial', async () => {
+      const project = { id: 'uuid-1', name: 'Sistema de Ventas', slug: 'sistema-de-ventas' };
+      const manager = {
+        findOneBy: jest.fn().mockResolvedValue(project),
+        findOne: jest.fn().mockResolvedValue(project),
+        query: jest.fn().mockImplementation((sql: string) => {
+          if (sql.includes('tema_project_slugs') || sql.includes('pg_advisory_xact_lock')) return Promise.resolve([]);
+          return Promise.resolve([
+            { slug: 'sistema-de-ventas', project_id: 'uuid-1', source: 'project' },
+            { slug: 'test-5', project_id: 'uuid-1', source: 'history' },
+          ]);
+        }),
+        create: jest.fn((entityClass, data) => data),
+        save: jest.fn().mockImplementation((arg1, arg2) => Promise.resolve(arg2 !== undefined ? arg2 : arg1)),
+        delete: jest.fn().mockResolvedValue({ affected: 1 }),
+      } as any;
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+      permissions.canManageProject.mockReturnValue(true);
+
+      const updated = await service.update('uuid-1', { name: 'Test 5' } as any, makeUser('u1'));
+
+      expect(updated.name).toBe('Test 5');
+      expect(updated.slug).toBe('test-5');
+      expect(manager.delete).toHaveBeenCalledWith(ProjectSlugHistoryEntity, {
+        projectId: 'uuid-1',
+        slug: 'test-5',
+      });
+      expect(manager.create).toHaveBeenCalledWith(ProjectSlugHistoryEntity, {
+        projectId: 'uuid-1',
+        slug: 'sistema-de-ventas',
+      });
+    });
+
+    it('si el nombre no cambia no modifica el slug ni crea historial', async () => {
+      const project = { id: 'uuid-1', name: 'Test 5', slug: 'test-5' };
+      const manager = {
+        findOneBy: jest.fn().mockResolvedValue(project),
+        findOne: jest.fn().mockResolvedValue(project),
+        save: jest.fn().mockImplementation((entity) => Promise.resolve(entity)),
+        create: jest.fn(),
+        delete: jest.fn(),
+      } as any;
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+      permissions.canManageProject.mockReturnValue(true);
+
+      const updated = await service.update('uuid-1', { name: 'Test 5' } as any, makeUser('u1'));
+
+      expect(updated.slug).toBe('test-5');
+      expect(manager.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findProjectOrThrow / findOne (resolución por slug actual e histórico)', () => {
+    it('resuelve proyecto por su slug activo', async () => {
+      const project = { id: 'uuid-1', name: 'Test 5', slug: 'test-5', leader: { id: 'u1' } };
+      mockRepo.findOne.mockResolvedValue(project);
+      permissions.canViewProject.mockResolvedValue(true);
+
+      const found = await service.findOne('test-5', makeUser('u1'));
+
+      expect(found).toEqual(expect.objectContaining({ id: 'uuid-1', slug: 'test-5' }));
+      expect(mockRepo.findOne).toHaveBeenCalledWith({
+        where: { slug: 'test-5' },
+        relations: ['leader'],
+      });
+    });
+
+    it('resuelve proyecto por un slug histórico a través de ProjectSlugHistoryEntity', async () => {
+      const project = { id: 'uuid-1', name: 'Sistema de Ventas', slug: 'sistema-de-ventas', leader: { id: 'u1' } };
+      mockRepo.findOne.mockImplementation(async ({ where }: any) => {
+        if (where?.slug === 'test-5' || where?.id === 'test-5') return null;
+        if (where?.id === 'uuid-1') return project;
+        return null;
+      });
+      mockHistoryRepo.findOne.mockResolvedValue({ projectId: 'uuid-1', slug: 'test-5' });
+      permissions.canViewProject.mockResolvedValue(true);
+
+      const found = await service.findOne('test-5', makeUser('u1'));
+
+      expect(found).toEqual(expect.objectContaining({ id: 'uuid-1', slug: 'sistema-de-ventas' }));
+      expect(mockHistoryRepo.findOne).toHaveBeenCalledWith({ where: { slug: 'test-5' } });
+      expect(mockRepo.findOne).toHaveBeenLastCalledWith({
+        where: { id: 'uuid-1' },
+        relations: ['leader'],
+      });
+    });
+
+    it('lanza NotFoundException si el slug no existe ni en projects ni en el historial', async () => {
+      mockRepo.findOne.mockResolvedValue(null);
+      mockHistoryRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.findOne('inexistente', makeUser('u1'))).rejects.toThrow(NotFoundException);
+    });
   });
 });

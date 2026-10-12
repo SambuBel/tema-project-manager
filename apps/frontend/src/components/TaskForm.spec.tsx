@@ -93,3 +93,56 @@ describe('TaskForm (edición) - fechas según permiso de planificación', () => 
     expect(html).toMatch(/<input[^>]*id="task-title"(?![^>]*disabled)[^>]*>/);
   });
 });
+
+describe('TaskForm - RN-17 y RN-08', () => {
+  it('RN-17: deshabilita el guardado y muestra error si la fecha de vencimiento es anterior al inicio', () => {
+    const invalidTask = {
+      ...task,
+      startDate: '2026-10-25',
+      dueDate: '2026-10-10',
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['auth', 'me'], user('admin-1', ['ADMIN']));
+    client.setQueryData(['project', PROJECT_ID], project);
+    client.setQueryData(['project-members', PROJECT_ID], []);
+
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <TaskForm projectId={PROJECT_ID} initialData={invalidTask} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(html).toContain('La fecha de vencimiento no puede ser anterior a la de inicio.');
+    expect(html).toMatch(/<button[^>]*type="submit"[^>]*\sdisabled(=|\s|>)/);
+  });
+
+  it('RN-08: permite enviar (botón no deshabilitado) cuando el vencimiento supera el fin estimado del proyecto', () => {
+    const taskExceedingProject = {
+      ...task,
+      startDate: '2026-10-10',
+      dueDate: '2026-11-15',
+    };
+    const projectWithEnd = {
+      ...project,
+      estimatedEndDate: '2026-10-31',
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['auth', 'me'], user('admin-1', ['ADMIN']));
+    client.setQueryData(['project', PROJECT_ID], projectWithEnd);
+    client.setQueryData(['project-members', PROJECT_ID], []);
+
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <TaskForm projectId={PROJECT_ID} initialData={taskExceedingProject} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // RN-08 no bloquea la acción: el botón de submit NO está deshabilitado
+    expect(html).not.toMatch(/<button[^>]*type="submit"[^>]*\sdisabled(=|\s|>)/);
+    expect(html).not.toContain('La fecha de vencimiento no puede ser anterior a la de inicio.');
+  });
+});

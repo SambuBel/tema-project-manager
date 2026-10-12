@@ -4,6 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { canManageTaskPlanningUI } from '../lib/permissions';
+import { formatLocalDate } from '../lib/dates';
+import { isTaskExceedingProjectEnd } from '../lib/projectDates';
+import { ConfirmDialog } from './ConfirmDialog';
 import type { CreateTaskDto, Task, TaskPriority, TaskStatus, UpdateTaskDto, User } from '@tema/shared-types';
 
 interface TaskFormProps {
@@ -58,8 +61,21 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
   const isEditing = !!initialData;
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState(() =>
+    initialData
+      ? {
+          title: initialData.title,
+          description: initialData.description ?? '',
+          status: initialData.status,
+          priority: initialData.priority,
+          assignedToId: initialData.assignedToId ?? '',
+          startDate: initialData.startDate ?? '',
+          dueDate: initialData.dueDate ?? '',
+        }
+      : EMPTY_FORM,
+  );
   const [createdTask, setCreatedTask] = useState<Task | null>(null);
+  const [showRn08Warning, setShowRn08Warning] = useState(false);
 
   useEffect(() => {
     if (!initialData) return;
@@ -115,7 +131,7 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['tasks', projectId] });
       void qc.invalidateQueries({ queryKey: ['task', initialData!.id] });
-      navigate(`/projects/${projectId}`);
+      navigate(`/projects/${project?.slug || projectId}`);
     },
   });
 
@@ -126,10 +142,10 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
   const datesInvalid = !datesLocked && !!form.startDate && !!form.dueDate && form.dueDate < form.startDate;
   const canSubmit = form.title.trim().length > 0 && !datesInvalid && !isPending;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canSubmit) return;
+  const projectEstimatedEnd = project?.estimatedEndDate ? project.estimatedEndDate.split('T')[0] : '';
+  const exceedsProjectEnd = isTaskExceedingProjectEnd(form.dueDate, projectEstimatedEnd);
 
+  const executeSubmit = () => {
     if (isEditing) {
       update.mutate({
         title: form.title.trim(),
@@ -155,6 +171,29 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
       startDate: form.startDate || undefined,
       dueDate: form.dueDate || undefined,
     });
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+
+    // RN-08: si el vencimiento de una tarea supera el fin estimado del proyecto,
+    // mostrar advertencia en popup pero permitir continuar si se confirma.
+    if (exceedsProjectEnd) {
+      setShowRn08Warning(true);
+      return;
+    }
+
+    executeSubmit();
+  };
+
+  const handleConfirmRn08 = () => {
+    setShowRn08Warning(false);
+    executeSubmit();
+  };
+
+  const handleCancelRn08 = () => {
+    setShowRn08Warning(false);
   };
 
   const createdAssignee = createdTask?.assignedToId ? assignees.get(createdTask.assignedToId) : undefined;
@@ -323,6 +362,36 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
           )}
         </div>
       </form>
+
+      <ConfirmDialog
+        open={showRn08Warning}
+        title="Advertencia de fecha de vencimiento (RN-08)"
+        confirmLabel="Confirmar"
+        cancelLabel="Cancelar"
+        variant="warning"
+        isConfirming={isPending}
+        onConfirm={handleConfirmRn08}
+        onCancel={handleCancelRn08}
+      >
+        <div className="flex flex-col gap-3 text-sm text-[#172B42]">
+          <p className="text-[#607185]">
+            La fecha de vencimiento de la tarea es posterior a la fecha de fin estimada del proyecto.
+          </p>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+            <div className="flex justify-between py-1 border-b border-amber-200/60 text-xs">
+              <span className="font-medium">Vencimiento de la tarea:</span>
+              <span className="font-semibold">{formatLocalDate(form.dueDate)}</span>
+            </div>
+            <div className="flex justify-between py-1 text-xs">
+              <span className="font-medium">Fin estimado del proyecto:</span>
+              <span className="font-semibold">{formatLocalDate(projectEstimatedEnd)}</span>
+            </div>
+          </div>
+          <p className="text-xs text-[#607185]">
+            Podés cancelar para corregir la fecha o confirmar para guardar la tarea de todas formas.
+          </p>
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

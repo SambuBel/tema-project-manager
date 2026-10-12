@@ -59,6 +59,7 @@ export interface AssignRoleDto {
 
 export interface Project {
   id: ID;
+  slug: string;
   name: string;
   description: string | null;
   startDate: string | null;

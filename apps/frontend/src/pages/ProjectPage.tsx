@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { ProjectDetail } from '../components/ProjectDetail';
@@ -48,6 +48,7 @@ const DISABLED_TABS = ['Archivos'];
 export function ProjectPage() {
   const { projectId = '' } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const { user } = useCurrentUser();
@@ -93,6 +94,12 @@ export function ProjectPage() {
     queryFn: () => api.getProject(projectId),
     enabled: !!projectId,
   });
+
+  useEffect(() => {
+    if (project?.slug && projectId !== project.slug) {
+      navigate(`/projects/${project.slug}${location.search}`, { replace: true });
+    }
+  }, [project?.slug, projectId, navigate, location.search]);
 
   const archive = useMutation({
     mutationFn: (pid: string) => api.archiveProject(pid),
@@ -215,7 +222,7 @@ export function ProjectPage() {
           <div className="flex gap-2">
             <button
               className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
-              onClick={() => navigate(`/projects/${project.id}/edit`)}
+              onClick={() => navigate(`/projects/${project.slug || project.id}/edit`)}
             >
               Editar proyecto
             </button>
@@ -253,7 +260,7 @@ export function ProjectPage() {
       {view === 'tablero' && (
         <div className="w-full min-w-0">
           <TaskBoard
-            projectId={projectId}
+            projectId={project.id}
             onSelectTask={openTask}
           />
         </div>
@@ -261,7 +268,7 @@ export function ProjectPage() {
 
       {view === 'tasks' && (
         <TaskList
-          projectId={projectId}
+          projectId={project.id}
           onSelectTask={openTask}
         />
       )}

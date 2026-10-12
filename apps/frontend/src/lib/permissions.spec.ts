@@ -28,6 +28,7 @@ function makeUser(id: string, roles: RoleName[]): AuthenticatedUser {
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
     id: PROJECT_ID,
+    slug: 'proyecto',
     name: 'Proyecto',
     description: null,
     startDate: null,
