@@ -135,6 +135,7 @@ export const api = {
     const params = new URLSearchParams();
     if (query?.search) params.append('search', query.search);
     if (query?.role) params.append('role', query.role);
+    if (query?.includeInactive) params.append('includeInactive', 'true');
     const qs = params.toString();
     return request<UserWithRoles[]>(`/users${qs ? `?${qs}` : ''}`);
   },

@@ -26,7 +26,7 @@ function makeQueryBuilder(result: unknown[] = []) {
 }
 
 describe('UsersService', () => {
-  let usersRepo: { findOneBy: jest.Mock; save: jest.Mock; createQueryBuilder: jest.Mock };
+  let usersRepo: { findOneBy: jest.Mock; findOne: jest.Mock; save: jest.Mock; createQueryBuilder: jest.Mock };
   let rolesRepo: { findOneBy: jest.Mock };
   let userRolesRepo: {
     findOneBy: jest.Mock;
@@ -60,7 +60,7 @@ describe('UsersService', () => {
 
   beforeEach(() => {
     ledProjects = [];
-    usersRepo = { findOneBy: jest.fn(), save: jest.fn(async (u) => u), createQueryBuilder: jest.fn() };
+    usersRepo = { findOneBy: jest.fn(), findOne: jest.fn(async () => null), save: jest.fn(async (u) => u), createQueryBuilder: jest.fn() };
     rolesRepo = { findOneBy: jest.fn() };
     userRolesRepo = {
       findOneBy: jest.fn(),
@@ -131,6 +131,31 @@ describe('UsersService', () => {
 
       expect(result.active).toBe(true);
       expect(result.deletedAt).toBeNull();
+    });
+  });
+
+  describe('usuarios desactivados (baja lógica = deleted_at)', () => {
+    it('reactivar a un usuario desactivado funciona: lo encuentra con bajas incluidas (antes: 404)', async () => {
+      const inactive = { id: 'target-1', active: false, deletedAt: new Date() };
+      usersRepo.findOneBy.mockResolvedValue(null); // la búsqueda normal NO ve a los desactivados
+      usersRepo.findOne.mockResolvedValue(inactive);
+
+      const result = await service.setActive('target-1', true, makeUser('admin-1', [RoleName.ADMIN]));
+
+      expect(usersRepo.findOne).toHaveBeenCalledWith({ where: { id: 'target-1' }, withDeleted: true });
+      expect(result).toMatchObject({ active: true, deletedAt: null });
+    });
+
+    it('un usuario activo se resuelve con la búsqueda normal, sin la consulta extra', async () => {
+      usersRepo.findOneBy.mockResolvedValue({ id: 'target-1', active: true, deletedAt: null });
+      await service.setActive('target-1', true, makeUser('admin-1', [RoleName.ADMIN]));
+      expect(usersRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('un id que no existe ni entre los desactivados sigue siendo 404', async () => {
+      usersRepo.findOneBy.mockResolvedValue(null);
+      usersRepo.findOne.mockResolvedValue(null);
+      await expect(service.setActive('nope', true, makeUser('admin-1', [RoleName.ADMIN]))).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -311,6 +336,26 @@ describe('UsersService', () => {
         expect.arrayContaining([RoleName.ADMIN, RoleName.PROGRAM_MANAGER]),
       );
       expect(result.find((u) => u.id === 'u2')?.roles).toEqual([RoleName.COLLABORATOR]);
+    });
+
+    it('por defecto NO incluye desactivados (los otros consumidores del listado no cambian)', async () => {
+      const qb = makeQueryBuilder([]);
+      qb.withDeleted = jest.fn(() => qb);
+      usersRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.findAllWithRoles({});
+
+      expect(qb.withDeleted).not.toHaveBeenCalled();
+    });
+
+    it('con includeInactive=true incluye desactivados (withDeleted)', async () => {
+      const qb = makeQueryBuilder([]);
+      qb.withDeleted = jest.fn(() => qb);
+      usersRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.findAllWithRoles({ includeInactive: true });
+
+      expect(qb.withDeleted).toHaveBeenCalledTimes(1);
     });
 
     it('usuario sin ningún rol asignado: array vacío, no undefined', async () => {
