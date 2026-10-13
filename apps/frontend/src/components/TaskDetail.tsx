@@ -233,7 +233,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
           )}
         </div>
         <div className="mt-4">
-          <SubtaskList parentTaskId={taskId} />
+          <SubtaskList parentTaskId={taskId} projectId={task.projectId} />
         </div>
       </div>
 

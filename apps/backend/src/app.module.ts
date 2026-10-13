@@ -7,6 +7,7 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TasksModule } from './tasks/tasks.module';
+import { SubtasksModule } from './subtasks/subtasks.module';
 import { GanttModule } from './gantt/gantt.module';
 import { AiModule } from './ai/ai.module';
 import { envValidationSchema } from './config/env.validation';
@@ -32,6 +33,7 @@ import { envValidationSchema } from './config/env.validation';
     AuthModule,
     ProjectsModule,
     TasksModule,
+    SubtasksModule,
     GanttModule,
     AiModule,
   ],
