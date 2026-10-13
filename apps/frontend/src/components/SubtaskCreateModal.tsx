@@ -52,9 +52,10 @@ export function SubtaskCreateModal({ projectId, parentTask, onClose }: SubtaskCr
           <button
             type="button"
             onClick={onClose}
-            className="shrink-0 rounded-lg border border-[#DEE5EC] bg-white px-3 py-1.5 text-xs font-medium text-[#172B42] hover:bg-gray-50"
+            aria-label="Cerrar"
+            className="shrink-0 rounded-md p-1 text-[#607185] hover:text-[#172B42]"
           >
-            Cerrar
+            ✕
           </button>
         </div>
 
