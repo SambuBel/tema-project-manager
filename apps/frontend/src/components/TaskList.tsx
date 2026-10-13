@@ -5,6 +5,7 @@ import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
 import { canCreateTaskUI } from '../lib/permissions';
 import { SubtaskCreateModal } from './SubtaskCreateModal';
+import { CreateTaskDrawer } from './CreateTaskDrawer';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
@@ -82,6 +83,7 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   const [assignedToInput, setAssignedToInput] = useState('');
   const [viewFilter, setViewFilter] = useState<ViewFilter>('ALL');
   const [subtaskParent, setSubtaskParent] = useState<Task | null>(null);
+  const [creatingTask, setCreatingTask] = useState(false);
 
   const project = useQuery({ queryKey: ['project', projectId], queryFn: () => api.getProject(projectId) });
   const members = useQuery({ queryKey: ['project-members', projectId], queryFn: () => api.getProjectMembers(projectId) });
@@ -172,6 +174,17 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
         >
           En riesgo ({atRiskCount})
         </button>
+
+        {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}
+        {canCreateSubtask && (
+          <button
+            type="button"
+            onClick={() => setCreatingTask(true)}
+            className="ml-auto rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b]"
+          >
+            Nueva tarea
+          </button>
+        )}
       </div>
 
       {/* Filtros */}
@@ -403,6 +416,8 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
           onClose={() => setSubtaskParent(null)}
         />
       )}
+
+      {creatingTask && <CreateTaskDrawer projectId={projectId} onClose={() => setCreatingTask(false)} />}
     </div>
   );
 }
