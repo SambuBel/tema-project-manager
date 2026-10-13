@@ -1,7 +1,10 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { PermissionsService } from '../auth/permissions.service';
 import { RoleName } from '../database/enums';
+import { UserEntity } from '../database/entities/user.entity';
+import { UserRoleEntity } from '../database/entities/user-role.entity';
+import { ProjectEntity } from '../projects/project.entity';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 
 function makeUser(id: string, roles: RoleName[] = []): RequestUser {
@@ -23,7 +26,7 @@ function makeQueryBuilder(result: unknown[] = []) {
 }
 
 describe('UsersService', () => {
-  let usersRepo: { findOneBy: jest.Mock; save: jest.Mock; createQueryBuilder: jest.Mock };
+  let usersRepo: { findOneBy: jest.Mock; findOne: jest.Mock; save: jest.Mock; createQueryBuilder: jest.Mock };
   let rolesRepo: { findOneBy: jest.Mock };
   let userRolesRepo: {
     findOneBy: jest.Mock;
@@ -38,10 +41,26 @@ describe('UsersService', () => {
     canRemoveGlobalRole: jest.Mock;
     canViewUsers: jest.Mock;
   };
+  let manager: { query: jest.Mock; find: jest.Mock; getRepository: jest.Mock };
+  let dataSource: { transaction: jest.Mock };
+  /** Proyectos donde el usuario objetivo es leaderId (lo que devolvería manager.find). */
+  let ledProjects: Array<{ id: string; name: string }>;
   let service: UsersService;
 
+  /** Lee el body estructurado de una excepción de dominio de Nest. */
+  async function conflictBody(promise: Promise<unknown>): Promise<Record<string, unknown>> {
+    try {
+      await promise;
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConflictException);
+      return (error as ConflictException).getResponse() as Record<string, unknown>;
+    }
+    throw new Error('Se esperaba un ConflictException');
+  }
+
   beforeEach(() => {
-    usersRepo = { findOneBy: jest.fn(), save: jest.fn(async (u) => u), createQueryBuilder: jest.fn() };
+    ledProjects = [];
+    usersRepo = { findOneBy: jest.fn(), findOne: jest.fn(async () => null), save: jest.fn(async (u) => u), createQueryBuilder: jest.fn() };
     rolesRepo = { findOneBy: jest.fn() };
     userRolesRepo = {
       findOneBy: jest.fn(),
@@ -57,11 +76,19 @@ describe('UsersService', () => {
       canViewUsers: jest.fn(() => true),
     };
 
+    manager = {
+      query: jest.fn(async () => []),
+      find: jest.fn(async () => ledProjects),
+      getRepository: jest.fn((entity: unknown) => (entity === UserEntity ? usersRepo : userRolesRepo)),
+    };
+    dataSource = { transaction: jest.fn(async (fn: (m: typeof manager) => unknown) => fn(manager)) };
+
     service = new UsersService(
       usersRepo as never,
       rolesRepo as never,
       userRolesRepo as never,
       permissions as unknown as PermissionsService,
+      dataSource as never,
     );
   });
 
@@ -104,6 +131,104 @@ describe('UsersService', () => {
 
       expect(result.active).toBe(true);
       expect(result.deletedAt).toBeNull();
+    });
+  });
+
+  describe('usuarios desactivados (baja lógica = deleted_at)', () => {
+    it('reactivar a un usuario desactivado funciona: lo encuentra con bajas incluidas (antes: 404)', async () => {
+      const inactive = { id: 'target-1', active: false, deletedAt: new Date() };
+      usersRepo.findOneBy.mockResolvedValue(null); // la búsqueda normal NO ve a los desactivados
+      usersRepo.findOne.mockResolvedValue(inactive);
+
+      const result = await service.setActive('target-1', true, makeUser('admin-1', [RoleName.ADMIN]));
+
+      expect(usersRepo.findOne).toHaveBeenCalledWith({ where: { id: 'target-1' }, withDeleted: true });
+      expect(result).toMatchObject({ active: true, deletedAt: null });
+    });
+
+    it('un usuario activo se resuelve con la búsqueda normal, sin la consulta extra', async () => {
+      usersRepo.findOneBy.mockResolvedValue({ id: 'target-1', active: true, deletedAt: null });
+      await service.setActive('target-1', true, makeUser('admin-1', [RoleName.ADMIN]));
+      expect(usersRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('un id que no existe ni entre los desactivados sigue siendo 404', async () => {
+      usersRepo.findOneBy.mockResolvedValue(null);
+      usersRepo.findOne.mockResolvedValue(null);
+      await expect(service.setActive('nope', true, makeUser('admin-1', [RoleName.ADMIN]))).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('setActive - RN-23 (no dejar proyectos con líder inactivo)', () => {
+    const admin = makeUser('admin-1', [RoleName.ADMIN]);
+
+    it('desactivar a alguien que no lidera proyectos: OK, con lock y chequeo dentro de la transacción', async () => {
+      usersRepo.findOneBy.mockResolvedValue({ id: 'target-1', active: true, deletedAt: null });
+
+      const result = await service.setActive('target-1', false, admin);
+
+      expect(result.active).toBe(false);
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+      expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE'), ['target-1']);
+      expect(manager.find).toHaveBeenCalledWith(
+        ProjectEntity,
+        expect.objectContaining({ where: { leaderId: 'target-1' } }),
+      );
+    });
+
+    it('desactivar a un líder (1 proyecto): 409 USER_LEADS_PROJECTS, con los proyectos, y no cambia nada', async () => {
+      const target = { id: 'target-1', active: true, deletedAt: null };
+      usersRepo.findOneBy.mockResolvedValue(target);
+      ledProjects = [{ id: 'p1', name: 'Proyecto Alfa' }];
+
+      const body = await conflictBody(service.setActive('target-1', false, admin));
+
+      expect(body).toMatchObject({ code: 'USER_LEADS_PROJECTS', projects: [{ id: 'p1', name: 'Proyecto Alfa' }] });
+      expect(String(body.message)).toContain('1 proyecto.');
+      expect(usersRepo.save).not.toHaveBeenCalled();
+      expect(target.active).toBe(true);
+      expect(target.deletedAt).toBeNull();
+    });
+
+    it('desactivar a un líder de varios proyectos: 409 con todos', async () => {
+      usersRepo.findOneBy.mockResolvedValue({ id: 'target-1', active: true, deletedAt: null });
+      ledProjects = [
+        { id: 'p1', name: 'Proyecto Alfa' },
+        { id: 'p2', name: 'Proyecto Beta' },
+      ];
+
+      const body = await conflictBody(service.setActive('target-1', false, admin));
+
+      expect(body.projects).toHaveLength(2);
+      expect(String(body.message)).toContain('2 proyectos');
+      expect(usersRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('un ex-líder cuyo proyecto ya fue reasignado (ya no es leaderId de nada) se puede desactivar', async () => {
+      usersRepo.findOneBy.mockResolvedValue({ id: 'target-1', active: true, deletedAt: null });
+      ledProjects = [];
+
+      await expect(service.setActive('target-1', false, admin)).resolves.toMatchObject({ active: false });
+    });
+
+    it('reactivar NO consulta proyectos ni abre transacción, aunque figure como líder', async () => {
+      usersRepo.findOneBy.mockResolvedValue({ id: 'target-1', active: false, deletedAt: new Date() });
+      ledProjects = [{ id: 'p1', name: 'Proyecto Alfa' }];
+
+      await expect(service.setActive('target-1', true, admin)).resolves.toMatchObject({ active: true, deletedAt: null });
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(manager.find).not.toHaveBeenCalled();
+    });
+
+    it('el permiso se evalúa antes: sin canManageUserStatus es 403 y ni consulta proyectos', async () => {
+      usersRepo.findOneBy.mockResolvedValue({ id: 'target-1', active: true });
+      permissions.canManageUserStatus.mockReturnValue(false);
+      ledProjects = [{ id: 'p1', name: 'x' }];
+
+      await expect(service.setActive('target-1', false, makeUser('pm-1', [RoleName.PROGRAM_MANAGER]))).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(manager.find).not.toHaveBeenCalled();
     });
   });
 
@@ -213,6 +338,26 @@ describe('UsersService', () => {
       expect(result.find((u) => u.id === 'u2')?.roles).toEqual([RoleName.COLLABORATOR]);
     });
 
+    it('por defecto NO incluye desactivados (los otros consumidores del listado no cambian)', async () => {
+      const qb = makeQueryBuilder([]);
+      qb.withDeleted = jest.fn(() => qb);
+      usersRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.findAllWithRoles({});
+
+      expect(qb.withDeleted).not.toHaveBeenCalled();
+    });
+
+    it('con includeInactive=true incluye desactivados (withDeleted)', async () => {
+      const qb = makeQueryBuilder([]);
+      qb.withDeleted = jest.fn(() => qb);
+      usersRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.findAllWithRoles({ includeInactive: true });
+
+      expect(qb.withDeleted).toHaveBeenCalledTimes(1);
+    });
+
     it('usuario sin ningún rol asignado: array vacío, no undefined', async () => {
       usersRepo.createQueryBuilder.mockReturnValue(makeQueryBuilder([{ id: 'u1', name: 'Ana' }]));
       userRolesRepo.createQueryBuilder.mockReturnValue(makeQueryBuilder([]));
@@ -263,6 +408,77 @@ describe('UsersService', () => {
 
       expect(userRolesRepo.delete).toHaveBeenCalledWith({ userId: 'target-1', roleId: 'role-leader' });
       expect(result.roles).toEqual([]);
+    });
+
+    describe('RN-23 (no dejar proyectos sin líder)', () => {
+      const admin = makeUser('admin-1', [RoleName.ADMIN]);
+
+      beforeEach(() => {
+        usersRepo.findOneBy.mockResolvedValue({ id: 'target-1' });
+        rolesRepo.findOneBy.mockImplementation(async ({ name }: { name: RoleName }) => ({ id: `role-${name}`, name }));
+      });
+
+      it('quitar PROJECT_LEADER a alguien sin proyectos: OK, con lock y chequeo en la transacción', async () => {
+        await expect(service.removeRole('target-1', RoleName.PROJECT_LEADER, admin)).resolves.toBeDefined();
+
+        expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE'), ['target-1']);
+        expect(manager.find).toHaveBeenCalledWith(
+          ProjectEntity,
+          expect.objectContaining({ where: { leaderId: 'target-1' } }),
+        );
+        expect(manager.getRepository).toHaveBeenCalledWith(UserRoleEntity);
+        expect(userRolesRepo.delete).toHaveBeenCalledWith({ userId: 'target-1', roleId: `role-${RoleName.PROJECT_LEADER}` });
+      });
+
+      it('quitar PROJECT_LEADER a quien lidera 1 proyecto: 409 USER_LEADS_PROJECTS y el rol NO se borra', async () => {
+        ledProjects = [{ id: 'p1', name: 'Proyecto Alfa' }];
+
+        const body = await conflictBody(service.removeRole('target-1', RoleName.PROJECT_LEADER, admin));
+
+        expect(body).toMatchObject({ code: 'USER_LEADS_PROJECTS', projects: [{ id: 'p1', name: 'Proyecto Alfa' }] });
+        expect(userRolesRepo.delete).not.toHaveBeenCalled();
+      });
+
+      it('quitar PROJECT_LEADER a quien lidera varios proyectos: 409 con todos, el rol sigue', async () => {
+        ledProjects = [
+          { id: 'p1', name: 'Proyecto Alfa' },
+          { id: 'p2', name: 'Proyecto Beta' },
+        ];
+
+        const body = await conflictBody(service.removeRole('target-1', RoleName.PROJECT_LEADER, admin));
+
+        expect(body.projects).toHaveLength(2);
+        expect(userRolesRepo.delete).not.toHaveBeenCalled();
+      });
+
+      it('un ex-líder (proyectos ya reasignados) puede perder PROJECT_LEADER', async () => {
+        ledProjects = [];
+        await expect(service.removeRole('target-1', RoleName.PROJECT_LEADER, admin)).resolves.toBeDefined();
+        expect(userRolesRepo.delete).toHaveBeenCalledTimes(1);
+      });
+
+      it.each([RoleName.COLLABORATOR, RoleName.OBSERVER, RoleName.PROGRAM_MANAGER])(
+        'quitar %s NO dispara RN-23, aunque lidere proyectos (ni consulta ni abre transacción)',
+        async (role) => {
+          ledProjects = [{ id: 'p1', name: 'Proyecto Alfa' }];
+
+          await expect(service.removeRole('target-1', role, admin)).resolves.toBeDefined();
+
+          expect(dataSource.transaction).not.toHaveBeenCalled();
+          expect(manager.find).not.toHaveBeenCalled();
+          expect(userRolesRepo.delete).toHaveBeenCalledWith({ userId: 'target-1', roleId: `role-${role}` });
+        },
+      );
+
+      it('el permiso se evalúa antes: sin canRemoveGlobalRole es 403 y no consulta proyectos', async () => {
+        permissions.canRemoveGlobalRole.mockReturnValue(false);
+        ledProjects = [{ id: 'p1', name: 'x' }];
+
+        await expect(service.removeRole('target-1', RoleName.PROJECT_LEADER, makeUser('pm-1', [RoleName.PROGRAM_MANAGER]))).rejects.toThrow(
+          ForbiddenException,
+        );
+        expect(manager.find).not.toHaveBeenCalled();
+      });
     });
   });
 });

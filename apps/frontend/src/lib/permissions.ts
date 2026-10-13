@@ -22,9 +22,12 @@ const GLOBAL_ROLES = {
   ADMIN_PM: ['ADMIN', 'PROGRAM_MANAGER'] as const,
 };
 
-/** Espeja PermissionsService.isProjectLeader: único criterio de liderazgo, nunca projectRole. */
+/**
+ * Espeja PermissionsService.isProjectLeader: líder REAL = rol global PROJECT_LEADER Y project.leaderId
+ * === user.id (nunca projectRole). Un leaderId histórico sin el rol NO administra el proyecto.
+ */
 function isProjectLeader(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
-  return project.leaderId === user.id;
+  return project.leaderId === user.id && hasAnyRole(user.roles, ['PROJECT_LEADER']);
 }
 
 /** Espeja PermissionsService.isAdminPmOrLeader (privado en el backend, se repite acá por claridad). */
@@ -45,6 +48,20 @@ export function canManageProjectUI(user: AuthenticatedUser, project: Pick<Projec
 /** Espeja PermissionsService.canManageProjectTeam (hoy idéntico a canManageProject). */
 export function canManageTeamUI(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
   return isAdminPmOrLeader(user, project);
+}
+
+/**
+ * Espeja ProjectsService.create: solo ADMIN/PM pueden asignar a OTRO usuario como líder al crear un
+ * proyecto (y son los únicos que pueden listar usuarios para elegirlo). Un PROJECT_LEADER que no es
+ * ADMIN/PM queda siempre como líder de lo que crea.
+ */
+export function canChooseProjectLeaderUI(user: AuthenticatedUser): boolean {
+  return hasAnyRole(user.roles, [...GLOBAL_ROLES.ADMIN_PM]);
+}
+
+/** ¿Es elegible como líder (rol global PROJECT_LEADER)? Un ADMIN/PM solo NO lo es: debe indicar a otro. */
+export function canLeadProjectsUI(user: AuthenticatedUser): boolean {
+  return hasAnyRole(user.roles, ['PROJECT_LEADER']);
 }
 
 /** Espeja el @Roles(ADMIN, PROGRAM_MANAGER) de PATCH /projects/:id/leader. Global, no depende del proyecto. */
@@ -84,6 +101,30 @@ export function canEditTaskUI(
 }
 
 /**
+ * Espeja PermissionsService.canCommentOnTask: ADMIN/PM/líder real siempre; el resto solo con
+ * projectRole 'COLLABORATOR' en ESTE proyecto (OBSERVER local, aunque su rol global sea
+ * COLLABORATOR, solo lee). No depende de que la tarea sea propia/asignada, a diferencia de
+ * canEditTaskUI.
+ */
+export function canCommentOnTaskUI(
+  user: AuthenticatedUser,
+  project: Pick<Project, 'leaderId'>,
+  membership: Pick<ProjectMember, 'projectRole'> | null,
+): boolean {
+  if (isAdminPmOrLeader(user, project)) return true;
+  return membership?.projectRole === 'COLLABORATOR';
+}
+
+/**
+ * Espeja PermissionsService.canManageTaskPlanning: fechas (y, más adelante, dependencias).
+ * Distinto de canEditTaskUI: un COLLABORATOR puede editar su tarea pero NO sus fechas.
+ * No mira task ni membership: solo ADMIN/PM o el líder real del proyecto (leaderId).
+ */
+export function canManageTaskPlanningUI(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
+  return isAdminPmOrLeader(user, project);
+}
+
+/**
  * Espeja PermissionsService.canDeleteTask ("eliminar tarea" = archivar, RN-07).
  * A diferencia de canEditTaskUI, nunca depende de membership/ownership: ni el
  * COLLABORATOR dueño/asignado de la tarea puede archivarla.
@@ -100,6 +141,14 @@ export function canDeleteTaskUI(user: AuthenticatedUser, project: Pick<Project, 
 // el backend: comparando contra user.id, nunca confiando en que el backend
 // "ya lo va a rechazar" para decidir qué mostrar.
 // ---------------------------------------------------------------------------
+
+/**
+ * Espeja POST /users: el alta de usuarios es solo ADMIN (@Roles(ADMIN) en UsersController). PROGRAM_MANAGER ve
+ * la pantalla pero NO el botón "Nuevo usuario". Es solo visual: el backend rechaza igual con 403.
+ */
+export function canCreateUsersUI(user: AuthenticatedUser): boolean {
+  return hasAnyRole(user.roles, ['ADMIN']);
+}
 
 /** ¿Puede abrir la pantalla "Usuarios y permisos" en algún modo (ADMIN completo, PM restringido)? */
 export function canViewUsersUI(user: AuthenticatedUser): boolean {

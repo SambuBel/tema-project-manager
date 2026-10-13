@@ -1,13 +1,16 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { UserEntity } from '../database/entities/user.entity';
 import { RoleEntity } from '../database/entities/role.entity';
 import { UserRoleEntity } from '../database/entities/user-role.entity';
+import { ProjectEntity } from '../projects/project.entity';
 import { RoleName } from '../database/enums';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
+import { CreateUserDto } from './dto/create-user.dto';
+import { hashPassword, normalizeEmail } from '../auth/password';
 
 /**
  * Acceso a usuarios reutilizable entre modulos (hoy auth y la administración de
@@ -24,6 +27,7 @@ export class UsersService {
     @InjectRepository(UserRoleEntity)
     private readonly userRolesRepository: Repository<UserRoleEntity>,
     private readonly permissions: PermissionsService,
+    private readonly dataSource: DataSource,
   ) {}
 
   findById(id: string, manager?: EntityManager): Promise<UserEntity | null> {
@@ -36,12 +40,52 @@ export class UsersService {
     return repo.findOneBy({ email });
   }
 
+  /**
+   * Incluye usuarios desactivados: desactivar es una baja lógica (deleted_at), y la administración tiene que
+   * poder verlos, editar sus roles y, sobre todo, REACTIVARLOS (antes daba 404). Primero la búsqueda normal;
+   * solo si no aparece se reintenta con bajas incluidas.
+   */
   private async findByIdOrThrow(id: string): Promise<UserEntity> {
-    const user = await this.usersRepository.findOneBy({ id });
+    const user =
+      (await this.usersRepository.findOneBy({ id })) ?? (await this.usersRepository.findOne({ where: { id }, withDeleted: true }));
     if (!user) {
       throw new NotFoundException(`Usuario ${id} no encontrado`);
     }
     return user;
+  }
+
+  /**
+   * RN-23: Project.leaderId es la fuente de verdad del liderazgo y un proyecto no puede quedar
+   * sin líder válido. Si el usuario es leaderId de algún proyecto, NO se le puede quitar
+   * PROJECT_LEADER ni desactivarlo: hay que transferir antes el liderazgo con
+   * PATCH /projects/:id/leader (no se reasigna automáticamente: elegir líder es decisión de
+   * ADMIN/PM). `find` excluye los proyectos con baja lógica (deleted_at); los archivados SÍ
+   * cuentan, siguen existiendo y siguen apuntando a ese usuario.
+   */
+  private async assertDoesNotLeadProjects(manager: EntityManager, userId: string, blockedAction: string): Promise<void> {
+    const projects = await manager.find(ProjectEntity, {
+      where: { leaderId: userId },
+      select: { id: true, name: true },
+      order: { name: 'ASC' },
+    });
+    if (projects.length === 0) return;
+
+    throw new ConflictException({
+      code: 'USER_LEADS_PROJECTS',
+      message:
+        `El usuario lidera ${projects.length} proyecto${projects.length === 1 ? '' : 's'}. ` +
+        `Reasigná el liderazgo (PATCH /projects/:id/leader) antes de ${blockedAction}.`,
+      projects: projects.map((p) => ({ id: p.id, name: p.name })),
+    });
+  }
+
+  /**
+   * Bloquea la fila del usuario hasta el fin de la transacción. ProjectsService.changeLeader toma
+   * FOR SHARE sobre el nuevo líder, así que "quitar rol / desactivar" y "asignar como líder" se
+   * serializan: no puede ocurrir que uno valide con el estado viejo mientras el otro confirma.
+   */
+  private async lockUser(manager: EntityManager, userId: string): Promise<void> {
+    await manager.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
   }
 
   /**
@@ -69,6 +113,8 @@ export class UsersService {
    */
   async findAllWithRoles(query: ListUsersQueryDto): Promise<Array<UserEntity & { roles: RoleName[] }>> {
     const base = this.usersRepository.createQueryBuilder('user').orderBy('user.name', 'ASC');
+    // Desactivados = deleted_at: solo se listan si el cliente lo pide (pantalla "Usuarios y permisos").
+    if (query.includeInactive) base.withDeleted();
 
     if (query.search) {
       base.andWhere('(user.name ILIKE :search OR user.email ILIKE :search)', { search: `%${query.search}%` });
@@ -112,6 +158,46 @@ export class UsersService {
     return Object.assign(user, { roles });
   }
 
+  /**
+   * Alta de usuario (solo ADMIN, ver el @Roles del controller): única vía además de los scripts de
+   * desarrollo, ya que el login con Google YA NO crea cuentas. La contraseña se hashea acá, nunca se
+   * acepta un hash desde afuera y nunca se devuelve. Sin roles explícitos: COLLABORATOR.
+   */
+  async createUser(dto: CreateUserDto): Promise<UserEntity & { roles: RoleName[] }> {
+    // El DTO ya normaliza, pero el service no confía en quién lo llame: el email se guarda siempre en minúsculas.
+    const email = normalizeEmail(dto.email);
+    const existing = await this.usersRepository
+      .createQueryBuilder('user')
+      .withDeleted()
+      .where('LOWER(user.email) = :email', { email })
+      .getOne();
+    if (existing) {
+      throw new ConflictException('Ya existe un usuario con ese email.');
+    }
+
+    const roleNames = dto.roles && dto.roles.length > 0 ? dto.roles : [RoleName.COLLABORATOR];
+    const passwordHash = await hashPassword(dto.password);
+
+    const userId = await this.dataSource.transaction(async (manager) => {
+      const roleEntities = await Promise.all(roleNames.map((name) => manager.getRepository(RoleEntity).findOneBy({ name })));
+      if (roleEntities.some((role) => !role)) {
+        // Falta el seed de roles: error de configuración, no del request.
+        throw new BadRequestException('Alguno de los roles pedidos no existe en el catálogo.');
+      }
+
+      const user = await manager.getRepository(UserEntity).save(
+        manager.getRepository(UserEntity).create({ email, name: dto.name, active: true, passwordHash }),
+      );
+      await manager
+        .getRepository(UserRoleEntity)
+        .save(roleEntities.map((role) => manager.getRepository(UserRoleEntity).create({ userId: user.id, roleId: role!.id })));
+      return user.id;
+    });
+
+    // Se relee: la entidad guardada traería passwordHash; la lectura normal (select: false) no.
+    return this.findOneWithRoles(userId);
+  }
+
   /** Activar/desactivar (baja lógica): ver UserEntity, nunca borrado físico. */
   async setActive(id: string, active: boolean, actor: RequestUser): Promise<UserEntity & { roles: RoleName[] }> {
     const target = await this.findByIdOrThrow(id);
@@ -122,9 +208,21 @@ export class UsersService {
       );
     }
 
-    target.active = active;
-    target.deletedAt = active ? null : new Date();
-    await this.usersRepository.save(target);
+    if (active) {
+      // Reactivar no puede dejar ningún proyecto sin líder: sin chequeo RN-23.
+      target.active = true;
+      target.deletedAt = null;
+      await this.usersRepository.save(target);
+    } else {
+      // Desactivar: chequeo + escritura en una transacción con lock (ver lockUser).
+      await this.dataSource.transaction(async (manager) => {
+        await this.lockUser(manager, id);
+        await this.assertDoesNotLeadProjects(manager, id, 'desactivarlo');
+        target.active = false;
+        target.deletedAt = new Date();
+        await manager.getRepository(UserEntity).save(target);
+      });
+    }
 
     const roles = await this.getRoleNames(id);
     return Object.assign(target, { roles });
@@ -165,15 +263,9 @@ export class UsersService {
    * Quita un rol global. Solo ADMIN (ver PermissionsService.canRemoveGlobalRole).
    * Idempotente: si no lo tenía, no es error.
    *
-   * Invariante deliberadamente NO forzada acá: si se remueve PROJECT_LEADER a
-   * alguien que lidera uno o más proyectos (project.leaderId), esos proyectos
-   * NO se tocan — project.leaderId sigue apuntando a ese usuario. No es un bug:
-   * isProjectLeader() compara únicamente project.leaderId === user.id, nunca
-   * consulta el rol global (ver permissions.service.ts), así que el proyecto
-   * nunca queda "sin líder" por esto. Es una inconsistencia conceptual posible
-   * (alguien liderando sin tener la capacidad global que se requirió para
-   * nombrarlo), reportada como punto abierto — no se resuelve con una cascada
-   * silenciosa no pedida.
+   * RN-23: si el usuario es leaderId de algún proyecto, quitarle PROJECT_LEADER se rechaza con
+   * 409 USER_LEADS_PROJECTS (ver assertDoesNotLeadProjects). Quitar cualquier otro rol no se
+   * ve afectado.
    */
   async removeRole(targetId: string, role: RoleName, actor: RequestUser): Promise<UserEntity & { roles: RoleName[] }> {
     const target = await this.findByIdOrThrow(targetId);
@@ -189,7 +281,16 @@ export class UsersService {
       throw new BadRequestException(`El rol ${role} no existe en el catálogo.`);
     }
 
-    await this.userRolesRepository.delete({ userId: target.id, roleId: roleEntity.id });
+    if (role === RoleName.PROJECT_LEADER) {
+      // RN-23: solo este rol está atado a leaderId; el resto de los roles se quita sin chequeo.
+      await this.dataSource.transaction(async (manager) => {
+        await this.lockUser(manager, target.id);
+        await this.assertDoesNotLeadProjects(manager, target.id, 'quitarle el rol de Líder');
+        await manager.getRepository(UserRoleEntity).delete({ userId: target.id, roleId: roleEntity.id });
+      });
+    } else {
+      await this.userRolesRepository.delete({ userId: target.id, roleId: roleEntity.id });
+    }
 
     const roles = await this.getRoleNames(target.id);
     return Object.assign(target, { roles });

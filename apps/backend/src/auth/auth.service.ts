@@ -2,26 +2,23 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Response } from 'express';
 import ms from 'ms';
 import { UserEntity } from '../database/entities/user.entity';
-import { RoleEntity } from '../database/entities/role.entity';
 import { UserRoleEntity } from '../database/entities/user-role.entity';
 import { ExternalAccountEntity } from '../database/entities/external-account.entity';
 import { AuthorizedDomainEntity } from '../database/entities/authorized-domain.entity';
-import { ExternalAccountProvider, RoleName } from '../database/enums';
+import { ExternalAccountProvider } from '../database/enums';
 import { GoogleProfileDto } from './dto/google-profile.dto';
 import { AuthenticatedUserDto } from './dto/authenticated-user.dto';
 import { AUTH_ERROR_CODES, AuthError } from './auth.errors';
+import { getDummyPasswordHash, normalizeEmail, verifyPassword } from './password';
 import { buildSessionCookieOptions, SESSION_COOKIE_NAME, sessionCookieClearOptions } from './auth.constants';
 
 export interface SessionJwtPayload {
   sub: string;
 }
-
-/** Rol asignado automaticamente a todo usuario nuevo creado via login con Google. */
-const DEFAULT_ROLE_FOR_NEW_USERS = RoleName.COLLABORATOR;
 
 @Injectable()
 export class AuthService {
@@ -55,10 +52,47 @@ export class AuthService {
   }
 
   /**
-   * Orquesta todo el login: valida email_verified y dominio (sin tocar la base todavía),
-   * y recien despues abre una transaccion para buscar/crear User + ExternalAccount +
-   * UserRole. Cualquier error dentro de la transaccion (incluido "no existe el rol
-   * COLLABORATOR") hace rollback automatico: nunca queda un usuario a medio crear.
+   * Usuario por email SIN distinguir mayúsculas y CON bajas lógicas: un usuario desactivado tiene
+   * deleted_at (ver UsersService.setActive), y hay que distinguirlo de "no existe" para poder
+   * responder "deshabilitado". `includePasswordHash` trae la columna que normalmente no se selecciona.
+   * Es SOLO lectura: este método (y todo el login) nunca crea ni modifica usuarios.
+   */
+  private findUserByEmail(email: string, includePasswordHash = false): Promise<UserEntity | null> {
+    const qb = this.dataSource
+      .getRepository(UserEntity)
+      .createQueryBuilder('user')
+      .withDeleted()
+      .where('LOWER(user.email) = :email', { email: normalizeEmail(email) })
+      .orderBy('user.createdAt', 'ASC');
+    if (includePasswordHash) qb.addSelect('user.passwordHash');
+    return qb.getOne();
+  }
+
+  /**
+   * Login con email + contraseña. Autentica, NO provisiona: solo entra quien ya existe.
+   * Email inexistente, usuario sin contraseña (solo Google) y contraseña incorrecta devuelven el MISMO
+   * error (INVALID_CREDENTIALS) y gastan el mismo tiempo (verificación contra un hash señuelo), para no
+   * revelar qué emails existen. "Deshabilitado" se informa recién DESPUÉS de acertar la contraseña.
+   */
+  async loginWithPassword(email: string, password: string): Promise<UserEntity> {
+    const user = await this.findUserByEmail(email, true);
+    const hash = user?.passwordHash ?? null;
+
+    const passwordMatches = await verifyPassword(hash ?? (await getDummyPasswordHash()), password);
+    if (!user || !hash || !passwordMatches) {
+      throw new AuthError(AUTH_ERROR_CODES.INVALID_CREDENTIALS);
+    }
+
+    this.assertUserIsActive(user);
+    user.passwordHash = null; // el hash no sale de este método
+    return user;
+  }
+
+  /**
+   * Login con Google. Valida email_verified y dominio autorizado (validación adicional: ya NO alcanza
+   * para crear cuentas) y recién entonces busca un usuario EXISTENTE. Si no existe: USER_NOT_REGISTERED
+   * y no se persiste nada (ni users, ni user_roles, ni external_accounts). Solo para un usuario ya
+   * existente y activo se vincula la cuenta de Google; los roles jamás se tocan.
    */
   async loginWithGoogle(profile: GoogleProfileDto): Promise<UserEntity> {
     if (!profile.emailVerified) {
@@ -70,24 +104,19 @@ export class AuthService {
       throw new AuthError(AUTH_ERROR_CODES.UNAUTHORIZED_DOMAIN);
     }
 
-    return this.dataSource.transaction(async (manager) => this.resolveOrCreateUser(profile, manager));
-  }
+    const usersRepo = this.dataSource.getRepository(UserEntity);
 
-  private async resolveOrCreateUser(profile: GoogleProfileDto, manager: EntityManager): Promise<UserEntity> {
-    const externalAccountsRepo = manager.getRepository(ExternalAccountEntity);
-    const usersRepo = manager.getRepository(UserEntity);
-
-    const existingAccount = await externalAccountsRepo.findOne({
+    // Cuenta de Google ya vinculada: se recupera su usuario.
+    const existingAccount = await this.externalAccountsRepository.findOne({
       where: { provider: ExternalAccountProvider.GOOGLE, providerSubject: profile.providerSubject },
       relations: { user: true },
     });
-
     if (existingAccount) {
       const user = existingAccount.user ?? (await usersRepo.findOneBy({ id: existingAccount.userId }));
       this.assertUserIsActive(user);
-      // Mantenemos el email/verificacion de la cuenta externa al dia con lo ultimo que dijo Google.
+      // Mantenemos el email/verificación de la cuenta externa al día con lo último que dijo Google.
       if (existingAccount.email !== profile.email || existingAccount.emailVerified !== profile.emailVerified) {
-        await externalAccountsRepo.update(existingAccount.id, {
+        await this.externalAccountsRepository.update(existingAccount.id, {
           email: profile.email,
           emailVerified: profile.emailVerified,
         });
@@ -95,63 +124,15 @@ export class AuthService {
       return user!;
     }
 
-    const existingUser = await usersRepo.findOneBy({ email: profile.email });
-
-    if (existingUser) {
-      this.assertUserIsActive(existingUser);
-      await externalAccountsRepo.save(
-        externalAccountsRepo.create({
-          userId: existingUser.id,
-          provider: ExternalAccountProvider.GOOGLE,
-          providerSubject: profile.providerSubject,
-          email: profile.email,
-          emailVerified: profile.emailVerified,
-        }),
-      );
-      return existingUser;
+    // Primera vez con esta cuenta de Google: el usuario TIENE que existir ya.
+    const user = await this.findUserByEmail(profile.email);
+    if (!user) {
+      throw new AuthError(AUTH_ERROR_CODES.USER_NOT_REGISTERED);
     }
+    this.assertUserIsActive(user);
 
-    return this.createUserWithExternalAccount(profile, manager);
-  }
-
-  private assertUserIsActive(user: UserEntity | null): void {
-    if (!user || !user.active || user.deletedAt) {
-      throw new AuthError(AUTH_ERROR_CODES.USER_DISABLED);
-    }
-  }
-
-  private async createUserWithExternalAccount(
-    profile: GoogleProfileDto,
-    manager: EntityManager,
-  ): Promise<UserEntity> {
-    const usersRepo = manager.getRepository(UserEntity);
-    const rolesRepo = manager.getRepository(RoleEntity);
-    const userRolesRepo = manager.getRepository(UserRoleEntity);
-    const externalAccountsRepo = manager.getRepository(ExternalAccountEntity);
-
-    const collaboratorRole = await rolesRepo.findOneBy({ name: DEFAULT_ROLE_FOR_NEW_USERS });
-    if (!collaboratorRole) {
-      // Error de configuracion (falta correr el seed): que quede claro en logs, y que
-      // la transaccion haga rollback en vez de crear un usuario sin rol.
-      this.logger.error(
-        `No existe el rol ${DEFAULT_ROLE_FOR_NEW_USERS} en la base. ¿Falta correr el seed?`,
-      );
-      throw new Error(`Rol por defecto "${DEFAULT_ROLE_FOR_NEW_USERS}" no encontrado.`);
-    }
-
-    const user = await usersRepo.save(
-      usersRepo.create({
-        email: profile.email,
-        name: profile.name,
-        avatarUrl: profile.avatarUrl,
-        active: true,
-      }),
-    );
-
-    await userRolesRepo.save(userRolesRepo.create({ userId: user.id, roleId: collaboratorRole.id }));
-
-    await externalAccountsRepo.save(
-      externalAccountsRepo.create({
+    await this.externalAccountsRepository.save(
+      this.externalAccountsRepository.create({
         userId: user.id,
         provider: ExternalAccountProvider.GOOGLE,
         providerSubject: profile.providerSubject,
@@ -159,8 +140,13 @@ export class AuthService {
         emailVerified: profile.emailVerified,
       }),
     );
-
     return user;
+  }
+
+  private assertUserIsActive(user: UserEntity | null): void {
+    if (!user || !user.active || user.deletedAt) {
+      throw new AuthError(AUTH_ERROR_CODES.USER_DISABLED);
+    }
   }
 
   /** Roles globales del usuario, para /auth/me y para el JWT. */

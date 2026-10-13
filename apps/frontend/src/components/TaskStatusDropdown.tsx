@@ -23,12 +23,14 @@ const statusDotColors: Record<TaskStatus, string> = {
 interface TaskStatusDropdownProps {
   taskId: string;
   currentStatus: TaskStatus;
+  /** canEditTaskUI del usuario actual. Sin permiso se muestra solo el badge, sin control interactivo. */
+  canChange: boolean;
 }
 
 /**
  * Badge de estado clickeable.
  */
-export function TaskStatusDropdown({ taskId, currentStatus }: TaskStatusDropdownProps) {
+export function TaskStatusDropdown({ taskId, currentStatus, canChange }: TaskStatusDropdownProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
@@ -66,11 +68,11 @@ export function TaskStatusDropdown({ taskId, currentStatus }: TaskStatusDropdown
     }
   }, [mutation.error]);
 
-  if (validTargets.length === 0) {
+  if (!canChange || validTargets.length === 0) {
     return (
       <span
         className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadgeColors[currentStatus]}`}
-        title="Estado final — no se puede cambiar"
+        title={canChange ? 'Estado final — no se puede cambiar' : undefined}
       >
         {taskStatusLabels[currentStatus]}
       </span>

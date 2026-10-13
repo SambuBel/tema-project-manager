@@ -18,6 +18,10 @@ export class ProjectEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Index('uq_projects_slug', { unique: true })
+  @Column({ name: 'slug', type: 'varchar', length: 255, unique: true })
+  slug!: string;
+
   @Column({ name: 'name', type: 'varchar', length: 200 })
   name!: string;
 

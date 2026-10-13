@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { TaskEntity } from './task.entity';
 import { SubtaskEntity } from '../subtasks/subtask.entity';
 import { ProjectEntity } from '../projects/project.entity';
@@ -173,6 +173,15 @@ export class TasksService {
       throw new ForbiddenException('No podés editar esta tarea.');
     }
 
+    // Planificación (fechas): permiso aparte de editar. Se resuelve ANTES de mutar nada, así
+    // un request mixto (ej. description + dueDate) sin permiso de planificación se rechaza
+    // entero y no se aplica ni la parte permitida.
+    if (this.changesPlanning(task, dto) && !this.permissions.canManageTaskPlanning(user, task.project)) {
+      throw new ForbiddenException('No podés modificar las fechas de esta tarea.');
+    }
+
+    this.assertDatesConsistent(task, dto);
+
     if (dto.assignedToId) {
       await this.assertAssigneeIsProjectMember(task.project, dto.assignedToId);
     }
@@ -229,11 +238,13 @@ export class TasksService {
 
   
   async addComment(taskId: string, content: string, user: RequestUser): Promise<CommentEntity> {
+    const task = await this.findTaskOrThrow(taskId);
+    // Escribir un comentario NO es ver la tarea: policy propia (OBSERVER ve pero no comenta).
+    const allowed = await this.permissions.canCommentOnTask(user, task.project);
+    if (!allowed) throw new ForbiddenException('No podés comentar en esta tarea.');
+
     const trimmed = content?.trim();
     if (!trimmed) throw new BadRequestException('El comentario no puede estar vacío');
-    const task = await this.findTaskOrThrow(taskId);
-    const allowed = await this.permissions.canViewProject(user, task.project);
-    if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
 
     const comment = this.commentRepo.create({
       taskId,
@@ -245,7 +256,7 @@ export class TasksService {
 
   async getTimeline(taskId: string, user: RequestUser): Promise<any[]> {
     const task = await this.findTaskOrThrow(taskId);
-    const allowed = await this.permissions.canViewProject(user, task.project);
+    const allowed = await this.permissions.canViewTask(user, task.project);
     if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
 
     const comments = await this.commentRepo.find({
@@ -353,6 +364,30 @@ export class TasksService {
     });
 
     return saved;
+  }
+
+  /**
+   * ¿El DTO modifica realmente algún campo de planificación? Solo cuenta si el valor enviado
+   * difiere del actual: reenviar la misma fecha (el form de edición manda todos los campos)
+   * no cambia nada, así que no exige el permiso de planificación.
+   */
+  private changesPlanning(task: TaskEntity, dto: UpdateTaskDto): boolean {
+    const changed = (incoming: string | null | undefined, current: string | null) =>
+      incoming !== undefined && incoming !== current;
+    return changed(dto.startDate, task.startDate) || changed(dto.dueDate, task.dueDate);
+  }
+
+  /** Con updates parciales, el orden se evalúa sobre el resultado final: valor nuevo o, si no viene, el actual. */
+  private assertDatesConsistent(task: TaskEntity, dto: UpdateTaskDto): void {
+    if (dto.startDate === undefined && dto.dueDate === undefined) return;
+
+    const startDate = dto.startDate !== undefined ? dto.startDate : task.startDate;
+    const dueDate = dto.dueDate !== undefined ? dto.dueDate : task.dueDate;
+    if (startDate && dueDate && dueDate < startDate) {
+      throw new BadRequestException(
+        `La fecha de vencimiento (${dueDate}) no puede ser anterior a la de inicio (${startDate}).`,
+      );
+    }
   }
 
   private validateTransition(from: TaskStatus, to: TaskStatus): void {

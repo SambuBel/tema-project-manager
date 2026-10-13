@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards, Delete } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards, Delete, HttpCode } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -11,7 +11,7 @@ import { ListProjectsDto } from './list-projects.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
 import { UpdateProjectDtoImpl } from './update-project.dto';
 import { ChangeProjectLeaderDto } from './change-project-leader.dto';
-
+import { InviteProjectMemberDto } from './invite-project-member.dto';
 import { AddProjectMemberDtoImpl, UpdateProjectMemberRoleDtoImpl } from './project-member.dto';
 
 /**
@@ -41,6 +41,15 @@ export class ProjectsController {
     return this.projects.getMembers(id, user);
   }
 
+  @Get(':id/available-users')
+  getAvailableUsers(
+    @Param('id') id: string,
+    @Query('search') search: string | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.projects.getAvailableUsers(id, search, user);
+  }
+
   @Get(':id/activity')
   getActivity(
     @Param('id') id: string,
@@ -57,22 +66,23 @@ export class ProjectsController {
   }
 
   @Get(':id/invitations')
-  getInvitations(@Param('id') id: string) {
-    return this.projects.getPendingInvitations(id);
+  getInvitations(@Param('id') id: string, @CurrentUser() user: RequestUser) {
+    return this.projects.getPendingInvitations(id, user);
   }
 
   @Post(':id/invitations')
-  inviteMember(@Param('id') id: string, @Body() dto: any, @CurrentUser() user: RequestUser) {
+  inviteMember(@Param('id') id: string, @Body() dto: InviteProjectMemberDto, @CurrentUser() user: RequestUser) {
     return this.projects.inviteMember(id, dto, user);
   }
 
-  @Post(':id/invitations/:invitationId/test-accept')
-  testAcceptInvitation(
+  @Delete(':id/invitations/:invitationId')
+  @HttpCode(204)
+  revokeInvitation(
     @Param('id') id: string,
     @Param('invitationId') invitationId: string,
     @CurrentUser() user: RequestUser
   ) {
-    return this.projects.testAcceptInvitation(id, invitationId, user);
+    return this.projects.revokeInvitation(id, invitationId, user);
   }
 
   @Post(':id/members')

@@ -19,10 +19,19 @@ import type {
   Subtask,
   CreateSubtaskDto,
   UpdateSubtaskDto,
+  GanttResponse,
+  LoginDto,
+  CreateUserDto,
 } from '@tema/shared-types';
 import type { Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
 
 const BASE = '/api';
+
+/** Turno previo del chat del asistente (el backend no guarda la conversacion). */
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  text: string;
+}
 
 /**
  * Error de la API. `message` sigue siendo "<status> <statusText>" (como siempre); `details`
@@ -31,22 +40,37 @@ const BASE = '/api';
 export class ApiRequestError extends Error {
   readonly status: number;
   readonly details: string[];
+  /** `code` y datos extra de errores de dominio estructurados (ej. USER_LEADS_PROJECTS), si el backend los manda. */
+  readonly code?: string;
+  readonly data?: Record<string, unknown>;
 
-  constructor(status: number, statusText: string, details: string[] = []) {
+  constructor(status: number, statusText: string, details: string[] = [], code?: string, data?: Record<string, unknown>) {
     super(`${status} ${statusText}`);
     this.name = 'ApiRequestError';
     this.status = status;
     this.details = details;
+    this.code = code;
+    this.data = data;
   }
 }
 
-async function readErrorDetails(res: Response): Promise<string[]> {
+interface ErrorBody {
+  details: string[];
+  code?: string;
+  data?: Record<string, unknown>;
+}
+
+async function readErrorBody(res: Response): Promise<ErrorBody> {
   try {
-    const body = (await res.json()) as { message?: unknown };
-    if (Array.isArray(body.message)) return body.message.filter((m): m is string => typeof m === 'string');
-    return typeof body.message === 'string' ? [body.message] : [];
+    const { message, code, ...rest } = (await res.json()) as { message?: unknown; code?: unknown } & Record<string, unknown>;
+    const details = Array.isArray(message)
+      ? message.filter((m): m is string => typeof m === 'string')
+      : typeof message === 'string'
+        ? [message]
+        : [];
+    return { details, code: typeof code === 'string' ? code : undefined, data: rest };
   } catch {
-    return [];
+    return { details: [] };
   }
 }
 
@@ -61,16 +85,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // que no sea la propia /auth/me, que ya maneja useCurrentUser + RequireAuth
   // sin necesitar un reload duro). Reload completo, no navigate(): así se
   // descarta cualquier estado en memoria de una sesión que ya no es válida.
-  if (res.status === 401 && path !== '/auth/me' && window.location.pathname !== '/login') {
+  if (res.status === 401 && path !== '/auth/me' && path !== '/auth/login' && window.location.pathname !== '/login') {
     window.location.href = '/login';
   }
 
-  if (!res.ok) throw new ApiRequestError(res.status, res.statusText, await readErrorDetails(res));
+  if (!res.ok) {
+    const body = await readErrorBody(res);
+    throw new ApiRequestError(res.status, res.statusText, body.details, body.code, body.data);
+  }
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 
 export const api = {
   getMe: () => request<AuthenticatedUser>('/auth/me'),
+  /** Email + contraseña: el backend emite la misma cookie de sesión que Google. 401 = credenciales incorrectas. */
+  login: (dto: LoginDto) => request<AuthenticatedUser>('/auth/login', { method: 'POST', body: JSON.stringify(dto) }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   listProjects: (query?: ListProjectsQuery) => {
     const params = new URLSearchParams();
@@ -91,7 +120,10 @@ export const api = {
     request<Project>(`/projects/${id}/status`, { method: 'PATCH', body: JSON.stringify(dto) }),
   archiveProject: (id: string) =>
     request<Project>(`/projects/${id}/archive`, { method: 'PATCH' }),
+  getGantt: (projectId: string) => request<GanttResponse>(`/projects/${projectId}/gantt`),
   getProjectMembers: (id: string) => request<ProjectMember[]>(`/projects/${id}/members`),
+  getAvailableUsers: (id: string, search?: string) =>
+    request<UserWithRoles[]>(`/projects/${id}/available-users${search ? `?search=${encodeURIComponent(search)}` : ''}`),
   getProjectInvitations: (id: string) => request<ProjectInvitation[]>(`/projects/${id}/invitations`),
   addProjectMember: (id: string, dto: AddProjectMemberDto) =>
     request<ProjectMember>(`/projects/${id}/members`, { method: 'POST', body: JSON.stringify(dto) }),
@@ -99,6 +131,8 @@ export const api = {
     request<ProjectInvitation>(`/projects/${id}/invitations`, { method: 'POST', body: JSON.stringify(dto) }),
   testAcceptProjectInvitation: (projectId: string, invitationId: string) =>
     request<void>(`/projects/${projectId}/invitations/${invitationId}/test-accept`, { method: 'POST' }),
+  revokeProjectInvitation: (projectId: string, invitationId: string) =>
+    request<void>(`/projects/${projectId}/invitations/${invitationId}`, { method: 'DELETE' }),
   updateProjectMemberRole: (projectId: string, memberId: string, dto: UpdateProjectMemberRoleDto) =>
     request<ProjectMember>(`/projects/${projectId}/members/${memberId}/role`, { method: 'PATCH', body: JSON.stringify(dto) }),
   removeProjectMember: (projectId: string, memberId: string) =>
@@ -112,9 +146,13 @@ export const api = {
     const params = new URLSearchParams();
     if (query?.search) params.append('search', query.search);
     if (query?.role) params.append('role', query.role);
+    if (query?.includeInactive) params.append('includeInactive', 'true');
     const qs = params.toString();
     return request<UserWithRoles[]>(`/users${qs ? `?${qs}` : ''}`);
   },
+  /** Alta de usuario (solo ADMIN). Se manda `password` en claro por HTTPS: el backend la hashea; nunca existe passwordHash acá. */
+  createUser: (dto: CreateUserDto) =>
+    request<UserWithRoles>('/users', { method: 'POST', body: JSON.stringify(dto) }),
   getUser: (id: string) => request<UserWithRoles>(`/users/${id}`),
   updateUserStatus: (id: string, active: boolean) =>
     request<UserWithRoles>(`/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ active }) }),
@@ -151,4 +189,9 @@ export const api = {
     request<void>(`/tasks/${taskId}/subtasks/${subtaskId}` , { method: 'DELETE' }),
   getTaskTimeline: (taskId: string) => request<TaskTimelineItem[]>(`/tasks/${taskId}/timeline`),
   addTaskComment: (taskId: string, content: string) => request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
+
+  // --- Asistente ---
+  sendChatMessage: (message: string, projectId?: string, history: ChatTurn[] = []) =>
+    request<{ reply: string }>('/ai/chat', { method: 'POST', body: JSON.stringify({ message, projectId, history }) }),
+  getAssistantStatus: () => request<{ mode: 'gemini' | 'rules' }>('/ai/status'),
 };

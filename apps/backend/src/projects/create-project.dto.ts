@@ -1,5 +1,6 @@
 import { IsDateString, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import type { CreateProjectDto as ICreateProjectDto } from '@tema/shared-types';
+import { IsNotBefore } from '../tasks/dto/is-not-before.validator';
 
 export class CreateProjectDto implements ICreateProjectDto {
   @IsString()
@@ -17,5 +18,14 @@ export class CreateProjectDto implements ICreateProjectDto {
 
   @IsOptional()
   @IsDateString()
+  @IsNotBefore('startDate', { message: 'La fecha de entrega no puede ser anterior a la de inicio' })
   estimatedEndDate?: string;
+
+  /**
+   * Líder del proyecto. Opcional si quien crea tiene PROJECT_LEADER (queda él mismo); obligatorio
+   * si es ADMIN/PM sin ese rol. Siempre se valida en el backend (existe, activo, PROJECT_LEADER).
+   */
+  @IsOptional()
+  @IsUUID('all', { message: 'leaderId debe ser un id de usuario válido' })
+  leaderId?: string;
 }

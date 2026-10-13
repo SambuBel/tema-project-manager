@@ -39,6 +39,13 @@ export class TaskEntity {
   @JoinColumn({ name: 'project_id' })
   project!: ProjectEntity;
 
+  @Column({ name: 'parent_task_id', type: 'uuid', nullable: true})
+  parentTaskId!: string | null;
+
+  @ManyToOne(() => TaskEntity, { nullable: true, onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'parent_task_id' })
+  parentTask!: TaskEntity | null;
+
   @Column({ name: 'title', type: 'varchar', length: 200 })
   title!: string;
 

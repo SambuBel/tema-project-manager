@@ -41,6 +41,8 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
   const { data: invitations } = useQuery({
     queryKey: ['project-invitations', project.id],
     queryFn: () => api.getProjectInvitations(project.id),
+    // El backend solo entrega invitaciones a quien administra el equipo (403 al resto).
+    enabled: !!user && canManageTeamUI(user, project),
   });
 
   const qc = useQueryClient();
@@ -59,6 +61,16 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
     },
     onError: (error: any) => {
       alert(`Error al procesar la invitación: ${error.message || 'Error desconocido'}`);
+    }
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: (invitationId: string) => api.revokeProjectInvitation(project.id, invitationId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project-invitations', project.id] });
+    },
+    onError: (error: any) => {
+      alert(`Error al cancelar la invitación: ${error.message || 'Error desconocido'}`);
     }
   });
 
@@ -186,15 +198,15 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
               return (
                 <div key={invitation.id} className="opacity-70">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 font-semibold text-gray-500">
-                        {initials(invitation.email)}
+                      <div className="flex items-center gap-4">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 font-semibold text-gray-500">
+                          {initials(invitation.name || invitation.email)}
+                        </div>
+                        <div>
+                          <div className="text-base font-semibold">{invitation.name || invitation.email}</div>
+                          <div className="text-xs text-[#607185]">{invitation.email} - Invitación pendiente</div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="text-base font-semibold">{invitation.email}</div>
-                        <div className="text-xs text-[#607185]">Invitación pendiente</div>
-                      </div>
-                    </div>
 
                     <div className="flex items-center gap-3">
                       <span className={`rounded-full px-3 py-1 text-xs font-medium ${ROLE_BADGE_STYLES[invitation.projectRole]}`}>
@@ -203,7 +215,7 @@ export function ProjectMembers({ project }: ProjectMembersProps) {
                       <span className="rounded-full px-3 py-1 text-xs font-medium bg-orange-100 text-orange-700">
                         Pendiente
                       </span>
-                      {canManage && (
+                      {canManage && import.meta.env.DEV && (
                         <button
                           type="button"
                           disabled={acceptTestMutation.isPending}

@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
+import { isTaskExceedingProjectEnd } from '../lib/projectDates';
 
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
@@ -280,7 +281,15 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
             >
               {/* Tarea */}
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-[#172B42]">{task.title}</p>
+                <div className="flex min-w-0 items-center gap-2">
+                  <p className="truncate text-sm font-medium text-[#172B42]">{task.title}</p>
+                  {/* Condición adicional, NO un TaskStatus: el estado real se sigue mostrando en su columna. */}
+                  {task.archivedAt && (
+                    <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-500">
+                      Archivada
+                    </span>
+                  )}
+                </div>
                 {task.description && (
                   <p className="mt-0.5 truncate text-xs text-[#607185]">{task.description}</p>
                 )}
@@ -330,6 +339,14 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
                   {isOverdue(task) && '⚠ '}
                   {formatDate(task.dueDate)}
                 </span>
+                {isTaskExceedingProjectEnd(task.dueDate, project.data?.estimatedEndDate) && (
+                  <span
+                    className="block text-[10px] font-medium text-amber-700"
+                    title="El vencimiento supera el fin estimado del proyecto (RN-08)"
+                  >
+                    ⚠ Supera fin proy.
+                  </span>
+                )}
               </div>
             </button>
           ))}

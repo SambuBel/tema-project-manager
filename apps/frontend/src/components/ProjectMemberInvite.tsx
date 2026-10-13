@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../lib/api';
-import type { Project, InviteProjectMemberDto, ProjectMemberRole } from '@tema/shared-types';
+import type { Project, ProjectMemberRole, UserWithRoles } from '@tema/shared-types';
 
 interface ProjectMemberInviteProps {
   project: Project;
@@ -13,37 +13,39 @@ const ROLE_OPTIONS: { value: ProjectMemberRole; label: string }[] = [
   { value: 'OBSERVER', label: 'Observador' },
 ];
 
+function initials(name: string): string {
+  return name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase();
+}
+
 export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProps) {
   const qc = useQueryClient();
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [search, setSearch] = useState('');
+  const [selectedUser, setSelectedUser] = useState<UserWithRoles | null>(null);
   const [selectedRole, setSelectedRole] = useState<ProjectMemberRole>('COLLABORATOR');
-  const [validationError, setValidationError] = useState<string | null>(null);
 
-  const inviteMutation = useMutation({
-    mutationFn: (dto: InviteProjectMemberDto) => api.inviteProjectMember(project.id, dto),
+  const { data: candidates, isLoading, isError } = useQuery({
+    queryKey: ['available-users', project.id, search],
+    queryFn: () => api.getAvailableUsers(project.id, search || undefined),
+  });
+
+  const addMutation = useMutation({
+    mutationFn: () => api.addProjectMember(project.id, { userId: selectedUser!.id, projectRole: selectedRole }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['project-invitations', project.id] });
+      qc.invalidateQueries({ queryKey: ['project-members', project.id] });
       onBack();
     },
   });
 
+  const errorMessage =
+    addMutation.error instanceof ApiRequestError
+      ? addMutation.error.details[0] ?? addMutation.error.message
+      : addMutation.error?.message;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setValidationError(null);
-
-    if (!email.toLowerCase().endsWith('@gmail.com')) {
-      setValidationError('Por cuestiones de seguridad, solo se permiten invitaciones a correos con dominio @gmail.com');
-      return;
-    }
-
-    inviteMutation.mutate({ email, projectRole: selectedRole });
+    if (!selectedUser) return;
+    addMutation.mutate();
   };
-
-  const errorMessage =
-    inviteMutation.error instanceof ApiRequestError
-      ? inviteMutation.error.details[0] ?? inviteMutation.error.message
-      : inviteMutation.error?.message;
 
   return (
     <div className="flex flex-col gap-8 text-[#172B42]">
@@ -53,112 +55,103 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
         <span className="mx-2">/</span>
         <button onClick={onBack} className="hover:underline">{project.name}</button>
         <span className="mx-2">/</span>
-        <span>Invitar miembro</span>
+        <span>Agregar miembro</span>
       </div>
 
       <div>
-        <h1 className="text-3xl font-semibold text-[#172B42]">Invitar miembro</h1>
+        <h1 className="text-3xl font-semibold text-[#172B42]">Agregar miembro</h1>
         <p className="mt-2 text-sm text-[#607185]">
-          Sumá una persona al proyecto con el acceso adecuado.
+          Buscá a alguien de TEMA y sumalo al proyecto con el acceso adecuado.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-        {/* Formulario */}
-        <div className="md:col-span-2 flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-8 shadow-sm">
-          <h3 className="text-lg font-semibold text-[#172B42] mb-6">Nuevo miembro</h3>
-
-          <form onSubmit={handleSubmit} className="flex flex-col gap-6">
-
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-[#172B42]">Nombre *</label>
-              <input 
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78]"
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-[#172B42]">Correo electrónico *</label>
-              <input 
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78]"
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-[#172B42]">Rol *</label>
-              <select 
-                required
-                value={selectedRole}
-                onChange={(e) => setSelectedRole(e.target.value as ProjectMemberRole)}
-                className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78] bg-white"
-              >
-                {ROLE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-              <p className="text-xs text-[#607185]">Este rol aplica únicamente a este proyecto.</p>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-[#172B42]">Proyecto *</label>
-              <input 
-                type="text"
-                disabled
-                value={project.name}
-                className="rounded-lg border border-[#DEE5EC] bg-gray-50 px-4 py-3 text-sm text-[#172B42] opacity-70"
-              />
-            </div>
-
-            {validationError && (
-              <div className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
-                {validationError}
-              </div>
-            )}
-
-            {inviteMutation.isError && (
-              <div className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
-                No se pudo invitar al miembro: {errorMessage}
-              </div>
-            )}
-
-            <div className="mt-4 flex justify-end gap-4">
-              <button
-                type="button"
-                onClick={onBack}
-                className="rounded-lg border border-[#DEE5EC] bg-white px-6 py-2.5 text-sm font-medium text-[#172B42]"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                disabled={inviteMutation.isPending}
-                className="rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {inviteMutation.isPending ? 'Invitando...' : 'Invitar miembro'}
-              </button>
-            </div>
-          </form>
-        </div>
-
-        {/* Panel lateral */}
-        <div className="md:col-span-1">
-          <div className="flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-[#172B42] mb-3">Invitaciones seguras</h3>
-            <p className="text-sm text-[#607185] leading-relaxed">
-              El usuario recibirá una invitación por correo electrónico con un enlace único para aceptar unirse al proyecto.
-            </p>
+      <div className="flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-8 shadow-sm max-w-2xl">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+          <div className="flex flex-col gap-2">
+            <label htmlFor="user-search" className="text-sm font-medium text-[#172B42]">Buscar por nombre o correo</label>
+            <input
+              id="user-search"
+              type="text"
+              autoFocus
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setSelectedUser(null);
+              }}
+              placeholder="Ej: Cristian o cristian@..."
+              className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78]"
+            />
           </div>
-        </div>
 
+          <div className="flex flex-col gap-2 max-h-64 overflow-y-auto rounded-lg border border-[#DEE5EC]">
+            {isLoading ? (
+              <p className="p-4 text-sm text-[#607185]">Buscando...</p>
+            ) : isError ? (
+              <p className="p-4 text-sm text-red-600">No se pudo cargar la lista de usuarios.</p>
+            ) : !candidates || candidates.length === 0 ? (
+              <p className="p-4 text-sm italic text-[#607185]">
+                {search ? 'No hay resultados para esa búsqueda.' : 'No hay más usuarios de TEMA para agregar a este proyecto.'}
+              </p>
+            ) : (
+              candidates.map((candidate) => (
+                <button
+                  type="button"
+                  key={candidate.id}
+                  onClick={() => setSelectedUser(candidate)}
+                  className={`flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 ${
+                    selectedUser?.id === candidate.id ? 'bg-[#EAF2F7]' : ''
+                  }`}
+                >
+                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#EAF2F7] text-xs font-semibold text-[#245B78]">
+                    {initials(candidate.name)}
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium">{candidate.name}</div>
+                    <div className="text-xs text-[#607185]">{candidate.email}</div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="member-role" className="text-sm font-medium text-[#172B42]">Rol *</label>
+            <select
+              id="member-role"
+              value={selectedRole}
+              onChange={(e) => setSelectedRole(e.target.value as ProjectMemberRole)}
+              className="rounded-lg border border-[#DEE5EC] px-4 py-3 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78] bg-white"
+            >
+              {ROLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-[#607185]">Este rol aplica únicamente a este proyecto.</p>
+          </div>
+
+          {addMutation.isError && (
+            <div className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
+              No se pudo agregar al miembro: {errorMessage}
+            </div>
+          )}
+
+          <div className="mt-2 flex justify-end gap-4">
+            <button
+              type="button"
+              onClick={onBack}
+              className="rounded-lg border border-[#DEE5EC] bg-white px-6 py-2.5 text-sm font-medium text-[#172B42]"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={!selectedUser || addMutation.isPending}
+              className="rounded-lg bg-[#245B78] px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b] disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {addMutation.isPending ? 'Agregando...' : 'Agregar al proyecto'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

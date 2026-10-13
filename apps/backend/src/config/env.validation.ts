@@ -9,6 +9,8 @@ export const envValidationSchema = Joi.object({
   BACKEND_PORT: Joi.number().default(3000),
   DATABASE_URL: Joi.string().uri().required(),
   CORS_ORIGIN: Joi.string().uri().required(),
+  // Habilitación explícita de helpers de desarrollo (ver NonProductionGuard). Apagado por defecto.
+  ENABLE_DEV_ENDPOINTS: Joi.boolean().default(false),
 
   FRONTEND_URL: Joi.string().uri().required(),
 
@@ -18,4 +20,8 @@ export const envValidationSchema = Joi.object({
 
   JWT_SECRET: Joi.string().min(16).required(),
   JWT_EXPIRES_IN: Joi.string().default('8h'),
+
+  // Asistente IA: opcional. Sin key el asistente responde por reglas (modo demo).
+  GEMINI_API_KEY: Joi.string().allow('').optional(),
+  GEMINI_MODEL: Joi.string().allow('').optional(),
 });
