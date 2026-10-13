@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { api, ApiRequestError } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
 import { canCreateTaskUI } from '../lib/permissions';
@@ -88,6 +88,7 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   const [viewFilter, setViewFilter] = useState<ViewFilter>('ALL');
   const [subtaskParent, setSubtaskParent] = useState<Task | null>(null);
   const [creatingTask, setCreatingTask] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   const project = useQuery({ queryKey: ['project', projectId], queryFn: () => api.getProject(projectId) });
   const members = useQuery({ queryKey: ['project-members', projectId], queryFn: () => api.getProjectMembers(projectId) });
@@ -130,6 +131,21 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
     e.preventDefault();
     setDebouncedSearch(searchInput);
   };
+
+  const handleExportCsv = async () => {
+    setIsExporting(true);
+    try {
+      await api.exportTasksCsv(projectId, filters);
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 403) {
+        alert(err.details[0] || 'No tenés permisos para exportar.');
+      } else {
+        alert('Error al exportar las tareas.')
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   const clearFilters = () => {
     setSearchInput('');
@@ -190,6 +206,15 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
           onClick={() => setViewFilter('AT_RISK')}
         >
           En riesgo ({atRiskCount})
+        </button>
+
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          disabled={isExporting}
+          className="ml-auto rounded-lg border border-[#DEE5EC] px-3 py-1.5 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7] disabled:opacity-50"
+        >
+          {isExporting ? 'Exportando…' : 'Exportar CSV'}
         </button>
 
         {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}

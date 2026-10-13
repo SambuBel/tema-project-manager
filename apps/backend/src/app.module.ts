@@ -11,6 +11,7 @@ import { SubtasksModule } from './subtasks/subtasks.module';
 import { GanttModule } from './gantt/gantt.module';
 import { AiModule } from './ai/ai.module';
 import { envValidationSchema } from './config/env.validation';
+import { ExportModule } from './export/export.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { envValidationSchema } from './config/env.validation';
     TasksModule,
     SubtasksModule,
     GanttModule,
+    ExportModule,
     AiModule,
   ],
   controllers: [HealthController],

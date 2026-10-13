@@ -96,6 +96,43 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 
+async function downloadFile(path: string, defaultFilename: string): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, {
+    credentials: 'include',
+  })
+
+  if (res.status === 401 && window.location.pathname !== '/login') {
+    window.location.href = '/login';
+    return;
+  }
+
+  if (!res.ok) {
+    const body = await readErrorBody(res);
+    throw new ApiRequestError(res.status, res.statusText, body.details, body.code, body.data)
+  }
+
+  const blob = await res.blob()
+
+  // Esto intenta sacar el nombre del Content-Disposition del back
+  const disposition = res.headers.get('Content-Disposition');
+  let filename = defaultFilename;
+  if (disposition) {
+    const match = disposition.match(/filename="?([^";\s]+)"?/);
+    if (match?.[1]) filename = match[1]
+  }
+
+  // Crea enlace temporal para disparar la descarga
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url)
+
+}
+
 export const api = {
   getMe: () => request<AuthenticatedUser>('/auth/me'),
   /** Email + contraseña: el backend emite la misma cookie de sesión que Google. 401 = credenciales incorrectas. */
@@ -194,4 +231,17 @@ export const api = {
   sendChatMessage: (message: string, projectId?: string, history: ChatTurn[] = []) =>
     request<{ reply: string }>('/ai/chat', { method: 'POST', body: JSON.stringify({ message, projectId, history }) }),
   getAssistantStatus: () => request<{ mode: 'gemini' | 'rules' }>('/ai/status'),
+
+  // --- Exportaciones ---
+  exportTasksCsv: (projectId: string, filters?: TaskFilters) => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.priority) params.append('priority', filters.priority);
+    if (filters?.assignedToId) params.append('assignedToId', filters.assignedToId);
+    if (filters?.search) params.append('search', filters.search);
+    const qs = params.toString();
+    return downloadFile(`/projects/${projectId}/export/tasks${qs ? `?${qs}` : ''}`, 'tareas.csv')
+  },
+  exportStatusHistoryCsv: (projectId: string) => 
+    downloadFile(`/projects/${projectId}/export/status-history`, 'historial-estados.csv'),
 };
