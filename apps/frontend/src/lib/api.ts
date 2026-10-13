@@ -113,6 +113,8 @@ export const api = {
     request<Project>(`/projects/${id}/archive`, { method: 'PATCH' }),
   getGantt: (projectId: string) => request<GanttResponse>(`/projects/${projectId}/gantt`),
   getProjectMembers: (id: string) => request<ProjectMember[]>(`/projects/${id}/members`),
+  getAvailableUsers: (id: string, search?: string) =>
+    request<UserWithRoles[]>(`/projects/${id}/available-users${search ? `?search=${encodeURIComponent(search)}` : ''}`),
   getProjectInvitations: (id: string) => request<ProjectInvitation[]>(`/projects/${id}/invitations`),
   addProjectMember: (id: string, dto: AddProjectMemberDto) =>
     request<ProjectMember>(`/projects/${id}/members`, { method: 'POST', body: JSON.stringify(dto) }),

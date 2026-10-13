@@ -573,6 +573,27 @@ export class ProjectsService {
     });
   }
 
+  /**
+   * GET /projects/:id/available-users: usuarios de TEMA para agregar directo al
+   * equipo (reemplaza el flujo de invitación por correo). Reusa
+   * UsersService.findAllWithRoles (misma busqueda que la administracion de
+   * usuarios) y descarta inactivos y a quienes ya son miembros activos.
+   */
+  async getAvailableUsers(projectId: string, search: string | undefined, user: RequestUser) {
+    const project = await this.findProjectOrThrow(projectId);
+    if (!this.permissions.canManageProjectTeam(user, project)) {
+      throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
+    }
+
+    const [candidates, members] = await Promise.all([
+      this.usersService.findAllWithRoles({ search }),
+      this.memberRepo.find({ where: { projectId: project.id, removedAt: IsNull() } }),
+    ]);
+
+    const memberIds = new Set(members.map((m) => m.userId));
+    return candidates.filter((u) => u.active && !memberIds.has(u.id));
+  }
+
   async inviteMember(projectId: string, dto: InviteProjectMemberDto, user: RequestUser) {
     return this.dataSource.transaction(async (manager) => {
       const project = await this.findProjectInTransaction(manager, projectId);
