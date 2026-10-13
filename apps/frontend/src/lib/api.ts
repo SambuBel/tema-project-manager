@@ -24,6 +24,12 @@ import type { Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/t
 
 const BASE = '/api';
 
+/** Turno previo del chat del asistente (el backend no guarda la conversacion). */
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
 /**
  * Error de la API. `message` sigue siendo "<status> <statusText>" (como siempre); `details`
  * trae los mensajes que mando el backend (ej. validaciones) para poder mostrarselos al usuario.
@@ -176,6 +182,7 @@ export const api = {
   addTaskComment: (taskId: string, content: string) => request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
 
   // --- Asistente ---
-  sendChatMessage: (message: string, projectId?: string) =>
-    request<{ reply: string }>('/ai/chat', { method: 'POST', body: JSON.stringify({ message, projectId }) }),
+  sendChatMessage: (message: string, projectId?: string, history: ChatTurn[] = []) =>
+    request<{ reply: string }>('/ai/chat', { method: 'POST', body: JSON.stringify({ message, projectId, history }) }),
+  getAssistantStatus: () => request<{ mode: 'gemini' | 'rules' }>('/ai/status'),
 };
