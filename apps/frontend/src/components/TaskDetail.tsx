@@ -8,7 +8,8 @@ import { SubtaskList } from './SubtaskList';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
-import { canCommentOnTaskUI, canDeleteTaskUI, canEditTaskUI } from '../lib/permissions';
+import { canCommentOnTaskUI, canCreateTaskUI, canDeleteTaskUI, canEditTaskUI } from '../lib/permissions';
+import { SubtaskCreateModal } from './SubtaskCreateModal';
 
 import { TaskStatusDropdown } from './TaskStatusDropdown';
 import { TaskTimeline } from './TaskTimeline';
@@ -48,6 +49,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
   const qc = useQueryClient();
   const { user } = useCurrentUser();
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [showSubtaskModal, setShowSubtaskModal] = useState(false);
 
   const { data: task, isLoading, isError } = useQuery({
     queryKey: ['task', taskId],
@@ -90,6 +92,8 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
   const canEdit = !!user && canEditTaskUI(user, task, task.project, membership);
   const canDelete = !!user && canDeleteTaskUI(user, task.project);
   const canComment = !!user && canCommentOnTaskUI(user, task.project, membership);
+  const canAddSubtask =
+    !!user && canCreateTaskUI(user, task.project, membership) && !task.parentTaskId && !task.archivedAt;
 
   return (
     <div className="flex flex-col gap-8 text-[#172B42]">
@@ -103,7 +107,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-4xl font-semibold">{task.title}</h1>
           <TaskStatusDropdown taskId={taskId} currentStatus={task.status} canChange={canEdit} />
-          <span className={`rounded-full px-3 py-1 text-xs font-medium ${priorityColors[task.priority]}`}>
+          <span className={'rounded-full px-3 py-1 text-xs font-medium ' + priorityColors[task.priority]}>
             {taskPriorityLabels[task.priority]}
           </span>
           {task.archivedAt && (
@@ -116,7 +120,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
           <div className="flex gap-2">
             {canEdit && (
               <Link
-                to={`/tasks/${task.id}/edit`}
+                to={'/tasks/' + task.id + '/edit'}
                 className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
               >
                 Editar tarea
@@ -190,7 +194,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
                       className="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800"
                       title="El vencimiento supera el fin estimado del proyecto (RN-08)"
                     >
-                      ⚠ Supera fin del proyecto
+                      ⚠️ Supera fin del proyecto
                     </span>
                   )}
                 </div>
@@ -216,7 +220,18 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
 
       {/* Subtareas */}
       <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
-        <h3 className="text-lg font-semibold text-[#172B42]">Subtareas</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold text-[#172B42]">Subtareas</h3>
+          {canAddSubtask && (
+            <button
+              type="button"
+              onClick={() => setShowSubtaskModal(true)}
+              className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7]"
+            >
+              + Agregar subtarea
+            </button>
+          )}
+        </div>
         <div className="mt-4">
           <SubtaskList parentTaskId={taskId} />
         </div>
@@ -229,10 +244,18 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
         </div>
       </div>
 
+      {showSubtaskModal && (
+        <SubtaskCreateModal
+          projectId={task.projectId}
+          parentTask={{ id: task.id, title: task.title }}
+          onClose={() => setShowSubtaskModal(false)}
+        />
+      )}
+
       <ConfirmDialog
         open={confirmArchive}
         title="Archivar tarea"
-        description="La tarea deja de aparecer como activa. Esta acción corresponde a 'eliminar tarea' (RN-07): la tarea no se borra, queda archivada."
+        description="La tarea deja de aparecer como activa. Esta acción corresponde a 'eliminar tarea' (RN-08): la tarea no se borra, queda archivada."
         confirmLabel="Archivar"
         variant="danger"
         isConfirming={archive.isPending}
