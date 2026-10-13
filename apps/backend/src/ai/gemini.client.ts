@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Content, FunctionCall, FunctionDeclaration, GoogleGenAI } from '@google/genai';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 
 export interface GeminiTurn {
   /** Llamadas a tools que pidio el modelo (vacio = ya respondio con texto). */

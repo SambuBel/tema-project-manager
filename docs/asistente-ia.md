@@ -6,7 +6,7 @@
 2. En `apps/backend/.env` agregar:
    ```
    GEMINI_API_KEY=<la key>
-   GEMINI_MODEL=            # opcional, vacio = gemini-2.5-flash
+   GEMINI_MODEL=            # opcional, vacio = gemini-3.8-flash
    ```
 3. Reiniciar el backend. El badge "Modo demo" del panel desaparece (`GET /api/ai/status` devuelve `{ "mode": "gemini" }`).
 
