@@ -1,4 +1,5 @@
-import { TaskForm } from './TaskForm';
+import { useState } from 'react';
+import { CreateTaskDrawer } from './CreateTaskDrawer';
 import type { Project } from '@tema/shared-types';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
@@ -30,6 +31,7 @@ export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
   const { user } = useCurrentUser();
   const { membership } = useMyMembership(project.id);
   const canCreateTask = !!user && canCreateTaskUI(user, project, membership);
+  const [creatingTask, setCreatingTask] = useState(false);
 
   return (
     <>
@@ -136,7 +138,23 @@ export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
       </div>
 
       {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}
-      {canCreateTask && <TaskForm projectId={project.id} />}
+      {canCreateTask && (
+        <div className="flex flex-col items-start gap-3 rounded-xl border border-[#DEE5EC] bg-white p-6 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-[#172B42]">Tareas</h3>
+            <p className="mt-1 text-sm text-[#607185]">Agregá una tarea nueva a este proyecto.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCreatingTask(true)}
+            className="rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b]"
+          >
+            Nueva tarea
+          </button>
+        </div>
+      )}
+
+      {creatingTask && <CreateTaskDrawer projectId={project.id} onClose={() => setCreatingTask(false)} />}
     </>
   );
 }
