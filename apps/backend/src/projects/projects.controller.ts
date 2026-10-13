@@ -41,6 +41,15 @@ export class ProjectsController {
     return this.projects.getMembers(id, user);
   }
 
+  @Get(':id/available-users')
+  getAvailableUsers(
+    @Param('id') id: string,
+    @Query('search') search: string | undefined,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.projects.getAvailableUsers(id, search, user);
+  }
+
   @Get(':id/activity')
   getActivity(
     @Param('id') id: string,
