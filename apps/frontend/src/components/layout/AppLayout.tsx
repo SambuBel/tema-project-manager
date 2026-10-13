@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { ChevronIcon, CloseIcon, MenuIcon } from './icons';
+import { useCurrentUser } from '../../hooks/useCurrentUser';
+import { hasAnyRole } from '../../lib/roles';
+import { ChevronIcon, CloseIcon, MenuIcon, SparklesIcon } from './icons';
 import { Sidebar } from './Sidebar';
+import { ChatPanel } from '../assistant/ChatPanel';
 
 export function AppLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { pathname } = useLocation();
-
-  // ... (some state omitted)
+  const { user } = useCurrentUser();
+  const canUseAssistant = !!user && hasAnyRole(user.roles, ['ADMIN', 'PROGRAM_MANAGER', 'PROJECT_LEADER', 'COLLABORATOR']);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem('sidebar-collapsed') === 'true';
@@ -36,8 +39,8 @@ export function AppLayout() {
     return () => window.removeEventListener('keydown', onKey);
   }, [drawerOpen]);
 
-  // Punto de extension: aca se abrira el panel de chat del asistente.
-  const openAssistant = () => {};
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const openAssistant = () => setAssistantOpen(true);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -56,7 +59,7 @@ export function AppLayout() {
           collapsed ? 'lg:w-sidebar-collapsed' : ''
         } ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <Sidebar onNavigate={() => setDrawerOpen(false)} onOpenAssistant={openAssistant} />
+        <Sidebar onNavigate={() => setDrawerOpen(false)} />
         <button
           type="button"
           onClick={() => setDrawerOpen(false)}
@@ -96,6 +99,19 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+
+      {canUseAssistant && !assistantOpen && (
+        <button
+          type="button"
+          onClick={openAssistant}
+          aria-label="Abrir asistente de IA"
+          className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-sidebar-card text-white shadow-lg transition-transform hover:scale-105 hover:bg-sidebar-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"
+        >
+          <SparklesIcon width={26} height={26} />
+        </button>
+      )}
+
+      <ChatPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
     </div>
   );
 }

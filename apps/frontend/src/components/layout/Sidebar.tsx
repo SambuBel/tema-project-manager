@@ -2,11 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useMatch } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
-import { hasAnyRole } from '../../lib/roles';
 import { canViewUsersUI } from '../../lib/permissions';
-import { BellIcon, HomeIcon, InfoIcon, ShieldIcon, SparklesIcon } from './icons';
+import { BellIcon, HomeIcon, InfoIcon, ShieldIcon } from './icons';
 import { SidebarHeader } from './SidebarHeader';
-import { SidebarNavButton, SidebarNavLink } from './SidebarNavItem';
+import { SidebarNavLink } from './SidebarNavItem';
 import { SidebarSection } from './SidebarSection';
 import { SidebarUser } from './SidebarUser';
 import { WorkspaceCard } from './WorkspaceCard';
@@ -14,10 +13,9 @@ import { WorkspaceCard } from './WorkspaceCard';
 interface SidebarProps {
   /** Cierra el drawer en mobile al navegar. */
   onNavigate?: () => void;
-  onOpenAssistant: () => void;
 }
 
-export function Sidebar({ onNavigate, onOpenAssistant }: SidebarProps) {
+export function Sidebar({ onNavigate }: SidebarProps) {
   const { user } = useCurrentUser();
   // Contexto de proyecto: hoy solo detectamos la ruta. Los tabs (Resumen, Tareas...) van en la vista del proyecto, no aca.
   const projectMatch = useMatch('/projects/:projectId/*');
@@ -32,7 +30,6 @@ export function Sidebar({ onNavigate, onOpenAssistant }: SidebarProps) {
 
   // Solo visibilidad de UI; la autorizacion real la hace el backend.
   const canManageUsers = !!user && canViewUsersUI(user);
-  const canUseAssistant = !!user && hasAnyRole(user.roles, ['ADMIN', 'PROGRAM_MANAGER', 'PROJECT_LEADER', 'COLLABORATOR']);
 
   return (
     <nav aria-label="Navegación principal" className="flex h-full flex-col overflow-hidden bg-sidebar text-white">
@@ -63,16 +60,6 @@ export function Sidebar({ onNavigate, onOpenAssistant }: SidebarProps) {
             )}
             <SidebarNavLink to="/roles" icon={<InfoIcon />} label="Roles y permisos" onNavigate={onNavigate} />
             <SidebarNavLink to="/notifications" icon={<BellIcon />} label="Notificaciones" onNavigate={onNavigate} />
-            {canUseAssistant && (
-              <SidebarNavButton
-                icon={<SparklesIcon />}
-                label="Asistente de IA"
-                onClick={() => {
-                  onNavigate?.();
-                  onOpenAssistant();
-                }}
-              />
-            )}
           </SidebarSection>
         )}
       </div>

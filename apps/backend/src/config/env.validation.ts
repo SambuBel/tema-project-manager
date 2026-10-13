@@ -20,4 +20,8 @@ export const envValidationSchema = Joi.object({
 
   JWT_SECRET: Joi.string().min(16).required(),
   JWT_EXPIRES_IN: Joi.string().default('8h'),
+
+  // Asistente IA: opcional. Sin key el asistente responde por reglas (modo demo).
+  GEMINI_API_KEY: Joi.string().allow('').optional(),
+  GEMINI_MODEL: Joi.string().allow('').optional(),
 });
