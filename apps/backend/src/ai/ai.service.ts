@@ -76,6 +76,8 @@ export class AiService {
       { role: 'user', parts: [{ text: dto.message }] },
     ];
 
+    let lastError: string | null = null;
+
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const turn = await this.gemini.generate(contents, systemPrompt, this.tools.declarations);
 
@@ -89,12 +91,18 @@ export class AiService {
       for (const call of turn.functionCalls) {
         const name = call.name ?? '';
         const result = await this.tools.execute(name, (call.args ?? {}) as ToolArgs, ctx);
+        // Una linea por tool en la consola del backend: sin esto no hay forma de saber por que el modelo se trabo.
+        this.logger.log(`tool ${name} ${JSON.stringify(call.args ?? {})} -> ${JSON.stringify(result).slice(0, 300)}`);
+        if (typeof result.error === 'string') lastError = result.error;
         responses.push({ functionResponse: { id: call.id, name, response: result } });
       }
       contents.push({ role: 'user', parts: responses });
     }
 
-    return 'La consulta se volvió demasiado larga, probá preguntando algo más puntual.';
+    this.logger.warn(`Se agotaron las ${MAX_TOOL_ROUNDS} vueltas de tools sin respuesta final`);
+    return lastError
+      ? `No pude completarlo: ${lastError}`
+      : 'La consulta se volvió demasiado larga, probá preguntando algo más puntual.';
   }
 
   // --- Asistente por reglas (sin Gemini) ---
