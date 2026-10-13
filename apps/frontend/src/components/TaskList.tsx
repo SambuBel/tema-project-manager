@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
+import { useMyMembership } from '../hooks/useMyMembership';
+import { canCreateTaskUI } from '../lib/permissions';
+import { SubtaskCreateModal } from './SubtaskCreateModal';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
@@ -78,6 +81,7 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   const [priorityInput, setPriorityInput] = useState<TaskPriority | ''>('');
   const [assignedToInput, setAssignedToInput] = useState('');
   const [viewFilter, setViewFilter] = useState<ViewFilter>('ALL');
+  const [subtaskParent, setSubtaskParent] = useState<Task | null>(null);
 
   const project = useQuery({ queryKey: ['project', projectId], queryFn: () => api.getProject(projectId) });
   const members = useQuery({ queryKey: ['project-members', projectId], queryFn: () => api.getProjectMembers(projectId) });
@@ -93,6 +97,9 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
     queryKey: ['tasks', filters],
     queryFn: () => api.listTasks(filters),
   });
+
+  const { membership } = useMyMembership(projectId);
+  const canCreateSubtask = !!currentUser && !!project.data && canCreateTaskUI(currentUser, project.data, membership);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -264,20 +271,26 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
       {tasks.isSuccess && visibleTasks.length > 0 && (
         <div className="overflow-hidden rounded-xl border border-[#DEE5EC] bg-white">
           {/* Header */}
-          <div className="grid grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 border-b border-[#DEE5EC] bg-[#F7F9FB] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#607185]">
-            <span>Tarea</span>
-            <span>Responsable</span>
-            <span>Estado</span>
-            <span>Prioridad</span>
-            <span>Vencimiento</span>
+          <div className="flex items-center border-b border-[#DEE5EC] bg-[#F7F9FB] text-xs font-semibold uppercase tracking-wide text-[#607185]">
+            <div className="grid min-w-0 flex-1 grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 px-5 py-3">
+              <span>Tarea</span>
+              <span>Responsable</span>
+              <span>Estado</span>
+              <span>Prioridad</span>
+              <span>Vencimiento</span>
+            </div>
+            {canCreateSubtask && <div className="w-[130px] shrink-0 pr-5" aria-hidden="true" />}
           </div>
 
           {/* Rows */}
           {visibleTasks.map((task) => (
-            <button
+            <div
               key={task.id}
+              className="flex items-center border-b border-[#DEE5EC] transition-colors last:border-b-0 hover:bg-[#EAF2F7]/40"
+            >
+            <button
               onClick={() => onSelectTask(task.id)}
-              className="grid w-full grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 border-b border-[#DEE5EC] px-5 py-3.5 text-left transition-colors last:border-b-0 hover:bg-[#EAF2F7]/40"
+              className="grid min-w-0 flex-1 grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 px-5 py-3.5 text-left"
             >
               {/* Tarea */}
               <div className="min-w-0">
@@ -321,22 +334,22 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
 
               {/* Estado */}
               <div>
-                <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColors[task.status]}`}>
+                <span className={'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ' + statusColors[task.status]}>
                   {taskStatusLabels[task.status]}
                 </span>
               </div>
 
               {/* Prioridad */}
               <div>
-                <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${priorityColors[task.priority]}`}>
+                <span className={'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ' + priorityColors[task.priority]}>
                   {taskPriorityLabels[task.priority]}
                 </span>
               </div>
 
               {/* Vencimiento */}
               <div>
-                <span className={`text-xs ${isOverdue(task) ? 'font-semibold text-red-600' : 'text-[#607185]'}`}>
-                  {isOverdue(task) && '⚠ '}
+                <span className={'text-xs ' + (isOverdue(task) ? 'font-semibold text-red-600' : 'text-[#607185]')}>
+                  {isOverdue(task) && '⚠️ '}
                   {formatDate(task.dueDate)}
                 </span>
                 {isTaskExceedingProjectEnd(task.dueDate, project.data?.estimatedEndDate) && (
@@ -344,27 +357,51 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
                     className="block text-[10px] font-medium text-amber-700"
                     title="El vencimiento supera el fin estimado del proyecto (RN-08)"
                   >
-                    ⚠ Supera fin proy.
+                    ⚠️ Supera fin proy.
                   </span>
                 )}
               </div>
             </button>
+            {canCreateSubtask && (
+              <div className="w-[130px] shrink-0 pr-5">
+                {!task.archivedAt && (
+                  <button
+                    type="button"
+                    onClick={() => setSubtaskParent(task)}
+                    title={'Agregar subtarea a ' + task.title}
+                    aria-label={'Agregar subtarea a ' + task.title}
+                    className="w-full rounded-lg border border-[#DEE5EC] bg-white px-3 py-1.5 text-xs font-medium text-[#245B78] transition-colors hover:bg-[#EAF2F7]"
+                  >
+                    + Subtarea
+                  </button>
+                )}
+              </div>
+            )}
+            </div>
           ))}
 
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-[#DEE5EC] bg-[#F7F9FB] px-5 py-2.5 text-xs text-[#607185]">
             <span>
               {viewFilter === 'AT_RISK'
-                ? `${visibleTasks.length} tarea${visibleTasks.length !== 1 ? 's' : ''} en riesgo`
+                ? visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '') + ' en riesgo'
                 : viewFilter === 'MINE'
-                  ? `${visibleTasks.length} tarea${visibleTasks.length !== 1 ? 's' : ''} asignada${visibleTasks.length !== 1 ? 's' : ''} a vos`
-                  : `${visibleTasks.length} tarea${visibleTasks.length !== 1 ? 's' : ''}`}
+                  ? visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '') + ' asignada' + (visibleTasks.length !== 1 ? 's' : '') + ' a vos'
+                  : visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '')}
             </span>
             {hasActiveFilters && (
               <span className="italic">Filtros activos</span>
             )}
           </div>
         </div>
+      )}
+
+      {subtaskParent && (
+        <SubtaskCreateModal
+          projectId={projectId}
+          parentTask={{ id: subtaskParent.id, title: subtaskParent.title }}
+          onClose={() => setSubtaskParent(null)}
+        />
       )}
     </div>
   );
