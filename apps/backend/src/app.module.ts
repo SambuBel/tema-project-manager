@@ -8,7 +8,6 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TasksModule } from './tasks/tasks.module';
 import { GanttModule } from './gantt/gantt.module';
-import { AiModule } from './ai/ai.module';
 import { envValidationSchema } from './config/env.validation';
 
 @Module({
@@ -33,7 +32,6 @@ import { envValidationSchema } from './config/env.validation';
     ProjectsModule,
     TasksModule,
     GanttModule,
-    AiModule,
   ],
   controllers: [HealthController],
 })

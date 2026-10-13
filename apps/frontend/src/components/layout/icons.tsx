@@ -46,8 +46,8 @@ export const BellIcon = () => (
   </Icon>
 );
 
-export const SparklesIcon = (props: SVGProps<SVGSVGElement>) => (
-  <Icon {...props}>
+export const SparklesIcon = () => (
+  <Icon>
     <path d="M10 4.5 11.6 9l4.4 1.6-4.4 1.6L10 16.7 8.4 12.2 4 10.6 8.4 9z" />
     <path d="m17.5 15 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" />
   </Icon>

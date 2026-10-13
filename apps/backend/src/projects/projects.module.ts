@@ -29,6 +29,6 @@ import { AuthModule } from '../auth/auth.module';
   ],
   controllers: [ProjectsController, ProjectInvitationsDevController],
   providers: [ProjectsService, ProjectActivityService, NonProductionGuard],
-  exports: [ProjectsService, ProjectActivityService],
+  exports: [ProjectActivityService],
 })
 export class ProjectsModule {}
