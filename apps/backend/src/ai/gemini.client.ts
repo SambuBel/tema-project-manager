@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Content, FunctionCall, FunctionDeclaration, GoogleGenAI } from '@google/genai';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 
 export interface GeminiTurn {
   /** Llamadas a tools que pidio el modelo (vacio = ya respondio con texto). */
@@ -51,10 +51,12 @@ export class GeminiClient {
       },
     });
 
+    const content = response.candidates?.[0]?.content;
     return {
       functionCalls: response.functionCalls ?? [],
-      text: response.text ?? '',
-      content: response.candidates?.[0]?.content,
+      // Se arma a mano en vez de response.text, que loguea un warning cada vez que vienen functionCalls.
+      text: (content?.parts ?? []).map((part) => part.text ?? '').join(''),
+      content,
     };
   }
 }

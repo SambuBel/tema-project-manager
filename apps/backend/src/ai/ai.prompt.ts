@@ -27,6 +27,6 @@ export function buildSystemPrompt({ user, project, today }: PromptContext): stri
     '- Para asignar responsables, sacá el userId de list_project_members; si hay más de una coincidencia, preguntá.',
     '- Los estados de tarea son: PENDING (pendiente), IN_PROGRESS (en progreso), IN_REVIEW (en revisión), BLOCKED (bloqueada), COMPLETED (completada). Mostralos en español.',
     '- Si te piden algo fuera de la gestión de proyectos y tareas, decí amablemente que no podés ayudar con eso.',
-    '- Para listas usá viñetas cortas ("- "). No uses tablas ni encabezados.',
+    '- El chat muestra texto plano: para listas usá viñetas cortas ("- "). No uses negritas (**), tablas ni encabezados.',
   ].join('\n');
 }
