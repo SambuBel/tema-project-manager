@@ -5,7 +5,10 @@ import { ProjectMemberEntity } from '../database/entities/project-member.entity'
 import { UserEntity } from '../database/entities/user.entity';
 import { ProjectActivityEntity } from '../database/entities/project-activity.entity';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
+import { ProjectSlugHistoryEntity } from './project-slug-history.entity';
 import { ProjectsController } from './projects.controller';
+import { ProjectInvitationsDevController } from './project-invitations-dev.controller';
+import { NonProductionGuard } from './non-production.guard';
 import { ProjectsService } from './projects.service';
 import { ProjectActivityService } from './project-activity.service';
 import { UsersModule } from '../users/users.module';
@@ -18,13 +21,14 @@ import { AuthModule } from '../auth/auth.module';
       ProjectMemberEntity, 
       UserEntity, 
       ProjectActivityEntity, 
-      ProjectStatusHistoryEntity
+      ProjectStatusHistoryEntity,
+      ProjectSlugHistoryEntity,
     ]),
     UsersModule, 
     AuthModule,
   ],
-  controllers: [ProjectsController],
-  providers: [ProjectsService, ProjectActivityService],
+  controllers: [ProjectsController, ProjectInvitationsDevController],
+  providers: [ProjectsService, ProjectActivityService, NonProductionGuard],
   exports: [ProjectActivityService],
 })
 export class ProjectsModule {}

@@ -1,10 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { RoleName } from '@tema/shared-types';
 import { api } from '../lib/api';
 import { roleLabels } from '../lib/roles';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { UserRolesDrawer } from '../components/admin/UserRolesDrawer';
+import { CreateUserDrawer } from '../components/admin/CreateUserDrawer';
+import { canCreateUsersUI } from '../lib/permissions';
+import {
+  DEFAULT_USER_FILTERS,
+  ROLE_FILTER_OPTIONS,
+  SORT_OPTIONS,
+  STATUS_OPTIONS,
+  clearFilters,
+  filterAndSortUsers,
+  hasActiveFilters,
+  type RoleFilter,
+  type StatusFilter,
+  type UserFilters,
+  type UserSort,
+} from '../lib/userFilters';
 
 function initials(name: string): string {
   return name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase();
@@ -18,6 +33,36 @@ const ROLE_BADGE_STYLES: Record<RoleName, string> = {
   OBSERVER: 'bg-gray-100 text-gray-500',
 };
 
+/** Select con su etiqueta visible ("Estado: Todos ▼"), con el mismo estilo que el buscador. */
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="flex w-full items-center gap-2 rounded-lg border border-[#DEE5EC] bg-white px-3 py-2.5 text-sm text-[#607185] focus-within:outline focus-within:outline-2 focus-within:outline-sky-500 sm:w-auto">
+      <span className="shrink-0">{label}:</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="min-w-0 flex-1 bg-transparent font-medium text-[#172B42] focus:outline-none"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 /**
  * Administración → Usuarios y permisos. Mismo componente para ADMIN (ve todo)
  * y PROGRAM_MANAGER (acceso de negocio más acotado, ver UserRolesDrawer) — la
@@ -25,35 +70,83 @@ const ROLE_BADGE_STYLES: Record<RoleName, string> = {
  */
 export function AdminUsersPage() {
   const { user: actor } = useCurrentUser();
-  const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState<UserFilters>(DEFAULT_USER_FILTERS);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  // Mismo patrón de aviso que el tablero de tareas: estado local + temporizador, sin librería de toasts.
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const { data: users, isLoading, isError } = useQuery({
-    queryKey: ['users', { search }],
-    queryFn: () => api.listUsers(search ? { search } : undefined),
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 3500);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  // UNA sola consulta con el listado completo (desactivados incluidos): buscar, filtrar y ordenar se hacen en
+  // memoria, sin pedir nada nuevo. Sigue colgando de ['users'], así que crear/editar un usuario lo refresca.
+  const { data: allUsers, isLoading, isError } = useQuery({
+    queryKey: ['users', { includeInactive: true }],
+    queryFn: () => api.listUsers({ includeInactive: true }),
   });
+
+  const users = useMemo(() => (allUsers ? filterAndSortUsers(allUsers, filters) : undefined), [allUsers, filters]);
+  const setFilter = <K extends keyof UserFilters>(key: K, value: UserFilters[K]) =>
+    setFilters((current) => ({ ...current, [key]: value }));
 
   if (!actor) return null;
 
-  const selectedUser = users?.find((u) => u.id === selectedUserId) ?? null;
+  // Se busca en el listado COMPLETO: filtrar no tiene que cerrar el drawer del usuario abierto.
+  const selectedUser = allUsers?.find((u) => u.id === selectedUserId) ?? null;
 
   return (
     <div className="flex flex-col gap-6 text-[#172B42]">
-      <div>
-        <h1 className="text-3xl font-bold">Usuarios y permisos</h1>
-        <p className="mt-1 text-gray-500">
-          Los permisos se derivan del rol — acá se administran roles, no acciones individuales.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold">Usuarios y permisos</h1>
+          <p className="mt-1 text-gray-500">
+            Los permisos se derivan del rol — acá se administran roles, no acciones individuales.
+          </p>
+        </div>
+        {/* Solo ADMIN (espeja POST /users): PROGRAM_MANAGER entra a esta pantalla pero no da de alta. */}
+        {canCreateUsersUI(actor) && (
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white hover:bg-[#1a445b]"
+          >
+            + Nuevo usuario
+          </button>
+        )}
       </div>
 
-      <input
-        type="search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Buscar usuario..."
-        aria-label="Buscar usuario"
-        className="w-full max-w-sm rounded-lg border border-[#DEE5EC] bg-white px-4 py-2.5 text-sm text-[#172B42] placeholder:text-[#607185] focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 sm:w-80"
-      />
+      {notice && (
+        <p role="status" className="rounded-lg border border-green-200 bg-green-50 px-4 py-2.5 text-sm font-medium text-green-700">
+          {notice}
+        </p>
+      )}
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <input
+          type="search"
+          value={filters.search}
+          onChange={(e) => setFilter('search', e.target.value)}
+          placeholder="Buscar usuario..."
+          aria-label="Buscar usuario"
+          className="w-full rounded-lg border border-[#DEE5EC] bg-white px-4 py-2.5 text-sm text-[#172B42] placeholder:text-[#607185] focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 sm:w-72"
+        />
+        <FilterSelect label="Estado" value={filters.status} options={STATUS_OPTIONS} onChange={(v) => setFilter('status', v as StatusFilter)} />
+        <FilterSelect label="Rol" value={filters.role} options={ROLE_FILTER_OPTIONS} onChange={(v) => setFilter('role', v as RoleFilter)} />
+        <FilterSelect label="Ordenar" value={filters.sort} options={SORT_OPTIONS} onChange={(v) => setFilter('sort', v as UserSort)} />
+        {hasActiveFilters(filters) && (
+          <button
+            type="button"
+            onClick={() => setFilters(clearFilters)}
+            className="self-start text-sm font-medium text-[#245B78] hover:underline sm:self-auto"
+          >
+            Limpiar filtros
+          </button>
+        )}
+      </div>
 
       <div className="rounded-xl border border-[#DEE5EC] bg-white">
         {isLoading ? (
@@ -62,7 +155,7 @@ export function AdminUsersPage() {
           <p className="p-6 text-sm text-red-600">Error al cargar los usuarios.</p>
         ) : !users || users.length === 0 ? (
           <p className="p-6 text-sm italic text-[#607185]">
-            {search ? 'No se encontraron usuarios para esa búsqueda.' : 'No hay usuarios todavía.'}
+            {allUsers && allUsers.length > 0 ? 'No se encontraron usuarios con los filtros seleccionados.' : 'No hay usuarios todavía.'}
           </p>
         ) : (
           <>
@@ -166,6 +259,16 @@ export function AdminUsersPage() {
           </>
         )}
       </div>
+
+      {creating && (
+        <CreateUserDrawer
+          onClose={() => setCreating(false)}
+          onCreated={() => {
+            setCreating(false);
+            setNotice('Usuario creado correctamente.');
+          }}
+        />
+      )}
 
       {selectedUser && (
         <UserRolesDrawer actor={actor} user={selectedUser} onClose={() => setSelectedUserId(null)} />

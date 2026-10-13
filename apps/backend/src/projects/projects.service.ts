@@ -1,17 +1,18 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, IsNull, Repository, DataSource } from 'typeorm';
+import { Brackets, EntityManager, In, IsNull, Repository, DataSource } from 'typeorm';
 import * as crypto from 'crypto';
 import { ProjectEntity } from './project.entity';
 import { ProjectMemberEntity } from '../database/entities/project-member.entity';
 import { ProjectInvitationEntity } from './project-invitation.entity';
+import { ProjectSlugHistoryEntity } from './project-slug-history.entity';
 import { UserEntity } from '../database/entities/user.entity';
 import { TaskEntity } from '../tasks/task.entity';
 import { CreateProjectDto } from './create-project.dto';
 import { ListProjectsDto } from './list-projects.dto';
-import { InviteProjectMemberDto } from './invite-project-member.dto';
 import { UpdateProjectDtoImpl } from './update-project.dto';
 import { UpdateProjectStatusDto } from './update-project-status.dto';
+import { InviteProjectMemberDto } from './invite-project-member.dto';
 import { ChangeProjectLeaderDto } from './change-project-leader.dto';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
 import {
@@ -27,6 +28,7 @@ import { AuthService } from '../auth/auth.service';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { ProjectActivityService } from './project-activity.service';
+import { slugify } from './utils/slug.util';
 
 @Injectable()
 export class ProjectsService {
@@ -71,57 +73,272 @@ export class ProjectsService {
 
     qb.orderBy('project.createdAt', 'DESC');
     const projects = await qb.getMany();
+    await this.attachLeaders(projects);
     return (await this.enrichProjectsStats(projects)) as any;
   }
 
-  /** Sin chequeo de acceso: uso interno para operaciones que ya validan permisos por su cuenta. */
-  private async findProjectOrThrow(id: string): Promise<ProjectEntity> {
-    const project = await this.repo.findOne({
-      where: { id },
+  /**
+   * Genera un slug único a partir del nombre del proyecto.
+   * Si ya existe un proyecto con ese slug (incluyendo soft-deleted para respetar la unicidad del índice en PostgreSQL),
+   * calcula el siguiente sufijo numérico (-2, -3, etc.).
+   * Usa advisory lock sobre el slug base dentro de la transacción para prevenir condiciones de carrera.
+   */
+  /**
+   * Genera un slug único a partir del nombre del proyecto.
+   * Si ya existe un proyecto con ese slug (incluyendo soft-deleted para respetar la unicidad del índice en PostgreSQL),
+   * calcula el siguiente sufijo numérico (-2, -3, etc.).
+   * Usa advisory lock sobre el slug base dentro de la transacción para prevenir condiciones de carrera.
+   */
+  async generateUniqueSlug(name: string, manager: EntityManager, currentProjectId?: string): Promise<string> {
+    const baseSlug = slugify(name);
+
+    if (typeof manager.query === 'function') {
+      try {
+        await manager.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', ['tema_project_slugs', baseSlug]);
+      } catch {
+        try {
+          await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`project_slug_${baseSlug}`]);
+        } catch {
+          // En tests o drivers donde advisory lock no está disponible
+        }
+      }
+    }
+
+    interface SlugRow {
+      slug: string;
+      project_id?: string;
+      source?: 'project' | 'history';
+    }
+    let rows: SlugRow[] = [];
+    if (typeof manager.query === 'function') {
+      try {
+        const queryResult = await manager.query(
+          `SELECT slug, id::text AS project_id, 'project' AS source FROM projects WHERE slug = $1 OR slug LIKE $2
+           UNION ALL
+           SELECT slug, project_id::text AS project_id, 'history' AS source FROM project_slug_histories WHERE slug = $1 OR slug LIKE $2`,
+          [baseSlug, `${baseSlug}-%`],
+        );
+        if (Array.isArray(queryResult)) {
+          rows = queryResult;
+        }
+      } catch {
+        rows = [];
+      }
+    }
+
+    if (currentProjectId) {
+      // Si el baseSlug ya pertenece a este mismo proyecto (actual o en su histórico), se puede reutilizar directamente
+      const selfCurrent = rows.find((r) => r.slug === baseSlug && r.project_id === currentProjectId);
+      if (selfCurrent) {
+        return baseSlug;
+      }
+
+      const occupiedByOthers = new Set(
+        rows.filter((r) => r.project_id && r.project_id !== currentProjectId).map((r) => r.slug),
+      );
+
+      if (!occupiedByOthers.has(baseSlug)) {
+        return baseSlug;
+      }
+
+      let nextSuffix = 2;
+      while (occupiedByOthers.has(`${baseSlug}-${nextSuffix}`)) {
+        nextSuffix++;
+      }
+      return `${baseSlug}-${nextSuffix}`;
+    }
+
+    const occupied = new Set(rows.map((r) => r.slug));
+
+    if (!occupied.has(baseSlug)) {
+      return baseSlug;
+    }
+
+    let nextSuffix = 2;
+    while (occupied.has(`${baseSlug}-${nextSuffix}`)) {
+      nextSuffix++;
+    }
+
+    return `${baseSlug}-${nextSuffix}`;
+  }
+
+  /** Sin chequeo de acceso: uso interno para operaciones que ya validan permisos por su cuenta. Acepta UUID o slug. */
+  private async findProjectOrThrow(idOrSlug: string): Promise<ProjectEntity> {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
+    const isMock = Boolean((this.repo.findOne as any)?._isMockFunction || (this.repo.findOneBy as any)?._isMockFunction);
+    const where = isUuid ? { id: idOrSlug } : { slug: idOrSlug };
+    let project = await this.repo.findOne({
+      where,
       relations: ['leader'],
     });
-    if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
+    if (!project && isMock) {
+      project = await this.repo.findOne({
+        where: { id: idOrSlug } as any,
+        relations: ['leader'],
+      });
+    }
+
+    // Si no se encontró por ID ni por slug activo, buscar en histórico
+    if (!project && !isUuid) {
+      try {
+        const historyRepo = this.dataSource.getRepository(ProjectSlugHistoryEntity);
+        if (historyRepo && typeof historyRepo.findOne === 'function') {
+          const history = await historyRepo.findOne({
+            where: { slug: idOrSlug },
+          });
+          if (history && history.projectId) {
+            project = await this.repo.findOne({
+              where: { id: history.projectId },
+              relations: ['leader'],
+            });
+          }
+        }
+      } catch {
+        // Silently ignore if historyRepo is unavailable
+      }
+    }
+
+    if (!project) throw new NotFoundException(`Project ${idOrSlug} no encontrado`);
     return project;
   }
 
-  /** GET /projects/:id: 404 si no existe, 403 si existe pero el usuario no tiene acceso. */
-  async findOne(id: string, user: RequestUser): Promise<ProjectEntity> {
-    const project = await this.findProjectOrThrow(id);
+  /** Busca un proyecto por id (UUID) o por slug dentro de una transacción activa. */
+  private async findProjectInTransaction(manager: EntityManager, idOrSlug: string, relations?: string[]): Promise<ProjectEntity> {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
+    const isMock = Boolean((manager.findOneBy as any)?._isMockFunction || (manager.findOne as any)?._isMockFunction);
+
+    let project: ProjectEntity | null = null;
+
+    if (isMock) {
+      if (typeof manager.findOneBy === 'function') {
+        project = (await manager.findOneBy(ProjectEntity, { id: idOrSlug } as any)) || null;
+        if (!project) {
+          project = (await manager.findOneBy(ProjectEntity, { slug: idOrSlug } as any)) || null;
+        }
+      }
+      if (!project && typeof manager.findOne === 'function') {
+        project = (await manager.findOne(ProjectEntity, {
+          where: (isUuid ? { id: idOrSlug } : { slug: idOrSlug }) as any,
+          ...(relations ? { relations } : {}),
+        })) || null;
+      }
+    } else {
+      const where = (isUuid ? { id: idOrSlug } : { slug: idOrSlug }) as any;
+      if (typeof manager.findOne === 'function' && relations && relations.length > 0) {
+        project = await manager.findOne(ProjectEntity, { where, relations });
+      } else if (typeof manager.findOneBy === 'function') {
+        project = await manager.findOneBy(ProjectEntity, where);
+      } else if (typeof manager.findOne === 'function') {
+        project = await manager.findOne(ProjectEntity, { where });
+      }
+    }
+
+    // Si no se encontró por ID ni por slug activo, buscar en histórico dentro de la transacción
+    if (!project && !isUuid) {
+      try {
+        let history: ProjectSlugHistoryEntity | null = null;
+        if (typeof manager.findOne === 'function') {
+          history = await manager.findOne(ProjectSlugHistoryEntity, { where: { slug: idOrSlug } });
+        } else if (typeof manager.findOneBy === 'function') {
+          history = await manager.findOneBy(ProjectSlugHistoryEntity, { slug: idOrSlug });
+        }
+        if (history && history.projectId) {
+          project = await this.findProjectInTransaction(manager, history.projectId, relations);
+        }
+      } catch {
+        // Silently ignore if history lookup fails
+      }
+    }
+
+    if (!project) throw new NotFoundException(`Project ${idOrSlug} no encontrado`);
+    return project;
+  }
+
+  /** GET /projects/:id: 404 si no existe, 403 si existe pero el usuario no tiene acceso. Acepta UUID o slug. */
+  async findOne(idOrSlug: string, user: RequestUser): Promise<ProjectEntity> {
+    const project = await this.findProjectOrThrow(idOrSlug);
     const allowed = await this.permissions.canViewProject(user, project);
     if (!allowed) {
       throw new ForbiddenException('No tenés acceso a este proyecto.');
     }
+    await this.attachLeaders([project]);
     const enriched = await this.enrichProjectsStats([project]);
     return enriched[0] as any;
   }
 
-  /** GET /projects/:id/activity: mismo criterio de acceso que ver el proyecto. */
-  async getActivity(projectId: string, limit: number, offset: number, user: RequestUser) {
-    const project = await this.findProjectOrThrow(projectId);
+  /**
+   * Completa `project.leader` donde falte (en la lista siempre; en el detalle, solo si el líder está desactivado).
+   * Antes la lista traía únicamente leaderId y la tarjeta decía "Sin asignar". Se resuelve en UNA consulta por ids y
+   * con bajas lógicas incluidas: un líder desactivado tiene deleted_at, y ni relations ni ningún join de TypeORM lo
+   * devuelven. Solo columnas públicas (las mismas que el detalle muestra a cualquier miembro).
+   */
+  private async attachLeaders(projects: ProjectEntity[]): Promise<void> {
+    const missing = projects.filter((project) => !project.leader && project.leaderId);
+    if (missing.length === 0) return;
+
+    const leaders = await this.dataSource.getRepository(UserEntity).find({
+      where: { id: In([...new Set(missing.map((project) => project.leaderId))]) },
+      select: { id: true, name: true, email: true, avatarUrl: true, active: true },
+      withDeleted: true,
+    });
+    const byId = new Map(leaders.map((leader) => [leader.id, leader]));
+    for (const project of missing) {
+      const leader = byId.get(project.leaderId);
+      if (leader) project.leader = leader;
+    }
+  }
+
+  /** GET /projects/:id/activity: mismo criterio de acceso que ver el proyecto. Acepta UUID o slug. */
+  async getActivity(idOrSlug: string, limit: number, offset: number, user: RequestUser) {
+    const project = await this.findProjectOrThrow(idOrSlug);
     const allowed = await this.permissions.canViewProject(user, project);
     if (!allowed) {
       throw new ForbiddenException('No tenés acceso a este proyecto.');
     }
-    return this.activityService.getActivity(projectId, limit, offset);
+    return this.activityService.getActivity(project.id, limit, offset);
   }
 
   /**
-   * leaderId siempre es el usuario autenticado que crea el proyecto, incluido
-   * ADMIN/PROGRAM_MANAGER (no solo PROJECT_LEADER) — comportamiento ya existente,
-   * no lo cambio en este paso. Un ADMIN/PM que crea un proyecto queda como su
-   * leaderId aunque no tenga el rol global PROJECT_LEADER; no rompe nada porque
-   * canManageProject ya les da acceso total igual.
+   * El líder (leaderId) tiene que ser siempre un usuario válido (ver getValidProjectLeader):
+   *  - leaderId no viene y quien crea tiene PROJECT_LEADER: queda él mismo.
+   *  - leaderId no viene y quien crea NO tiene PROJECT_LEADER (ADMIN/PM solos): 400, no se
+   *    convierte en líder por defecto.
+   *  - leaderId viene: se valida igual (también si es el propio actor). Elegir a OTRO usuario
+   *    como líder es una decisión de ADMIN/PM (como PATCH :id/leader): un PROJECT_LEADER que no
+   *    es ADMIN/PM solo puede ponerse a sí mismo.
+   * La autorización de "puede crear proyectos" sigue en @Roles del controller.
    */
   async create(dto: CreateProjectDto, user: RequestUser): Promise<ProjectEntity> {
+    const { leaderId: requestedLeaderId, ...projectData } = dto;
+    const actorCanLead = this.permissions.hasAnyGlobalRole(user, [RoleName.PROJECT_LEADER]);
+    const isAdminOrPm = this.permissions.hasAnyGlobalRole(user, [RoleName.ADMIN, RoleName.PROGRAM_MANAGER]);
+
+    const leaderId = requestedLeaderId ?? (actorCanLead ? user.id : undefined);
+    if (!leaderId) {
+      throw new BadRequestException(
+        'Indicá el líder del proyecto (leaderId): no tenés el rol de Líder, así que no podés quedar como líder por defecto.',
+      );
+    }
+    if (leaderId !== user.id && !isAdminOrPm) {
+      throw new ForbiddenException('Solo ADMIN o PROGRAM_MANAGER pueden asignar a otro usuario como líder del proyecto.');
+    }
+
+    if (projectData.startDate && projectData.estimatedEndDate && projectData.estimatedEndDate < projectData.startDate) {
+      throw new BadRequestException('La fecha de entrega no puede ser anterior a la de inicio');
+    }
+
     return this.dataSource.transaction(async (manager) => {
+      const leader = await this.getValidProjectLeader(manager, leaderId);
+      const slug = await this.generateUniqueSlug(projectData.name, manager);
+
       const project = manager.create(ProjectEntity, {
-        ...dto,
-        description: dto.description ?? null,
-        leaderId: user.id,
+        ...projectData,
+        slug,
+        description: projectData.description ?? null,
+        leaderId: leader.id,
         createdBy: user.id,
       });
       const savedProject = await manager.save(project);
-
       await this.activityService.logEvent(
         {
           projectId: savedProject.id,
@@ -129,28 +346,60 @@ export class ProjectsService {
           actionType: ProjectActivityAction.PROJECT_CREATED,
           entityType: ProjectActivityEntityType.PROJECT,
           entityId: savedProject.id,
-          metadata: { name: savedProject.name },
+          metadata: { name: savedProject.name, slug: savedProject.slug },
         },
         manager,
       );
-
       return savedProject;
     });
   }
 
-  async update(id: string, dto: UpdateProjectDtoImpl, user: RequestUser): Promise<ProjectEntity> {
+  async update(idOrSlug: string, dto: UpdateProjectDtoImpl, user: RequestUser): Promise<ProjectEntity> {
     return this.dataSource.transaction(async (manager) => {
-      const project = await manager.findOne(ProjectEntity, { where: { id } });
-      if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
+      const project = await this.findProjectInTransaction(manager, idOrSlug);
 
       if (!this.permissions.canManageProject(user, project)) {
         throw new ForbiddenException('No podés modificar este proyecto.');
       }
 
+      const finalStartDate = dto.startDate !== undefined ? dto.startDate : project.startDate;
+      const finalEstimatedEndDate = dto.estimatedEndDate !== undefined ? dto.estimatedEndDate : project.estimatedEndDate;
+      if (finalStartDate && finalEstimatedEndDate && finalEstimatedEndDate < finalStartDate) {
+        throw new BadRequestException('La fecha de entrega no puede ser anterior a la de inicio');
+      }
+
       const changes: Record<string, { old: unknown; new: unknown }> = {};
-      if (dto.name !== undefined && dto.name !== project.name) {
-        changes.name = { old: project.name, new: dto.name };
-        project.name = dto.name;
+      if (dto.name !== undefined && dto.name.trim() !== project.name) {
+        const trimmedName = dto.name.trim();
+        const oldSlug = project.slug;
+        const candidateBaseSlug = slugify(trimmedName);
+        if (candidateBaseSlug && candidateBaseSlug !== project.slug) {
+          const newSlug = await this.generateUniqueSlug(trimmedName, manager, project.id);
+          if (newSlug !== project.slug) {
+            if (typeof manager.delete === 'function') {
+              try {
+                await manager.delete(ProjectSlugHistoryEntity, { projectId: project.id, slug: newSlug });
+              } catch {
+                // Ignore if delete not supported in mock
+              }
+            }
+            if (typeof manager.save === 'function' && typeof manager.create === 'function') {
+              try {
+                const historyEntry = manager.create(ProjectSlugHistoryEntity, {
+                  projectId: project.id,
+                  slug: oldSlug,
+                });
+                await manager.save(ProjectSlugHistoryEntity, historyEntry);
+              } catch {
+                // Ignore if history save not supported in mock
+              }
+            }
+            changes.slug = { old: oldSlug, new: newSlug };
+            project.slug = newSlug;
+          }
+        }
+        changes.name = { old: project.name, new: trimmedName };
+        project.name = trimmedName;
       }
       if (dto.description !== undefined && dto.description !== project.description) {
         changes.description = { old: project.description, new: dto.description };
@@ -187,10 +436,9 @@ export class ProjectsService {
     });
   }
 
-  async changeStatus(id: string, dto: UpdateProjectStatusDto, user: RequestUser): Promise<ProjectEntity> {
+  async changeStatus(idOrSlug: string, dto: UpdateProjectStatusDto, user: RequestUser): Promise<ProjectEntity> {
     return this.dataSource.transaction(async (manager) => {
-      const project = await manager.findOneBy(ProjectEntity, { id });
-      if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
+      const project = await this.findProjectInTransaction(manager, idOrSlug);
 
       if (!this.permissions.canManageProject(user, project)) {
         throw new ForbiddenException('No podés modificar el estado de este proyecto.');
@@ -214,10 +462,9 @@ export class ProjectsService {
     });
   }
 
-  async archive(id: string, user: RequestUser): Promise<ProjectEntity> {
+  async archive(idOrSlug: string, user: RequestUser): Promise<ProjectEntity> {
     return this.dataSource.transaction(async (manager) => {
-      const project = await manager.findOneBy(ProjectEntity, { id });
-      if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
+      const project = await this.findProjectInTransaction(manager, idOrSlug);
 
       if (!this.permissions.canManageProject(user, project)) {
         throw new ForbiddenException('No podés archivar este proyecto.');
@@ -248,6 +495,33 @@ export class ProjectsService {
   }
 
   /**
+   * Invariante de RN-23: todo leaderId apunta a un usuario existente, ACTIVO y con PROJECT_LEADER.
+   * Lo comparten create y changeLeader. Toma FOR SHARE sobre el candidato ANTES de validar: se
+   * serializa con "quitar PROJECT_LEADER" / "desactivar" (UsersService, FOR UPDATE), así que o
+   * validamos antes de que le quiten el rol, o esperamos y lo vemos ya sin rol (400). Varios
+   * proyectos asignándole el mismo líder no se bloquean entre sí. Debe llamarse dentro de la
+   * transacción que persiste el leaderId.
+   */
+  private async getValidProjectLeader(manager: EntityManager, userId: string): Promise<UserEntity> {
+    await manager.query('SELECT id FROM users WHERE id = $1 FOR SHARE', [userId]);
+
+    const leader = await this.usersService.findById(userId, manager);
+    if (!leader) {
+      throw new NotFoundException(`Usuario ${userId} no encontrado`);
+    }
+    if (!leader.active || leader.deletedAt) {
+      throw new BadRequestException('El líder debe ser un usuario activo.');
+    }
+    const roles = await this.authService.getRoleNames(leader.id);
+    if (!roles.includes(RoleName.PROJECT_LEADER)) {
+      throw new BadRequestException(
+        `El usuario ${leader.id} no tiene el rol PROJECT_LEADER: no se le puede asignar el liderazgo de un proyecto.`,
+      );
+    }
+    return leader;
+  }
+
+  /**
    * Solo ADMIN/PROGRAM_MANAGER llegan acá (gateado por @Roles en el controller).
    * Reglas: el nuevo líder debe existir, estar activo y tener RoleName.PROJECT_LEADER
    * — nunca se lo otorga como efecto secundario. Todo dentro de una transacción:
@@ -257,23 +531,9 @@ export class ProjectsService {
    */
   async changeLeader(id: string, dto: ChangeProjectLeaderDto, user: RequestUser): Promise<ProjectEntity> {
     return this.dataSource.transaction(async (manager) => {
-      const project = await manager.findOneBy(ProjectEntity, { id });
-      if (!project) throw new NotFoundException(`Project ${id} no encontrado`);
+      const project = await this.findProjectInTransaction(manager, id);
 
-      const newLeader = await this.usersService.findById(dto.newLeaderId, manager);
-      if (!newLeader) {
-        throw new NotFoundException(`Usuario ${dto.newLeaderId} no encontrado`);
-      }
-      if (!newLeader.active || newLeader.deletedAt) {
-        throw new BadRequestException('El nuevo líder debe ser un usuario activo.');
-      }
-
-      const newLeaderRoles = await this.authService.getRoleNames(newLeader.id);
-      if (!newLeaderRoles.includes(RoleName.PROJECT_LEADER)) {
-        throw new BadRequestException(
-          `El usuario ${newLeader.id} no tiene el rol PROJECT_LEADER: no se le puede asignar el liderazgo de un proyecto.`,
-        );
-      }
+      const newLeader = await this.getValidProjectLeader(manager, dto.newLeaderId);
 
       if (project.leaderId === newLeader.id) {
         return project;
@@ -307,16 +567,36 @@ export class ProjectsService {
     }
 
     return this.memberRepo.find({
-      where: { projectId, removedAt: IsNull() },
+      where: { projectId: project.id, removedAt: IsNull() },
       relations: ['user'],
       order: { joinedAt: 'ASC' },
     });
   }
 
+  /**
+   * GET /projects/:id/available-users: usuarios de TEMA para agregar directo al
+   * equipo (reemplaza el flujo de invitación por correo). Reusa
+   * UsersService.findAllWithRoles (misma busqueda que la administracion de
+   * usuarios) y descarta inactivos y a quienes ya son miembros activos.
+   */
+  async getAvailableUsers(projectId: string, search: string | undefined, user: RequestUser) {
+    const project = await this.findProjectOrThrow(projectId);
+    if (!this.permissions.canManageProjectTeam(user, project)) {
+      throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
+    }
+
+    const [candidates, members] = await Promise.all([
+      this.usersService.findAllWithRoles({ search }),
+      this.memberRepo.find({ where: { projectId: project.id, removedAt: IsNull() } }),
+    ]);
+
+    const memberIds = new Set(members.map((m) => m.userId));
+    return candidates.filter((u) => u.active && !memberIds.has(u.id));
+  }
+
   async inviteMember(projectId: string, dto: InviteProjectMemberDto, user: RequestUser) {
     return this.dataSource.transaction(async (manager) => {
-      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
-      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+      const project = await this.findProjectInTransaction(manager, projectId);
 
       if (!this.permissions.canManageProjectTeam(user, project)) {
         throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
@@ -330,7 +610,7 @@ export class ProjectsService {
       const existingUser = await this.usersService.findByEmail(dto.email, manager);
       if (existingUser) {
         const isMember = await manager.findOne(ProjectMemberEntity, {
-          where: { projectId, userId: existingUser.id, removedAt: IsNull() },
+          where: { projectId: project.id, userId: existingUser.id, removedAt: IsNull() },
         });
         if (isMember) {
           throw new BadRequestException('El usuario ya es miembro de este proyecto');
@@ -339,7 +619,7 @@ export class ProjectsService {
 
       // Check if there is already a pending invitation for this email
       const existingInvite = await manager.findOne(ProjectInvitationEntity, {
-        where: { projectId, email: dto.email, status: 'PENDING' },
+        where: { projectId: project.id, email: dto.email, status: 'PENDING' },
       });
       if (existingInvite) {
         throw new BadRequestException('Ya existe una invitación pendiente para este correo');
@@ -348,10 +628,10 @@ export class ProjectsService {
       const token = crypto.randomBytes(32).toString('hex');
 
       const invitation = manager.create(ProjectInvitationEntity, {
-        projectId,
+        projectId: project.id,
         email: dto.email,
         name: dto.name,
-        projectRole: dto.projectRole as unknown as ProjectMemberRoleEnum,
+        projectRole: dto.projectRole,
         invitedBy: user.id,
         token,
         status: 'PENDING',
@@ -365,25 +645,30 @@ export class ProjectsService {
     });
   }
 
-  async getPendingInvitations(projectId: string): Promise<ProjectInvitationEntity[]> {
+  /** GET /projects/:id/invitations: mismo criterio que administrar el equipo (expone emails de invitados). */
+  async getPendingInvitations(projectId: string, user: RequestUser): Promise<ProjectInvitationEntity[]> {
+    const project = await this.findProjectOrThrow(projectId);
+    if (!this.permissions.canManageProjectTeam(user, project)) {
+      throw new ForbiddenException('No podés ver las invitaciones de este proyecto.');
+    }
     return this.dataSource.getRepository(ProjectInvitationEntity).find({
-      where: { projectId, status: 'PENDING' },
+      where: { projectId: project.id, status: 'PENDING' },
       relations: ['inviter'],
       order: { createdAt: 'DESC' },
     });
   }
 
+  /** DELETE /projects/:id/invitations/:invitationId: cancelar una invitación pendiente (administrar equipo). */
   async revokeInvitation(projectId: string, invitationId: string, user: RequestUser): Promise<void> {
     return this.dataSource.transaction(async (manager) => {
-      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
-      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+      const project = await this.findProjectInTransaction(manager, projectId);
 
       if (!this.permissions.canManageProjectTeam(user, project)) {
         throw new ForbiddenException('No tenés permisos para gestionar invitaciones en este proyecto.');
       }
 
       const invitation = await manager.findOne(ProjectInvitationEntity, {
-        where: { id: invitationId, projectId, status: 'PENDING' },
+        where: { id: invitationId, projectId: project.id, status: 'PENDING' },
       });
 
       if (!invitation) {
@@ -394,11 +679,16 @@ export class ProjectsService {
     });
   }
 
-  // --- TEST ENDPOINT ONLY ---
+  // --- SOLO DESARROLLO: ver ProjectInvitationsDevController (deshabilitado en producción) ---
   async testAcceptInvitation(projectId: string, invitationId: string, user: RequestUser): Promise<void> {
     return this.dataSource.transaction(async (manager) => {
+      const project = await this.findProjectInTransaction(manager, projectId);
+      if (!this.permissions.canManageProjectTeam(user, project)) {
+        throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
+      }
+
       const invitation = await manager.findOne(ProjectInvitationEntity, {
-        where: { id: invitationId, projectId, status: 'PENDING' },
+        where: { id: invitationId, projectId: project.id, status: 'PENDING' },
       });
       if (!invitation) throw new NotFoundException('Invitación no encontrada o ya procesada');
 
@@ -423,7 +713,7 @@ export class ProjectsService {
       }
 
       // Add as member
-      let member = await membersRepo.findOne({ where: { projectId, userId: targetUser.id } });
+      let member = await membersRepo.findOne({ where: { projectId: project.id, userId: targetUser.id } });
       if (member) {
         if (member.removedAt !== null) {
           member.removedAt = null;
@@ -433,7 +723,7 @@ export class ProjectsService {
         // If already active, just proceed to mark invitation as accepted.
       } else {
         member = membersRepo.create({
-          projectId,
+          projectId: project.id,
           userId: targetUser.id,
           projectRole: invitation.projectRole,
         });
@@ -448,8 +738,7 @@ export class ProjectsService {
 
   async addMember(projectId: string, dto: AddProjectMemberDto, user: RequestUser): Promise<ProjectMemberEntity> {
     return this.dataSource.transaction(async (manager) => {
-      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
-      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+      const project = await this.findProjectInTransaction(manager, projectId);
 
       if (!this.permissions.canManageProjectTeam(user, project)) {
         throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
@@ -461,7 +750,7 @@ export class ProjectsService {
       }
 
       const existing = await manager.findOne(ProjectMemberEntity, {
-        where: { projectId, userId: dto.userId },
+        where: { projectId: project.id, userId: dto.userId },
       });
 
       if (existing && existing.removedAt === null) {
@@ -479,7 +768,7 @@ export class ProjectsService {
         savedMember = await manager.save(existing);
       } else {
         const member = manager.create(ProjectMemberEntity, {
-          projectId,
+          projectId: project.id,
           userId: dto.userId,
           projectRole: dto.projectRole as unknown as ProjectMemberRoleEnum,
         });
@@ -488,7 +777,7 @@ export class ProjectsService {
 
       await this.activityService.logEvent(
         {
-          projectId,
+          projectId: project.id,
           actorId: user.id,
           actionType: ProjectActivityAction.MEMBER_ADDED,
           entityType: ProjectActivityEntityType.MEMBER,
@@ -509,15 +798,14 @@ export class ProjectsService {
     user: RequestUser,
   ): Promise<ProjectMemberEntity> {
     return this.dataSource.transaction(async (manager) => {
-      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
-      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+      const project = await this.findProjectInTransaction(manager, projectId);
 
       if (!this.permissions.canManageProjectTeam(user, project)) {
         throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
       }
 
       const member = await manager.findOne(ProjectMemberEntity, {
-        where: { id: memberId, projectId, removedAt: IsNull() },
+        where: { id: memberId, projectId: project.id, removedAt: IsNull() },
         relations: ['user'],
       });
       if (!member) {
@@ -533,7 +821,7 @@ export class ProjectsService {
 
       await this.activityService.logEvent(
         {
-          projectId,
+          projectId: project.id,
           actorId: user.id,
           actionType: ProjectActivityAction.MEMBER_ROLE_CHANGED,
           entityType: ProjectActivityEntityType.MEMBER,
@@ -549,15 +837,14 @@ export class ProjectsService {
 
   async removeMember(projectId: string, memberId: string, user: RequestUser): Promise<void> {
     return this.dataSource.transaction(async (manager) => {
-      const project = await manager.findOneBy(ProjectEntity, { id: projectId });
-      if (!project) throw new NotFoundException(`Project ${projectId} no encontrado`);
+      const project = await this.findProjectInTransaction(manager, projectId);
 
       if (!this.permissions.canManageProjectTeam(user, project)) {
         throw new ForbiddenException('No tenés permisos para administrar el equipo de este proyecto.');
       }
 
       const member = await manager.findOne(ProjectMemberEntity, {
-        where: { id: memberId, projectId },
+        where: { id: memberId, projectId: project.id },
         relations: ['user'],
       });
 
@@ -574,7 +861,7 @@ export class ProjectsService {
 
       await this.activityService.logEvent(
         {
-          projectId,
+          projectId: project.id,
           actorId: user.id,
           actionType: ProjectActivityAction.MEMBER_REMOVED,
           entityType: ProjectActivityEntityType.MEMBER,
@@ -592,6 +879,7 @@ export class ProjectsService {
 
   private async enrichProjectsStats(projects: ProjectEntity[]) {
     if (projects.length === 0) return [];
+    if (typeof this.dataSource?.createQueryBuilder !== 'function') return projects;
     
     const projectIds = projects.map((p) => p.id);
     

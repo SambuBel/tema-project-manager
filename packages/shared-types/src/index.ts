@@ -40,12 +40,31 @@ export interface UserWithRoles {
   avatarUrl: string | null;
   active: boolean;
   roles: RoleName[];
+  /** ISO. Ya viaja en la respuesta de GET /users (es la entidad completa). */
+  createdAt: string;
 }
 
 export interface ListUsersQuery {
+  /** Incluye también a los usuarios desactivados (la pantalla de administración los necesita; el resto, no). */
+  includeInactive?: boolean;
   search?: string;
   /** Filtra a quienes tengan ese rol global — ej. candidatos para liderar un proyecto. */
   role?: RoleName;
+}
+
+/** POST /auth/login. */
+export interface LoginDto {
+  email: string;
+  password: string;
+}
+
+/** POST /users (solo ADMIN). La contraseña la hashea el backend; nunca se devuelve. */
+export interface CreateUserDto {
+  email: string;
+  name: string;
+  password: string;
+  /** Roles globales iniciales. Si se omite: ['COLLABORATOR']. */
+  roles?: RoleName[];
 }
 
 export interface UpdateUserStatusDto {
@@ -59,6 +78,7 @@ export interface AssignRoleDto {
 
 export interface Project {
   id: ID;
+  slug: string;
   name: string;
   description: string | null;
   startDate: string | null;
@@ -79,6 +99,8 @@ export interface CreateProjectDto {
   description?: string;
   startDate?: string;
   estimatedEndDate?: string;
+  /** Líder del proyecto. Omitido = el propio usuario, solo si tiene PROJECT_LEADER; ADMIN/PM sin ese rol deben enviarlo. */
+  leaderId?: ID;
 }
 
 export interface UpdateProjectDto {
@@ -199,4 +221,53 @@ export interface ListTasksQuery {
 
 export interface UpdateTaskStatusDto {
   status: TaskStatus;
+}
+
+// --- Gantt (GET /projects/:projectId/gantt) -------------------------------------------------
+// Read model pensado para dibujar el Gantt en UNA sola respuesta. Sin datos económicos.
+
+/** Hoy solo se soportan dependencias fin-inicio; otros tipos no se devuelven. */
+export type GanttDependencyType = 'FINISH_TO_START';
+
+export interface GanttProject {
+  id: ID;
+  name: string;
+  startDate: string | null;
+  estimatedEndDate: string | null;
+}
+
+export interface GanttAssignee {
+  id: ID;
+  name: string;
+}
+
+export interface GanttTask {
+  id: ID;
+  /** null = tarea raíz; si no, es una subtarea (un solo nivel). */
+  parentTaskId: ID | null;
+  title: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  /** YYYY-MM-DD o null: una tarea sin planificar NO se inventa fecha. */
+  startDate: string | null;
+  dueDate: string | null;
+  assignedTo: GanttAssignee | null;
+  /**
+   * Derivado, no persistido: true si alguna predecesora fin-inicio (no archivada) no está COMPLETED.
+   * Es independiente de `status` (una tarea PENDING puede estar bloqueada).
+   */
+  blocked: boolean;
+}
+
+export interface GanttDependency {
+  id: ID;
+  predecessorTaskId: ID;
+  successorTaskId: ID;
+  type: GanttDependencyType;
+}
+
+export interface GanttResponse {
+  project: GanttProject;
+  tasks: GanttTask[];
+  dependencies: GanttDependency[];
 }

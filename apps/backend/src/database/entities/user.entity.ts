@@ -31,6 +31,14 @@ export class UserEntity {
   @Column({ name: 'active', type: 'boolean', default: true })
   active!: boolean;
 
+  /**
+   * Hash argon2id de la contraseña, o null (usuarios que solo entran con Google). `select: false`:
+   * NINGUNA consulta lo trae salvo que se pida explícitamente (AuthService.loginWithPassword), así
+   * que no puede filtrarse por GET /users, /auth/me ni por relaciones (project.leader, etc.).
+   */
+  @Column({ name: 'password_hash', type: 'varchar', length: 255, nullable: true, select: false })
+  passwordHash!: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

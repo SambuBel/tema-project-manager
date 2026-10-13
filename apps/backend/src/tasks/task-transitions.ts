@@ -1,15 +1,25 @@
 import { TaskStatus } from '../database/enums';
 
+const ALL_STATUSES: TaskStatus[] = [
+  TaskStatus.PENDING,
+  TaskStatus.IN_PROGRESS,
+  TaskStatus.IN_REVIEW,
+  TaskStatus.BLOCKED,
+  TaskStatus.COMPLETED,
+];
+
 /**
  * Mapa de transiciones válidas de estado para tareas.
- * Fuente: RF-TA-02, RN-04, RN-13, RN-15, CU-06. Especificado en el SRS del cliente.
+ * Según el documento funcional de TEMA Consulting v1.0, se permiten transiciones
+ * entre cualquiera de los estados existentes siempre que el usuario tenga permisos
+ * y se respeten las reglas de negocio (RN-04, RN-13).
  */
 export const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
-  [TaskStatus.PENDING]:     [TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED],
-  [TaskStatus.IN_PROGRESS]: [TaskStatus.IN_REVIEW, TaskStatus.BLOCKED, TaskStatus.COMPLETED],
-  [TaskStatus.IN_REVIEW]:   [TaskStatus.COMPLETED, TaskStatus.IN_PROGRESS],
-  [TaskStatus.BLOCKED]:     [TaskStatus.PENDING],
-  [TaskStatus.COMPLETED]:   []
+  [TaskStatus.PENDING]:     ALL_STATUSES.filter((s) => s !== TaskStatus.PENDING),
+  [TaskStatus.IN_PROGRESS]: ALL_STATUSES.filter((s) => s !== TaskStatus.IN_PROGRESS),
+  [TaskStatus.IN_REVIEW]:   ALL_STATUSES.filter((s) => s !== TaskStatus.IN_REVIEW),
+  [TaskStatus.BLOCKED]:     ALL_STATUSES.filter((s) => s !== TaskStatus.BLOCKED),
+  [TaskStatus.COMPLETED]:   ALL_STATUSES.filter((s) => s !== TaskStatus.COMPLETED),
 };
 
 export function isValidTransition(from: TaskStatus, to: TaskStatus): boolean {

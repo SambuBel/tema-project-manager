@@ -129,7 +129,7 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
 
                 <button
                   className="w-full rounded-md bg-sidebar-card py-2.5 text-sm font-medium text-white hover:bg-sidebar-hover transition-colors"
-                  onClick={() => onSelectProject(p.id)}
+                  onClick={() => onSelectProject(p.slug || p.id)}
                 >
                   Abrir proyecto
                 </button>
