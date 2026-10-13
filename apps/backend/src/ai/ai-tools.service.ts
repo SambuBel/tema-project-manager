@@ -206,15 +206,23 @@ export class AiToolsService {
       case TOOL_NAMES.listProjectMembers: {
         const project = await this.resolveProject(args.projectId, ctx);
         const members = await this.projectsService.getMembers(project.id, ctx.user);
-        return {
-          project: project.name,
-          members: members.map((m) => ({
-            userId: m.userId,
-            name: m.user?.name ?? null,
-            email: m.user?.email ?? null,
-            role: m.projectRole,
-          })),
-        };
+        const result = members.map((m) => ({
+          userId: m.userId,
+          name: m.user?.name ?? null,
+          email: m.user?.email ?? null,
+          role: m.projectRole as string,
+        }));
+        // El lider no siempre tiene fila en project_members, pero puede ser responsable de tareas
+        // (ver TasksService.assertAssigneeIsProjectMember): sin esto el asistente decia que no era miembro.
+        if (project.leaderId && !result.some((m) => m.userId === project.leaderId)) {
+          result.unshift({
+            userId: project.leaderId,
+            name: project.leader?.name ?? null,
+            email: project.leader?.email ?? null,
+            role: 'LÍDER DEL PROYECTO',
+          });
+        }
+        return { project: project.name, members: result };
       }
 
       case TOOL_NAMES.updateTaskStatus: {

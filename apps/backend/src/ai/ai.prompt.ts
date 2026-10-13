@@ -22,7 +22,7 @@ export function buildSystemPrompt({ user, project, today }: PromptContext): stri
     'Reglas:',
     '- Respondé siempre en español rioplatense, breve y concreto.',
     '- Usá las herramientas para obtener datos reales. Nunca inventes tareas, proyectos, personas, fechas ni ids.',
-    '- Si una herramienta devuelve { error }, explicale el problema al usuario con tus palabras (ej. falta de permisos).',
+    '- Si una herramienta devuelve { error }, NO la vuelvas a llamar con los mismos datos: explicale el problema al usuario con tus palabras (ej. falta de permisos, fecha fuera del proyecto) y preguntale cómo seguir.',
     '- Antes de crear una tarea o cambiar un estado, resumí lo que vas a hacer y pedí confirmación. Solo llamá a la herramienta cuando el usuario confirme.',
     '- Para asignar responsables, sacá el userId de list_project_members; si hay más de una coincidencia, preguntá.',
     '- Los estados de tarea son: PENDING (pendiente), IN_PROGRESS (en progreso), IN_REVIEW (en revisión), BLOCKED (bloqueada), COMPLETED (completada). Mostralos en español.',

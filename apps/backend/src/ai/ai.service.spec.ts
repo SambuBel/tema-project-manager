@@ -212,6 +212,19 @@ describe('AiService', () => {
       expect(reply).toMatch(/más puntual/i);
     });
 
+    it('si se agotan las vueltas despues de un error de tool, muestra ese error en vez del mensaje generico', async () => {
+      mockGemini.generate.mockResolvedValue({
+        functionCalls: [{ name: 'list_tasks', args: {} }],
+        text: '',
+        content: undefined,
+      });
+
+      const reply = await service.answer({ message: 'tareas' }, currentUser);
+
+      expect(reply).toMatch(/no pude completarlo/i);
+      expect(reply).toMatch(/proyecto/i);
+    });
+
     it('si Gemini falla (key invalida, cuota, red) responde igual con el modo reglas', async () => {
       mockGemini.generate.mockRejectedValue(new Error('API key not valid'));
 

@@ -104,6 +104,18 @@ describe('AiToolsService', () => {
     expect(ok.created).toMatchObject({ id: TASK_ID });
   });
 
+  it('incluye al lider en el equipo aunque no tenga fila de miembro (puede ser responsable)', async () => {
+    mockProjectsService.getMembers.mockResolvedValue([{ userId: 'u1', user: { name: 'Cris' }, projectRole: 'MEMBER' }]);
+    const withLeader = { ...project, leaderId: 'lider-1', leader: { name: 'Gabi', email: 'g@x' } } as unknown as ProjectEntity;
+
+    const result = await tools.execute(TOOL_NAMES.listProjectMembers, {}, { user, project: withLeader });
+
+    expect(result.members).toEqual([
+      expect.objectContaining({ userId: 'lider-1', name: 'Gabi' }),
+      expect.objectContaining({ userId: 'u1', name: 'Cris' }),
+    ]);
+  });
+
   it('una tool desconocida devuelve error', async () => {
     const result = await tools.execute('borrar_todo', {}, ctx);
 
