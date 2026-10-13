@@ -80,6 +80,23 @@ export class TasksService {
     }
   }
 
+  /**
+   * Una subtarea tiene que apuntar a una tarea que exista, del MISMO proyecto, y que no
+   * sea a su vez una subtarea.
+   */
+  private async assertValidParentTask(projectId: string, parentTaskId: string): Promise<void> {
+    const parent = await this.repo.findOneBy({ id: parentTaskId });
+    if (!parent) {
+      throw new NotFoundException(`Task ${parentTaskId} no encontrada`);
+    }
+    if (parent.projectId !== projectId) {
+      throw new BadRequestException('La tarea padre debe pertenecer al mismo proyecto');
+    }
+    if (parent.parentTaskId) {
+      throw new BadRequestException('No se pueden anidar subtareas: la tarea padre ya es una subtarea');
+    }
+  }
+
   async create(dto: CreateTaskDto, user: RequestUser): Promise<TaskEntity> {
     const project = await this.findProjectOrThrow(dto.projectId);
 
@@ -92,9 +109,13 @@ export class TasksService {
       await this.assertAssigneeIsProjectMember(project, dto.assignedToId);
     }
 
+    if (dto.parentTaskId) {
+      await this.assertValidParentTask(dto.projectId, dto.parentTaskId);
+    }
 
     const task = new TaskEntity();
     task.projectId = dto.projectId;
+    task.parentTaskId = dto.parentTaskId ?? null;
     task.title = dto.title;
     task.description = dto.description ?? null;
     task.status = dto.status ?? TaskStatus.PENDING;
@@ -129,6 +150,7 @@ export class TasksService {
       .leftJoinAndSelect('task.assignedTo', 'assignedTo')
       .leftJoinAndSelect('task.project', 'project')
       .where('task.projectId = :projectId', { projectId: filters.projectId })
+      .andWhere('task.parentTaskId IS NULL');
 
     if (filters.status) {
       qb.andWhere('task.status = :status', { status: filters.status });
@@ -165,6 +187,17 @@ export class TasksService {
     return task;
   }
 
+  /** Subtareas de una tarea */
+  async findSubtasks(parentTaskId: string, user: RequestUser): Promise<TaskEntity[]> {
+    await this.findOne(parentTaskId, user);
+
+    return this.repo.find({
+      where: { parentTaskId },
+      relations: ['assignedTo'],
+      order: { createdAt: 'ASC' },
+    });
+  }
+
   async update(id: string, dto: UpdateTaskDto, user: RequestUser): Promise<TaskEntity> {
     const task = await this.findTaskOrThrow(id);
 
@@ -196,7 +229,10 @@ export class TasksService {
       const pendingSubtasks = await this.subtaskRepo.count({
         where: { taskId: task.id, completed: false },
       });
-      if (pendingSubtasks > 0) {
+      const pendingChildTasks = await this.repo.count({
+        where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED), archivedAt: IsNull() },
+      });
+      if (pendingSubtasks > 0 || pendingChildTasks > 0) {
         throw new BadRequestException('No se puede completar una tarea con subtareas pendientes');
       }
     }
@@ -345,7 +381,10 @@ export class TasksService {
       const pendingSubtasks = await this.subtaskRepo.count({
         where: { taskId: task.id, completed: false },
       });
-      if (pendingSubtasks > 0) {
+      const pendingChildTasks = await this.repo.count({
+        where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED), archivedAt: IsNull() },
+      });
+      if (pendingSubtasks > 0 || pendingChildTasks > 0) {
         throw new BadRequestException('No se puede completar una tarea con subtareas pendientes');
       }
     }

@@ -13,7 +13,7 @@ import { UsersModule } from '../users/users.module';
     AuthModule,
     UsersModule,
   ],
-  controllers: [SubtasksController],
+  controllers: [],
   providers: [SubtasksService],
   exports: [SubtasksService],
 })

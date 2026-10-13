@@ -180,7 +180,7 @@ export const api = {
     request<Task>(`/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   archiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
-  getSubtasks: (taskId: string) => request<Subtask[]>(`/tasks/${taskId}/subtasks`),
+  getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
   createSubtask: (taskId: string, dto: CreateSubtaskDto) =>
     request<Subtask>(`/tasks/${taskId}/subtasks` , { method: 'POST', body: JSON.stringify(dto)}),
   updateSubtask: (taskId: string, subtaskId: string, dto: UpdateSubtaskDto) =>
