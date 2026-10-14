@@ -12,7 +12,7 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   IN_PROGRESS: 'En curso',
   IN_REVIEW: 'En revisión',
   COMPLETED: 'Completada',
-  BLOCKED: 'Bloqueada'
+  BLOCKED: 'Bloqueada',
 };
 
 export function SubtaskList({ parentTaskId }: SubtaskListProps) {

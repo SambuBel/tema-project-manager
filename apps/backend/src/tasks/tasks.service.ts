@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
 import { TaskEntity } from './task.entity';
+import { SubtaskEntity } from '../subtasks/subtask.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { CommentEntity } from '../database/entities/comment.entity';
 import { ProjectActivityService } from '../projects/project-activity.service';
@@ -40,6 +41,8 @@ export class TasksService {
     private readonly usersService: UsersService,
     private readonly permissions: PermissionsService,
     private readonly activityService: ProjectActivityService,
+    @InjectRepository(SubtaskEntity)
+    private readonly subtaskRepo: Repository<SubtaskEntity>,
   ) {}
 
   private async findProjectOrThrow(projectId: string): Promise<ProjectEntity> {
@@ -79,7 +82,7 @@ export class TasksService {
 
   /**
    * Una subtarea tiene que apuntar a una tarea que exista, del MISMO proyecto, y que no
-   * sea a su vez una subtarea
+   * sea a su vez una subtarea.
    */
   private async assertValidParentTask(projectId: string, parentTaskId: string): Promise<void> {
     const parent = await this.repo.findOneBy({ id: parentTaskId });
@@ -94,12 +97,6 @@ export class TasksService {
     }
   }
 
-  /**
-   * Crea una tarea (o subtarea, si viene parentTaskId) dentro de un proyecto.
-   * canCreateTask decide quien puede crear (ver auth/permissions.service.ts);
-   * assertValidParentTask/assertAssigneeIsProjectMember validan que los datos
-   * enviados sean coherentes. `createdBy` sale del usuario autenticado.
-   */
   async create(dto: CreateTaskDto, user: RequestUser): Promise<TaskEntity> {
     const project = await this.findProjectOrThrow(dto.projectId);
 
@@ -227,13 +224,15 @@ export class TasksService {
       this.validateTransition(task.status, dto.status);
     }
 
-    // RN-04: no se puede completar una tarea si tiene subtareas sin completar.
-    // Solo se consideran subtareas activas (no archivadas).
+    // no se puede completar una tarea si tiene subtareas sin completar.
     if (dto.status === TaskStatus.COMPLETED) {
-      const pendingSubtasks = await this.repo.count({
+      const pendingSubtasks = await this.subtaskRepo.count({
+        where: { taskId: task.id, completed: false },
+      });
+      const pendingChildTasks = await this.repo.count({
         where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED), archivedAt: IsNull() },
       });
-      if (pendingSubtasks > 0) {
+      if (pendingSubtasks > 0 || pendingChildTasks > 0) {
         throw new BadRequestException('No se puede completar una tarea con subtareas pendientes');
       }
     }
@@ -378,13 +377,14 @@ export class TasksService {
 
     this.validateTransition(task.status, dto.status);
 
-    // RN-04: no se puede completar una tarea si tiene subtareas sin completar.
-    // Solo se consideran subtareas activas (no archivadas).
     if (dto.status === TaskStatus.COMPLETED) {
-      const pendingSubtasks = await this.repo.count({
+      const pendingSubtasks = await this.subtaskRepo.count({
+        where: { taskId: task.id, completed: false },
+      });
+      const pendingChildTasks = await this.repo.count({
         where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED), archivedAt: IsNull() },
       });
-      if (pendingSubtasks > 0) {
+      if (pendingSubtasks > 0 || pendingChildTasks > 0) {
         throw new BadRequestException('No se puede completar una tarea con subtareas pendientes');
       }
     }

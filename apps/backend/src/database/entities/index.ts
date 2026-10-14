@@ -51,6 +51,7 @@ export * from './ai-message.entity';
 
 import { ProjectActivityEntity } from './project-activity.entity';
 import { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
+import { SubtaskEntity } from '../../subtasks/subtask.entity';
 import { ProjectSlugHistoryEntity } from '../../projects/project-slug-history.entity';
 
 export const ALL_ENTITIES = [
@@ -67,6 +68,7 @@ export const ALL_ENTITIES = [
   ResourceProfileEntity,
   ProjectMemberEntity,
   TaskEntity,
+  SubtaskEntity,
   TaskDependencyEntity,
   TagEntity,
   TaskTagEntity,
@@ -84,6 +86,7 @@ export const ALL_ENTITIES = [
   AiMessageEntity,
 ];
 
+export { SubtaskEntity } from '../../subtasks/subtask.entity';
 export * from './project-activity.entity';
 export { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
 export { ProjectSlugHistoryEntity } from '../../projects/project-slug-history.entity';

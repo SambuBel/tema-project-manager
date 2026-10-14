@@ -58,6 +58,15 @@ export function TaskStatusDropdown({ taskId, currentStatus, canChange }: TaskSta
       setOpen(false);
     },
   });
+  
+  useEffect(() => {
+    if (mutation.error) {
+      const timer = setTimeout(() => {
+        mutation.reset();
+      }, 4000)
+      return () => clearTimeout(timer);
+    }
+  }, [mutation.error]);
 
   if (!canChange || validTargets.length === 0) {
     return (

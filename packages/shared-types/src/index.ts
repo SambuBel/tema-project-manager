@@ -223,10 +223,29 @@ export interface UpdateTaskStatusDto {
   status: TaskStatus;
 }
 
-// --- Gantt (GET /projects/:projectId/gantt) -------------------------------------------------
-// Read model pensado para dibujar el Gantt en UNA sola respuesta. Sin datos económicos.
+export interface Subtask {
+  id: ID;
+  taskId: ID;
+  title: string;
+  assignedToId: ID | null;
+  assignedTo?: User;
+  completed: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
-/** Hoy solo se soportan dependencias fin-inicio; otros tipos no se devuelven. */
+export interface CreateSubtaskDto {
+  title: string;
+  assignedToId?: ID;
+}
+
+export interface UpdateSubtaskDto {
+  title?: string;
+  assignedToId?: ID | null;
+  completed?: boolean;
+}
+
+// --- Gantt (GET /projects/:projectId/gantt) -------------------------------------------------
 export type GanttDependencyType = 'FINISH_TO_START';
 
 export interface GanttProject {
@@ -243,19 +262,13 @@ export interface GanttAssignee {
 
 export interface GanttTask {
   id: ID;
-  /** null = tarea raíz; si no, es una subtarea (un solo nivel). */
   parentTaskId: ID | null;
   title: string;
   status: TaskStatus;
   priority: TaskPriority;
-  /** YYYY-MM-DD o null: una tarea sin planificar NO se inventa fecha. */
   startDate: string | null;
   dueDate: string | null;
   assignedTo: GanttAssignee | null;
-  /**
-   * Derivado, no persistido: true si alguna predecesora fin-inicio (no archivada) no está COMPLETED.
-   * Es independiente de `status` (una tarea PENDING puede estar bloqueada).
-   */
   blocked: boolean;
 }
 

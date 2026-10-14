@@ -15,6 +15,8 @@ interface TaskFormProps {
   initialData?: Task;
   /** Si viene (y no es edición), la tarea creada queda como subtarea de esta. */
   parentTaskId?: string;
+  /** Opcional: se llama con la tarea creada cuando la creación sale bien. */
+  onCreated?: (task: Task) => void;
 }
 
 const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
@@ -57,7 +59,7 @@ function errorMessages(error: unknown, isEditing: boolean): string[] {
   return [isEditing ? 'No se pudo guardar la tarea. Intentá de nuevo.' : 'No se pudo crear la tarea. Intentá de nuevo.'];
 }
 
-export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps) {
+export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: TaskFormProps) {
   const isEditing = !!initialData;
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -123,6 +125,7 @@ export function TaskForm({ projectId, initialData, parentTaskId }: TaskFormProps
       if (parentTaskId) {
         void qc.invalidateQueries({ queryKey: ['subtasks', parentTaskId] });
       }
+      onCreated?.(task);
     },
   });
 

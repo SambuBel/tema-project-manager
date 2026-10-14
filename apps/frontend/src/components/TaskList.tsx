@@ -1,13 +1,17 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
 import { canCreateTaskUI } from '../lib/permissions';
 import { SubtaskCreateModal } from './SubtaskCreateModal';
+import { CreateTaskDrawer } from './CreateTaskDrawer';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
+
+/** Espera (ms) tras dejar de escribir en el buscador antes de refrescar la lista. */
+const SEARCH_DEBOUNCE_MS = 400;
 
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
@@ -77,11 +81,13 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   const { user: currentUser } = useCurrentUser();
   const [filters, setFilters] = useState<TaskFilters>({ projectId });
   const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusInput, setStatusInput] = useState<TaskStatus | ''>('');
   const [priorityInput, setPriorityInput] = useState<TaskPriority | ''>('');
   const [assignedToInput, setAssignedToInput] = useState('');
   const [viewFilter, setViewFilter] = useState<ViewFilter>('ALL');
   const [subtaskParent, setSubtaskParent] = useState<Task | null>(null);
+  const [creatingTask, setCreatingTask] = useState(false);
 
   const project = useQuery({ queryKey: ['project', projectId], queryFn: () => api.getProject(projectId) });
   const members = useQuery({ queryKey: ['project-members', projectId], queryFn: () => api.getProjectMembers(projectId) });
@@ -96,25 +102,38 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   const tasks = useQuery({
     queryKey: ['tasks', filters],
     queryFn: () => api.listTasks(filters),
+    placeholderData: keepPreviousData,
   });
 
   const { membership } = useMyMembership(projectId);
   const canCreateSubtask = !!currentUser && !!project.data && canCreateTaskUI(currentUser, project.data, membership);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
+  /* El texto se aplica con una pequeña espera para no consultar al servidor por cada letra. */
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(searchInput), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  /* Cualquier cambio de filtro refresca la lista solo; no hace falta un botón "Buscar". */
+  useEffect(() => {
     setFilters({
       projectId,
-      search: searchInput || undefined,
+      search: debouncedSearch || undefined,
       status: statusInput || undefined,
       priority: priorityInput || undefined,
       assignedToId: assignedToInput || undefined,
     });
+  }, [projectId, debouncedSearch, statusInput, priorityInput, assignedToInput]);
+
+  /* Enter en el buscador aplica el texto al instante, sin esperar. */
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setDebouncedSearch(searchInput);
   };
 
   const clearFilters = () => {
-    setFilters({ projectId });
     setSearchInput('');
+    setDebouncedSearch('');
     setStatusInput('');
     setPriorityInput('');
     setAssignedToInput('');
@@ -172,6 +191,17 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
         >
           En riesgo ({atRiskCount})
         </button>
+
+        {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}
+        {canCreateSubtask && (
+          <button
+            type="button"
+            onClick={() => setCreatingTask(true)}
+            className="ml-auto rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b]"
+          >
+            Nueva tarea
+          </button>
+        )}
       </div>
 
       {/* Filtros */}
@@ -222,13 +252,6 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
               </option>
             ))}
           </select>
-
-          <button
-            type="submit"
-            className="rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white hover:bg-[#1a445b]"
-          >
-            Buscar
-          </button>
 
           {hasActiveFilters && (
             <button
@@ -403,6 +426,8 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
           onClose={() => setSubtaskParent(null)}
         />
       )}
+
+      {creatingTask && <CreateTaskDrawer projectId={projectId} onClose={() => setCreatingTask(false)} />}
     </div>
   );
 }

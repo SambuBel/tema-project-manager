@@ -284,35 +284,21 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
                 </p>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="visibility" className="text-sm font-medium text-gray-700">Visibilidad</label>
+              {isEditing && (
+                <div className="flex flex-col gap-1.5 max-w-xs">
+                  <label htmlFor="status" className="text-sm font-medium text-gray-700">Estado del proyecto</label>
                   <select
-                    id="visibility"
+                    id="status"
                     className="rounded-md border border-gray-300 px-3 py-2.5 bg-white focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card"
-                    defaultValue="solo-miembros"
+                    value={formData.status}
+                    onChange={(e) => setFormData({ ...formData, status: e.target.value as ProjectStatus })}
                   >
-                    <option value="solo-miembros">Solo miembros del proyecto</option>
-                    <option value="todos">Todos en TEMA</option>
+                    {Object.entries(statusLabels).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
                   </select>
                 </div>
-                
-                {isEditing && (
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="status" className="text-sm font-medium text-gray-700">Estado del proyecto</label>
-                    <select
-                      id="status"
-                      className="rounded-md border border-gray-300 px-3 py-2.5 bg-white focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card"
-                      value={formData.status}
-                      onChange={(e) => setFormData({ ...formData, status: e.target.value as ProjectStatus })}
-                    >
-                      {Object.entries(statusLabels).map(([key, label]) => (
-                        <option key={key} value={key}>{label}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           </div>
         </div>
