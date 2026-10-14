@@ -105,6 +105,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
       {/* Título + badges + acciones */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
+          {/* Encabezado: muestra únicamente el nombre de la tarea, sin IDs internos (UUID) ni códigos */}
           <h1 className="text-4xl font-semibold">{task.title}</h1>
           <TaskStatusDropdown taskId={taskId} currentStatus={task.status} canChange={canEdit} />
           <span className={'rounded-full px-3 py-1 text-xs font-medium ' + priorityColors[task.priority]}>
