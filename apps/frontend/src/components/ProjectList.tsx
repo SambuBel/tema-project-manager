@@ -19,8 +19,6 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
   const qc = useQueryClient();
   const [filters, setFilters] = useState<ListProjectsQuery>({});
 
-  const [searchInput, setSearchInput] = useState('');
-
   const projects = useQuery({
     queryKey: ['projects', filters],
     queryFn: () => api.listProjects(filters),
@@ -31,10 +29,9 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['projects'] }),
   });
 
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setSearchInput(value);
-    setFilters((prev) => ({ ...prev, name: value || undefined }));
+  const handleStatusFilter = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value as ProjectStatus | '';
+    setFilters((prev) => ({ ...prev, status: value || undefined }));
   };
 
   const isArchivedView = filters.archived === true;
@@ -43,7 +40,7 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
     if (!dateStr) return 'Sin fecha';
     const [year, month, day] = dateStr.split('T')[0].split('-');
     const d = new Date(Number(year), Number(month) - 1, Number(day));
-    return `${d.getDate()} ${d.toLocaleString('es', { month: 'short' }).substring(0, 3)}`;
+    return d.getDate() + ' ' + d.toLocaleString('es', { month: 'short' }).substring(0, 3);
   };
 
   return (
@@ -51,13 +48,13 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
       <div className="flex items-center justify-between">
         <div className="flex bg-white rounded-md overflow-hidden border border-gray-200">
           <button
-            className={`px-6 py-2 text-sm font-medium ${!isArchivedView ? 'bg-sidebar-card text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+            className={'px-6 py-2 text-sm font-medium ' + (!isArchivedView ? 'bg-sidebar-card text-white' : 'text-gray-500 hover:bg-gray-50')}
             onClick={() => setFilters((prev) => ({ ...prev, archived: undefined }))}
           >
             Activos
           </button>
           <button
-            className={`px-6 py-2 text-sm font-medium ${isArchivedView ? 'bg-sidebar-card text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+            className={'px-6 py-2 text-sm font-medium ' + (isArchivedView ? 'bg-sidebar-card text-white' : 'text-gray-500 hover:bg-gray-50')}
             onClick={() => setFilters((prev) => ({ ...prev, archived: true }))}
           >
             Archivados
@@ -65,12 +62,19 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
         </div>
 
         <div className="flex gap-2">
-          <input
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm w-64 focus:outline-none focus:ring-1 focus:ring-sidebar-card"
-            placeholder="Filtrar"
-            value={searchInput}
-            onChange={handleSearch}
-          />
+          <select
+            className="w-64 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-sidebar-card"
+            value={filters.status ?? ''}
+            onChange={handleStatusFilter}
+            aria-label="Filtrar por estado"
+          >
+            <option value="">Todos los estados</option>
+            {Object.entries(statusLabels).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -109,7 +113,7 @@ export function ProjectList({ onSelectProject }: ProjectListProps) {
                 <div className="mb-2 h-1.5 w-full rounded-full bg-gray-100">
                   <div
                     className="h-1.5 rounded-full bg-[#5E8E7E]"
-                    style={{ width: `${p.progress ?? 0}%` }}
+                    style={{ width: (p.progress ?? 0) + '%' }}
                   ></div>
                 </div>
 
