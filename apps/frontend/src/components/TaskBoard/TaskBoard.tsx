@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { DragDropContext, DropResult } from '@hello-pangea/dnd';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import type { Task, TaskStatus } from '@tema/shared-types';
+import type { Project, Task, TaskStatus } from '@tema/shared-types';
 import { BoardColumn } from './BoardColumn';
 import { taskStatusLabels } from '../../types/task';
 import { handleDragEndLogic } from './dragDropLogic';
@@ -10,12 +10,13 @@ import { getMutationOptions } from './mutationLogic';
 
 interface TaskBoardProps {
   projectId: string;
+  project: Project;
   onSelectTask: (taskId: string) => void;
 }
 
 const COLUMNS: TaskStatus[] = ['PENDING', 'IN_PROGRESS', 'IN_REVIEW', 'BLOCKED', 'COMPLETED'];
 
-export function TaskBoard({ projectId, onSelectTask }: TaskBoardProps) {
+export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) {
   const qc = useQueryClient();
   const [toast, setToast] = useState<string | null>(null);
 
@@ -75,6 +76,7 @@ export function TaskBoard({ projectId, onSelectTask }: TaskBoardProps) {
               status={status}
               title={taskStatusLabels[status]}
               tasks={tasksByStatus[status]}
+              project={project}
               onSelectTask={onSelectTask}
             />
           ))}

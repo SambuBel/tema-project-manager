@@ -261,6 +261,7 @@ export function ProjectPage() {
         <div className="w-full min-w-0">
           <TaskBoard
             projectId={project.id}
+            project={project}
             onSelectTask={openTask}
           />
         </div>

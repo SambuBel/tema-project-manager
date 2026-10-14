@@ -1,15 +1,14 @@
-import type { Task, TaskPriority } from '@tema/shared-types';
+import type { Project, Task, TaskPriority } from '@tema/shared-types';
 import { canEditTaskUI } from '../../lib/permissions';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import { useMyMembership } from '../../hooks/useMyMembership';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../../lib/api';
 import { taskPriorityLabels } from '../../types/task';
 import { Draggable } from '@hello-pangea/dnd';
 
 interface BoardCardProps {
   task: Task;
   index: number;
+  project: Project;
   onSelectTask: (taskId: string) => void;
 }
 
@@ -24,14 +23,9 @@ function initials(name: string) {
   return name.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase();
 }
 
-export function BoardCard({ task, index, onSelectTask }: BoardCardProps) {
+export function BoardCard({ task, index, project, onSelectTask }: BoardCardProps) {
   const { user } = useCurrentUser();
   const { membership } = useMyMembership(task.projectId);
-  const { data: project } = useQuery({
-    queryKey: ['project', task.projectId],
-    queryFn: () => api.getProject(task.projectId),
-    enabled: false,
-  });
 
   const canEdit = user && project ? canEditTaskUI(user, task, project, membership) : false;
 
