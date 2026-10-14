@@ -93,24 +93,39 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
                 {search ? 'No hay resultados para esa búsqueda.' : 'No hay más usuarios de TEMA para agregar a este proyecto.'}
               </p>
             ) : (
-              candidates.map((candidate) => (
-                <button
-                  type="button"
-                  key={candidate.id}
-                  onClick={() => setSelectedUser(candidate)}
-                  className={`flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 ${
-                    selectedUser?.id === candidate.id ? 'bg-[#EAF2F7]' : ''
-                  }`}
-                >
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#EAF2F7] text-xs font-semibold text-[#245B78]">
-                    {initials(candidate.name)}
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium">{candidate.name}</div>
-                    <div className="text-xs text-[#607185]">{candidate.email}</div>
-                  </div>
-                </button>
-              ))
+              candidates.map((candidate) => {
+                const isSelected = selectedUser?.id === candidate.id;
+                return (
+                  <button
+                    type="button"
+                    key={candidate.id}
+                    aria-pressed={isSelected}
+                    onClick={() => setSelectedUser(candidate)}
+                    className={`flex items-center gap-3 border-l-4 px-4 py-3 text-left transition-colors ${
+                      isSelected
+                        ? 'border-[#245B78] bg-[#D6E6F0]'
+                        : 'border-transparent hover:bg-gray-50'
+                    }`}
+                  >
+                    <div
+                      className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold ${
+                        isSelected ? 'bg-[#245B78] text-white' : 'bg-[#EAF2F7] text-[#245B78]'
+                      }`}
+                    >
+                      {initials(candidate.name)}
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium">{candidate.name}</div>
+                      <div className="text-xs text-[#607185]">{candidate.email}</div>
+                    </div>
+                    {isSelected && (
+                      <span aria-hidden="true" className="text-lg font-bold text-[#245B78]">
+                        ✓
+                      </span>
+                    )}
+                  </button>
+                );
+              })
             )}
           </div>
 
