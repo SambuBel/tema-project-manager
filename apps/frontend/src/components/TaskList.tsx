@@ -1,17 +1,13 @@
 import { useEffect, useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
 import { canCreateTaskUI } from '../lib/permissions';
 import { SubtaskCreateModal } from './SubtaskCreateModal';
-import { CreateTaskDrawer } from './CreateTaskDrawer';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
-
-/** Espera (ms) tras dejar de escribir en el buscador antes de refrescar la lista. */
-const SEARCH_DEBOUNCE_MS = 400;
 
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
@@ -81,13 +77,8 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   const { user: currentUser } = useCurrentUser();
   const [filters, setFilters] = useState<TaskFilters>({ projectId });
   const [searchInput, setSearchInput] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [statusInput, setStatusInput] = useState<TaskStatus | ''>('');
-  const [priorityInput, setPriorityInput] = useState<TaskPriority | ''>('');
-  const [assignedToInput, setAssignedToInput] = useState('');
   const [viewFilter, setViewFilter] = useState<ViewFilter>('ALL');
   const [subtaskParent, setSubtaskParent] = useState<Task | null>(null);
-  const [creatingTask, setCreatingTask] = useState(false);
 
   const project = useQuery({ queryKey: ['project', projectId], queryFn: () => api.getProject(projectId) });
   const members = useQuery({ queryKey: ['project-members', projectId], queryFn: () => api.getProjectMembers(projectId) });
@@ -102,41 +93,39 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   const tasks = useQuery({
     queryKey: ['tasks', filters],
     queryFn: () => api.listTasks(filters),
-    placeholderData: keepPreviousData,
   });
 
   const { membership } = useMyMembership(projectId);
   const canCreateSubtask = !!currentUser && !!project.data && canCreateTaskUI(currentUser, project.data, membership);
 
-  /* El texto se aplica con una pequeña espera para no consultar al servidor por cada letra. */
+  /* Búsqueda por texto: se aplica sola 300 ms después de dejar de escribir (sin botón "Buscar"). */
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearch(searchInput), SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
+    const timer = setTimeout(() => {
+      const next = searchInput || undefined;
+      setFilters((prev) => (prev.search === next ? prev : { ...prev, search: next }));
+    }, 300);
+    return () => clearTimeout(timer);
   }, [searchInput]);
 
-  /* Cualquier cambio de filtro refresca la lista solo; no hace falta un botón "Buscar". */
-  useEffect(() => {
-    setFilters({
-      projectId,
-      search: debouncedSearch || undefined,
-      status: statusInput || undefined,
-      priority: priorityInput || undefined,
-      assignedToId: assignedToInput || undefined,
-    });
-  }, [projectId, debouncedSearch, statusInput, priorityInput, assignedToInput]);
+  /* Estado, prioridad y responsable se aplican apenas se elige una opción. */
+  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value as TaskStatus | '';
+    setFilters((prev) => ({ ...prev, status: value || undefined }));
+  };
 
-  /* Enter en el buscador aplica el texto al instante, sin esperar. */
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setDebouncedSearch(searchInput);
+  const handlePriorityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value as TaskPriority | '';
+    setFilters((prev) => ({ ...prev, priority: value || undefined }));
+  };
+
+  const handleAssigneeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value;
+    setFilters((prev) => ({ ...prev, assignedToId: value || undefined }));
   };
 
   const clearFilters = () => {
+    setFilters({ projectId });
     setSearchInput('');
-    setDebouncedSearch('');
-    setStatusInput('');
-    setPriorityInput('');
-    setAssignedToInput('');
     setViewFilter('ALL');
   };
 
@@ -191,22 +180,11 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
         >
           En riesgo ({atRiskCount})
         </button>
-
-        {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}
-        {canCreateSubtask && (
-          <button
-            type="button"
-            onClick={() => setCreatingTask(true)}
-            className="ml-auto rounded-lg bg-[#245B78] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#1a445b]"
-          >
-            Nueva tarea
-          </button>
-        )}
       </div>
 
       {/* Filtros */}
       <div className="rounded-xl border border-[#DEE5EC] bg-white p-4">
-        <form onSubmit={handleSearch} className="flex flex-wrap items-center gap-3">
+        <form onSubmit={(e) => e.preventDefault()} className="flex flex-wrap items-center gap-3">
           <input
             className="min-w-[200px] flex-1 rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm placeholder:text-[#607185] focus:border-[#245B78] focus:outline-none"
             placeholder="Buscar por título o descripción…"
@@ -216,8 +194,8 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
 
           <select
             className="rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
-            value={statusInput}
-            onChange={(e) => setStatusInput(e.target.value as TaskStatus | '')}
+            value={filters.status ?? ''}
+            onChange={handleStatusChange}
           >
             <option value="">Estado: Todos</option>
             {Object.entries(taskStatusLabels).map(([key, label]) => (
@@ -229,8 +207,8 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
 
           <select
             className="rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
-            value={priorityInput}
-            onChange={(e) => setPriorityInput(e.target.value as TaskPriority | '')}
+            value={filters.priority ?? ''}
+            onChange={handlePriorityChange}
           >
             <option value="">Prioridad: Todas</option>
             {Object.entries(taskPriorityLabels).map(([key, label]) => (
@@ -242,8 +220,8 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
 
           <select
             className="rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
-            value={assignedToInput}
-            onChange={(e) => setAssignedToInput(e.target.value)}
+            value={filters.assignedToId ?? ''}
+            onChange={handleAssigneeChange}
           >
             <option value="">Responsable: Todos</option>
             {[...assignees.values()].map((u) => (
@@ -426,8 +404,6 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
           onClose={() => setSubtaskParent(null)}
         />
       )}
-
-      {creatingTask && <CreateTaskDrawer projectId={projectId} onClose={() => setCreatingTask(false)} />}
     </div>
   );
 }
