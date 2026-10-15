@@ -79,4 +79,44 @@ describe('TaskDetail - soporte de URLs legibles con slug', () => {
 
     expect(html).toContain('Tarea de ejemplo');
   });
+
+  it('preserva el contexto de vista (tablero) cuando se abre el detalle con slug', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['auth', 'me'], currentUser);
+    client.setQueryData(['task', SLUG], makeTask());
+    client.setQueryData(['project-members', PROJECT_ID], []);
+    client.setQueryData(['subtasks', TASK_ID], []);
+    client.setQueryData(['task', TASK_ID, 'timeline'], []);
+
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}?view=tablero&task=${SLUG}`]}>
+          <TaskDetail taskId={SLUG} projectId={PROJECT_ID} onBack={() => undefined} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(html).toContain('Tarea de ejemplo');
+    expect(html).toContain('Volver a tareas');
+  });
+
+  it('preserva el contexto de vista (lista de tareas) cuando se abre el detalle con slug', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['auth', 'me'], currentUser);
+    client.setQueryData(['task', SLUG], makeTask());
+    client.setQueryData(['project-members', PROJECT_ID], []);
+    client.setQueryData(['subtasks', TASK_ID], []);
+    client.setQueryData(['task', TASK_ID, 'timeline'], []);
+
+    const html = renderToString(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/projects/${PROJECT_ID}?view=tasks&task=${SLUG}`]}>
+          <TaskDetail taskId={SLUG} projectId={PROJECT_ID} onBack={() => undefined} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(html).toContain('Tarea de ejemplo');
+    expect(html).toContain('Volver a tareas');
+  });
 });
