@@ -30,23 +30,27 @@ export class TasksController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
-    return this.tasksService.findOne(id, user);
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: RequestUser,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.tasksService.findOne(id, user, projectId);
   }
 
   @Get(':id/subtasks')
-  findSubtasks(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+  findSubtasks(@Param('id') id: string, @CurrentUser() user: RequestUser) {
     return this.tasksService.findSubtasks(id, user);
   }
 
   @Patch(':id')
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTaskDto, @CurrentUser() user: RequestUser) {
+  update(@Param('id') id: string, @Body() dto: UpdateTaskDto, @CurrentUser() user: RequestUser) {
     return this.tasksService.update(id, dto, user);
   }
 
   @Patch(':id/status')
   updateStatus(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() dto: UpdateTaskStatusDto,
     @CurrentUser() user: RequestUser,
   ) {
@@ -55,7 +59,7 @@ export class TasksController {
 
   @Post(':id/comments')
   addComment(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() dto: CreateCommentDto,
     @CurrentUser() user: RequestUser,
   ) {
@@ -64,14 +68,14 @@ export class TasksController {
 
   @Get(':id/timeline')
   getTimeline(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @CurrentUser() user: RequestUser,
   ) {
     return this.tasksService.getTimeline(id, user);
   }
 
   @Patch(':id/archive')
-  archive(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
+  archive(@Param('id') id: string, @CurrentUser() user: RequestUser) {
     return this.tasksService.archive(id, user);
   }
 }

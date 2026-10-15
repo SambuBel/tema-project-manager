@@ -174,6 +174,7 @@ export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Task {
   id: ID;
+  slug?: string;
   projectId: ID;
   parentTaskId: ID | null;
   title: string;

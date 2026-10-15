@@ -9,9 +9,21 @@ import { TasksService } from './tasks.service';
 import { UsersModule } from '../users/users.module';
 import { AuthModule } from '../auth/auth.module';
 import { SubtaskEntity } from '../subtasks/subtask.entity';
+import { TaskSlugHistoryEntity } from './task-slug-history.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([TaskEntity, ProjectEntity, CommentEntity, SubtaskEntity]), UsersModule, AuthModule, ProjectsModule],
+  imports: [
+    TypeOrmModule.forFeature([
+      TaskEntity,
+      ProjectEntity,
+      CommentEntity,
+      SubtaskEntity,
+      TaskSlugHistoryEntity,
+    ]),
+    UsersModule,
+    AuthModule,
+    ProjectsModule,
+  ],
   controllers: [TasksController],
   providers: [TasksService],
   exports: [TasksService],

@@ -55,12 +55,14 @@ export function ProjectPage() {
 
   const viewParam = searchParams.get('view');
   const taskIdParam = searchParams.get('taskId');
+  const taskSlugParam = searchParams.get('task');
 
   const validViews = ['resumen', 'tablero', 'tasks', 'gantt', 'equipo', 'actividad'];
   const baseView = (validViews.includes(viewParam as string) ? viewParam : 'resumen') as ProjectView;
 
-  const view = taskIdParam ? 'task-detail' : baseView;
-  const selectedTaskId = taskIdParam;
+  const selectedTaskIdentifier = taskSlugParam || taskIdParam;
+  const view = selectedTaskIdentifier ? 'task-detail' : baseView;
+  const selectedTaskId = selectedTaskIdentifier;
 
   const setView = (newView: ProjectView) => {
     if (newView === 'task-detail') return; // Should use openTask
@@ -68,15 +70,17 @@ export function ProjectPage() {
       const next = new URLSearchParams(prev);
       next.set('view', newView);
       next.delete('taskId');
+      next.delete('task');
       return next;
     });
   };
 
-  const openTask = (taskId: string) => {
+  const openTask = (taskIdentifier: string) => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       next.set('view', baseView);
-      next.set('taskId', taskId);
+      next.delete('taskId');
+      next.set('task', taskIdentifier);
       return next;
     });
   };
@@ -85,6 +89,7 @@ export function ProjectPage() {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       next.delete('taskId');
+      next.delete('task');
       return next;
     });
   };
@@ -277,6 +282,7 @@ export function ProjectPage() {
       {view === 'task-detail' && selectedTaskId && (
         <TaskDetail
           taskId={selectedTaskId}
+          projectId={project.id}
           onBack={closeTask}
         />
       )}

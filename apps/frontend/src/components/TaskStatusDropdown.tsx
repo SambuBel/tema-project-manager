@@ -50,7 +50,7 @@ export function TaskStatusDropdown({ taskId, currentStatus, canChange }: TaskSta
   const mutation = useMutation({
     mutationFn: (newStatus: TaskStatus) => api.updateTaskStatus(taskId, newStatus),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['task', taskId] });
+      qc.invalidateQueries({ queryKey: ['task'] });
       qc.invalidateQueries({ queryKey: ['tasks'] });
       setOpen(false);
     },

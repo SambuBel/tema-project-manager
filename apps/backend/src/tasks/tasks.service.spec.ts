@@ -62,12 +62,13 @@ function membership(userId: string, projectRole: ProjectMemberRole): Partial<Pro
 }
 
 interface Deps {
-  taskRepo: { findOne: jest.Mock; find: jest.Mock; findOneBy: jest.Mock; count: jest.Mock; save: jest.Mock; createQueryBuilder: jest.Mock };
+  taskRepo: { findOne: jest.Mock; find: jest.Mock; findOneBy: jest.Mock; count: jest.Mock; save: jest.Mock; createQueryBuilder: jest.Mock; manager: { query: jest.Mock; find: jest.Mock } };
   projectRepo: { findOneBy: jest.Mock; manager: { find: jest.Mock } };
   usersService: { findById: jest.Mock };
   subtaskRepo: { count: jest.Mock };
   activityService: { logEvent: jest.Mock };
   commentRepo: { create: jest.Mock; save: jest.Mock; find: jest.Mock };
+  taskSlugHistoryRepo: { findOne: jest.Mock; find: jest.Mock; create: jest.Mock; save: jest.Mock; delete: jest.Mock };
 }
 
 function makeService(
@@ -88,6 +89,10 @@ function makeService(
     count: jest.fn(async () => 0),
     save: jest.fn(async (t: unknown) => t),
     createQueryBuilder: jest.fn(() => qb),
+    manager: {
+      query: jest.fn(async () => []),
+      find: jest.fn(async () => []),
+    },
   };
   const projectRepo = { findOneBy: jest.fn(async () => project), manager: { find: jest.fn(async () => []) } };
   const commentRepo = {
@@ -98,7 +103,14 @@ function makeService(
   const usersService = { findById: jest.fn(async (id: string) => ({ id, active: true })) };
   const subtaskRepo = {
     count: jest.fn(async () => 0),
-  }
+  };
+  const taskSlugHistoryRepo = {
+    findOne: jest.fn(),
+    find: jest.fn(),
+    create: jest.fn((h: unknown) => h),
+    save: jest.fn(async (h: unknown) => h),
+    delete: jest.fn(async () => ({ affected: 1 })),
+  };
   const permissions = makePermissions(members);
   const activityService = { logEvent: jest.fn() };
 
@@ -110,9 +122,10 @@ function makeService(
     permissions as never,
     activityService as never,
     subtaskRepo as unknown as import('typeorm').Repository<SubtaskEntity>,
+    taskSlugHistoryRepo as never,
   );
 
-  return { service, taskRepo, projectRepo, usersService, subtaskRepo, activityService, commentRepo };
+  return { service, taskRepo, projectRepo, usersService, subtaskRepo, activityService, commentRepo, taskSlugHistoryRepo };
 }
 
 describe('TasksService - create (canCreateTask)', () => {
@@ -1034,3 +1047,155 @@ describe('TasksService - caso crítico (bug arquitectónico original)', () => {
     ).rejects.toThrow(ForbiddenException);
   });
 });
+
+describe('TasksService - Slugs de tareas e histórico de URLs legibles', () => {
+  const leaderUser = makeUser(LEADER_ID, [RoleName.PROJECT_LEADER]);
+  const members = [membership(LEADER_ID, 'COLLABORATOR' as any)];
+
+  it('crear tarea genera un slug legible a partir del título', async () => {
+    const { service, taskRepo } = makeService(members);
+    taskRepo.manager.query.mockResolvedValue([]);
+
+    const task = await service.create(
+      { projectId: PROJECT_ID, title: 'Implementar Login con Google' },
+      leaderUser,
+    );
+
+    expect(task.slug).toBe('implementar-login-con-google');
+  });
+
+  it('nombres repetidos en el mismo proyecto: genera sufijo incremental (-2, -3)', async () => {
+    const { service, taskRepo } = makeService(members);
+    taskRepo.manager.query.mockResolvedValue([
+      { slug: 'revision-de-codigo', task_id: 't-1', source: 'task' },
+      { slug: 'revision-de-codigo-2', task_id: 't-2', source: 'task' },
+    ]);
+
+    const task = await service.create(
+      { projectId: PROJECT_ID, title: 'Revisión de Código' },
+      leaderUser,
+    );
+
+    expect(task.slug).toBe('revision-de-codigo-3');
+  });
+
+  it('no reutiliza slugs que existen en el histórico de otra tarea', async () => {
+    const { service, taskRepo } = makeService(members);
+    taskRepo.manager.query.mockResolvedValue([
+      { slug: 'tarea-urgente', task_id: 'other-task', source: 'history' },
+    ]);
+
+    const task = await service.create(
+      { projectId: PROJECT_ID, title: 'Tarea Urgente' },
+      leaderUser,
+    );
+
+    expect(task.slug).toBe('tarea-urgente-2');
+  });
+
+  it('al renombrar una tarea, actualiza su slug y registra el slug viejo en task_slug_histories', async () => {
+    const { service, taskRepo, taskSlugHistoryRepo } = makeService(members);
+    const existing = makeTask({
+      project: makeProject(),
+      title: 'Nombre Original',
+      slug: 'nombre-original',
+    });
+    taskRepo.findOne.mockResolvedValue(existing);
+    taskRepo.manager.query.mockResolvedValue([]);
+
+    const updated = await service.update(
+      existing.id,
+      { title: 'Nombre Renovado' },
+      leaderUser,
+    );
+
+    expect(updated.slug).toBe('nombre-renovado');
+    expect(taskSlugHistoryRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: existing.id,
+        projectId: PROJECT_ID,
+        slug: 'nombre-original',
+      }),
+    );
+  });
+
+  it('findOne resuelve tarea por UUID directamente (compatibilidad hacia atrás)', async () => {
+    const { service, taskRepo } = makeService(members);
+    const existing = makeTask({
+      id: 'e8b8c2d1-9452-47ef-8a3c-1b7f03d65a29',
+      project: makeProject(),
+      slug: 'mi-tarea-importante',
+    });
+    taskRepo.findOne.mockResolvedValue(existing);
+
+    const found = await service.findOne('e8b8c2d1-9452-47ef-8a3c-1b7f03d65a29', leaderUser);
+    expect(found.id).toBe('e8b8c2d1-9452-47ef-8a3c-1b7f03d65a29');
+    expect(found.slug).toBe('mi-tarea-importante');
+  });
+
+  it('findOne resuelve tarea por slug activo', async () => {
+    const { service, taskRepo } = makeService(members);
+    const existing = makeTask({
+      id: 'task-uuid-123',
+      project: makeProject(),
+      slug: 'tarea-de-prueba',
+    });
+    taskRepo.findOne.mockImplementation(async ({ where }: any) => {
+      if (where.slug === 'tarea-de-prueba') return existing;
+      return null;
+    });
+
+    const found = await service.findOne('tarea-de-prueba', leaderUser, PROJECT_ID);
+    expect(found.id).toBe('task-uuid-123');
+    expect(found.slug).toBe('tarea-de-prueba');
+  });
+
+  it('findOne resuelve tarea a través del histórico si se usa un slug anterior', async () => {
+    const { service, taskRepo, taskSlugHistoryRepo } = makeService(members);
+    const existing = makeTask({
+      id: 'task-uuid-renamed',
+      project: makeProject(),
+      slug: 'nuevo-slug',
+    });
+    taskRepo.findOne.mockImplementation(async ({ where }: any) => {
+      if (where.slug === 'slug-antiguo') return null;
+      return null;
+    });
+    taskSlugHistoryRepo.findOne.mockResolvedValue({
+      taskId: 'task-uuid-renamed',
+      projectId: PROJECT_ID,
+      slug: 'slug-antiguo',
+      task: existing,
+    });
+
+    const found = await service.findOne('slug-antiguo', leaderUser, PROJECT_ID);
+    expect(found.id).toBe('task-uuid-renamed');
+    expect(found.slug).toBe('nuevo-slug');
+  });
+
+  it('findOne lanza NotFoundException si el slug no existe ni activo ni en histórico', async () => {
+    const { service, taskRepo, taskSlugHistoryRepo } = makeService(members);
+    taskRepo.findOne.mockResolvedValue(null);
+    taskSlugHistoryRepo.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.findOne('slug-inexistente', leaderUser, PROJECT_ID),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('findOne lanza ForbiddenException si el usuario no tiene acceso a la tarea encontrada por slug', async () => {
+    const observerOutside = makeUser('stranger', [RoleName.COLLABORATOR]);
+    const { service, taskRepo } = makeService(members);
+    const existing = makeTask({
+      id: 'task-uuid-secret',
+      project: makeProject(),
+      slug: 'tarea-confidencial',
+    });
+    taskRepo.findOne.mockResolvedValue(existing);
+
+    await expect(
+      service.findOne('tarea-confidencial', observerOutside, PROJECT_ID),
+    ).rejects.toThrow(ForbiddenException);
+  });
+});
+

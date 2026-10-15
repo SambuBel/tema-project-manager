@@ -173,7 +173,8 @@ export const api = {
   },
   createTask: (dto: CreateTaskDto) =>
     request<Task>('/tasks', { method: 'POST', body: JSON.stringify(dto) }),
-  getTask: (id: string) => request<Task>(`/tasks/${id}`),
+  getTask: (idOrSlug: string, projectId?: string) =>
+    request<Task>(`/tasks/${encodeURIComponent(idOrSlug)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
   updateTask: (id: string, dto: UpdateTaskDto) =>
     request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
   updateTaskStatus: (id: string, status: TaskStatus) =>

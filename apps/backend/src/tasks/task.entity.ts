@@ -28,6 +28,7 @@ import { TaskPriority, TaskStatus } from '../database/enums';
  */
 @Entity('tasks')
 @Index('ix_tasks_project_id', ['projectId'])
+@Index('uq_tasks_project_slug', ['projectId', 'slug'], { unique: true })
 export class TaskEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -48,6 +49,9 @@ export class TaskEntity {
 
   @Column({ name: 'title', type: 'varchar', length: 200 })
   title!: string;
+
+  @Column({ name: 'slug', type: 'varchar', length: 255 })
+  slug!: string;
 
   @Column({ name: 'description', type: 'text', nullable: true })
   description!: string | null;

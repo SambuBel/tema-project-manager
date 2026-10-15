@@ -36,7 +36,7 @@ export function BoardCard({ task, index, project, onSelectTask }: BoardCardProps
           ref={provided.innerRef}
           {...provided.draggableProps}
           {...provided.dragHandleProps}
-          onClick={() => onSelectTask(task.id)}
+          onClick={() => onSelectTask(task.slug || task.id)}
           className={`group relative flex cursor-pointer flex-col gap-3 rounded-lg border bg-white p-3 shadow-sm transition-all hover:border-[#245B78] hover:shadow-md
             ${!canEdit ? 'opacity-80' : ''}
             ${snapshot.isDragging ? 'border-[#245B78] shadow-lg rotate-2 scale-105 z-10' : 'border-[#DEE5EC]'}`}

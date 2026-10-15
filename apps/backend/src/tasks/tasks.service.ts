@@ -1,7 +1,9 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { IsNull, Not, Repository, EntityManager } from 'typeorm';
 import { TaskEntity } from './task.entity';
+import { TaskSlugHistoryEntity } from './task-slug-history.entity';
+import { slugify } from '../projects/utils/slug.util';
 import { SubtaskEntity } from '../subtasks/subtask.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { CommentEntity } from '../database/entities/comment.entity';
@@ -43,7 +45,99 @@ export class TasksService {
     private readonly activityService: ProjectActivityService,
     @InjectRepository(SubtaskEntity)
     private readonly subtaskRepo: Repository<SubtaskEntity>,
+    @InjectRepository(TaskSlugHistoryEntity)
+    private readonly taskSlugHistoryRepo: Repository<TaskSlugHistoryEntity>,
   ) {}
+
+  /**
+   * Genera un slug único para la tarea dentro de su proyecto.
+   * Si ya existe una tarea o slug histórico con ese nombre en el proyecto, calcula el sufijo incremental (-2, -3, etc.).
+   * Usa advisory lock por proyecto y baseSlug para evitar colisiones en creaciones simultáneas.
+   */
+  async generateUniqueSlug(
+    title: string,
+    projectId: string,
+    manager: EntityManager,
+    currentTaskId?: string,
+  ): Promise<string> {
+    const baseSlug = slugify(title, 'tarea');
+
+    if (typeof manager.query === 'function') {
+      try {
+        await manager.query(
+          'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+          [`tema_task_slugs_${projectId}`, baseSlug],
+        );
+      } catch {
+        try {
+          await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`task_slug_${projectId}_${baseSlug}`]);
+        } catch {
+          // En tests o drivers donde advisory lock no está disponible
+        }
+      }
+    }
+
+    interface SlugRow {
+      slug: string;
+      task_id?: string;
+      source?: 'task' | 'history';
+    }
+    let rows: SlugRow[] = [];
+    if (typeof manager.query === 'function') {
+      try {
+        const queryResult = await manager.query(
+          `SELECT slug, id::text AS task_id, 'task' AS source FROM tasks WHERE project_id = $1 AND (slug = $2 OR slug LIKE $3)
+           UNION ALL
+           SELECT slug, task_id::text AS task_id, 'history' AS source FROM task_slug_histories WHERE project_id = $1 AND (slug = $2 OR slug LIKE $3)`,
+          [projectId, baseSlug, `${baseSlug}-%`],
+        );
+        if (Array.isArray(queryResult)) {
+          rows = queryResult;
+        }
+      } catch {
+        rows = [];
+      }
+    } else {
+      const tasks = (await manager.find?.(TaskEntity, { where: { projectId } as any })) || [];
+      const histories = (await manager.find?.(TaskSlugHistoryEntity, { where: { projectId } as any })) || [];
+      rows = [
+        ...tasks.map((t: any) => ({ slug: t.slug, task_id: t.id, source: 'task' as const })),
+        ...histories.map((h: any) => ({ slug: h.slug, task_id: h.taskId, source: 'history' as const })),
+      ].filter((r) => r.slug === baseSlug || r.slug?.startsWith(`${baseSlug}-`));
+    }
+
+    if (currentTaskId) {
+      const selfCurrent = rows.find((r) => r.slug === baseSlug && r.task_id === currentTaskId);
+      if (selfCurrent) {
+        return baseSlug;
+      }
+
+      const occupiedByOthers = new Set(
+        rows.filter((r) => r.task_id && r.task_id !== currentTaskId).map((r) => r.slug),
+      );
+
+      if (!occupiedByOthers.has(baseSlug)) {
+        return baseSlug;
+      }
+
+      let nextSuffix = 2;
+      while (occupiedByOthers.has(`${baseSlug}-${nextSuffix}`)) {
+        nextSuffix++;
+      }
+      return `${baseSlug}-${nextSuffix}`;
+    }
+
+    const occupied = new Set(rows.map((r) => r.slug));
+    if (!occupied.has(baseSlug)) {
+      return baseSlug;
+    }
+
+    let nextSuffix = 2;
+    while (occupied.has(`${baseSlug}-${nextSuffix}`)) {
+      nextSuffix++;
+    }
+    return `${baseSlug}-${nextSuffix}`;
+  }
 
   private async findProjectOrThrow(projectId: string): Promise<ProjectEntity> {
     const project = await this.projectRepo.findOneBy({ id: projectId });
@@ -53,14 +147,43 @@ export class TasksService {
     return project;
   }
 
-  /** Sin chequeo de autorización */
-  private async findTaskOrThrow(id: string): Promise<TaskEntity> {
-    const task = await this.repo.findOne({
-      where: { id },
-      relations: ['project', 'assignedTo'],
-    });
+  /** Sin chequeo de autorización. Acepta UUID o slug dentro del proyecto (o buscando en su histórico). */
+  private async findTaskOrThrow(idOrSlug: string, projectId?: string): Promise<TaskEntity> {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
+    let task: TaskEntity | null = null;
+
+    if (isUuid) {
+      task = await this.repo.findOne({
+        where: { id: idOrSlug },
+        relations: ['project', 'assignedTo'],
+      });
+    } else {
+      const where: any = { slug: idOrSlug };
+      if (projectId) {
+        where.projectId = projectId;
+      }
+      task = await this.repo.findOne({
+        where,
+        relations: ['project', 'assignedTo'],
+      });
+
+      if (!task) {
+        const historyWhere: any = { slug: idOrSlug };
+        if (projectId) {
+          historyWhere.projectId = projectId;
+        }
+        const history = await this.taskSlugHistoryRepo.findOne({
+          where: historyWhere,
+          relations: ['task', 'task.project', 'task.assignedTo'],
+        });
+        if (history?.task) {
+          task = history.task;
+        }
+      }
+    }
+
     if (!task) {
-      throw new NotFoundException(`Task ${id} no encontrada`);
+      throw new NotFoundException(`Task ${idOrSlug} no encontrada`);
     }
     return task;
   }
@@ -113,10 +236,13 @@ export class TasksService {
       await this.assertValidParentTask(dto.projectId, dto.parentTaskId);
     }
 
+    const slug = await this.generateUniqueSlug(dto.title, project.id, this.repo.manager);
+
     const task = new TaskEntity();
     task.projectId = dto.projectId;
     task.parentTaskId = dto.parentTaskId ?? null;
     task.title = dto.title;
+    task.slug = slug;
     task.description = dto.description ?? null;
     task.status = dto.status ?? TaskStatus.PENDING;
     task.priority = dto.priority ?? TaskPriority.MEDIUM;
@@ -132,7 +258,7 @@ export class TasksService {
       actionType: ProjectActivityAction.TASK_CREATED,
       entityType: ProjectActivityEntityType.TASK,
       entityId: saved.id,
-      metadata: { title: saved.title },
+      metadata: { title: saved.title, slug: saved.slug },
     });
     return saved;
   }
@@ -176,8 +302,8 @@ export class TasksService {
     return qb.orderBy('task.createdAt', 'DESC').getMany();
   }
 
-  async findOne(id: string, user: RequestUser): Promise<TaskEntity> {
-    const task = await this.findTaskOrThrow(id);
+  async findOne(id: string, user: RequestUser, projectId?: string): Promise<TaskEntity> {
+    const task = await this.findTaskOrThrow(id, projectId);
 
     const allowed = await this.permissions.canViewTask(user, task.project);
     if (!allowed) {
@@ -237,8 +363,38 @@ export class TasksService {
       }
     }
 
-    
     const changes: Record<string, { old: any; new: any }> = {};
+
+    // Si cambió el título, actualizar el slug de la tarea y registrar el anterior en el histórico
+    if (dto.title !== undefined && dto.title.trim() && dto.title.trim() !== task.title) {
+      const oldSlug = task.slug;
+      const candidateBaseSlug = slugify(dto.title.trim(), 'tarea');
+      if (candidateBaseSlug && candidateBaseSlug !== task.slug) {
+        const newSlug = await this.generateUniqueSlug(
+          dto.title.trim(),
+          task.projectId,
+          this.repo.manager,
+          task.id,
+        );
+        if (newSlug !== task.slug) {
+          // Si el newSlug estaba en el histórico de esta misma tarea, liberarlo
+          await this.taskSlugHistoryRepo.delete({ taskId: task.id, slug: newSlug });
+
+          if (oldSlug) {
+            await this.taskSlugHistoryRepo.save(
+              this.taskSlugHistoryRepo.create({
+                taskId: task.id,
+                projectId: task.projectId,
+                slug: oldSlug,
+              }),
+            );
+          }
+          changes.slug = { old: oldSlug, new: newSlug };
+          task.slug = newSlug;
+        }
+      }
+    }
+
     const trackChange = (field: keyof TaskEntity, dtoField: keyof UpdateTaskDto) => {
       if (dto[dtoField] !== undefined && task[field] !== dto[dtoField]) {
         changes[field as string] = { old: task[field], new: dto[dtoField] };
