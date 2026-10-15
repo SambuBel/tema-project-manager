@@ -303,7 +303,7 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
               className="flex items-center border-b border-[#DEE5EC] transition-colors last:border-b-0 hover:bg-[#EAF2F7]/40"
             >
             <button
-              onClick={() => onSelectTask(task.id)}
+              onClick={() => onSelectTask(task.slug || task.id)}
               className="grid min-w-0 flex-1 grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 px-5 py-3.5 text-left"
             >
               {/* Tarea */}

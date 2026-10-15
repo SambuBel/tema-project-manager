@@ -53,11 +53,13 @@ import { ProjectActivityEntity } from './project-activity.entity';
 import { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
 import { SubtaskEntity } from '../../subtasks/subtask.entity';
 import { ProjectSlugHistoryEntity } from '../../projects/project-slug-history.entity';
+import { TaskSlugHistoryEntity } from '../../tasks/task-slug-history.entity';
 
 export const ALL_ENTITIES = [
   ProjectInvitationEntity,
   ProjectActivityEntity,
   ProjectSlugHistoryEntity,
+  TaskSlugHistoryEntity,
   ProjectEntity,
   UserEntity,
   RoleEntity,
@@ -90,3 +92,4 @@ export { SubtaskEntity } from '../../subtasks/subtask.entity';
 export * from './project-activity.entity';
 export { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
 export { ProjectSlugHistoryEntity } from '../../projects/project-slug-history.entity';
+export { TaskSlugHistoryEntity } from '../../tasks/task-slug-history.entity';
