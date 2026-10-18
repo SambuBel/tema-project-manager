@@ -21,7 +21,7 @@ interface ChatMessage {
 }
 
 /** La charla se guarda por usuario y por pestaña: sobrevive a recargar, no a cerrar la pestaña. */
-const storageKey = (userId?: string) => `tema.assistant.chat.${userId ?? 'anon'}`;
+const storageKey = (userId: string) => `tema.assistant.chat.${userId}`;
 
 function loadMessages(key: string): ChatMessage[] {
   try {
@@ -40,22 +40,27 @@ function loadMessages(key: string): ChatMessage[] {
 export function ChatPanel({ open, onClose }: ChatPanelProps) {
   const { projectId } = useParams<{ projectId?: string }>();
   const { user } = useCurrentUser();
-  const key = storageKey(user?.id);
+  const key = user ? storageKey(user.id) : null;
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>(() => loadMessages(key));
+  const [messages, setMessages] = useState<ChatMessage[]>(() => (key ? loadMessages(key) : []));
   const [lastQuestion, setLastQuestion] = useState('');
+  // Clave de la que ya se cargó la charla: evita guardar mensajes de otro usuario bajo la clave nueva.
+  const [loadedKey, setLoadedKey] = useState(key);
 
   useEffect(() => {
+    if (!key) return;
     setMessages(loadMessages(key));
+    setLoadedKey(key);
   }, [key]);
 
   useEffect(() => {
+    if (!key || loadedKey !== key) return;
     try {
       sessionStorage.setItem(key, JSON.stringify(messages));
     } catch {
       // sin storage la charla sigue andando, solo que no se conserva al recargar
     }
-  }, [key, messages]);
+  }, [key, loadedKey, messages]);
 
   const status = useQuery({ queryKey: ['assistant-status'], queryFn: api.getAssistantStatus, enabled: open, staleTime: Infinity });
 
