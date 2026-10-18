@@ -6,6 +6,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { FilterTasksDto } from './dto/filter-tasks.dto';
+import { TaskListItemDto, toTaskListItem } from './dto/task-list-item.dto';
 import { TasksService } from './tasks.service';
 import { UpdateTaskStatusDto } from './dto/update-task-status.dto';
 
@@ -25,8 +26,9 @@ export class TasksController {
   }
 
   @Get()
-  findAll(@Query() filters: FilterTasksDto, @CurrentUser() user: RequestUser) {
-    return this.tasksService.findAllByProject(filters, user);
+  async findAll(@Query() filters: FilterTasksDto, @CurrentUser() user: RequestUser): Promise<TaskListItemDto[]> {
+    const tasks = await this.tasksService.findAllByProject(filters, user);
+    return tasks.map(toTaskListItem);
   }
 
   @Get(':id')
