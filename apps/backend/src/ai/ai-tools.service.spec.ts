@@ -5,7 +5,7 @@ import { TasksService } from '../tasks/tasks.service';
 import { ProjectsService } from '../projects/projects.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { ProjectEntity } from '../projects/project.entity';
-import { TaskStatus } from '../database/enums';
+import { AuditOrigin, TaskStatus } from '../database/enums';
 
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
 const OTHER_PROJECT_ID = '22222222-2222-4222-8222-222222222222';
@@ -104,7 +104,10 @@ describe('AiToolsService', () => {
 
     const result = await tools.execute(TOOL_NAMES.updateTaskStatus, { taskId: TASK_ID, status: TaskStatus.COMPLETED }, ctx);
 
-    expect(mockTasksService.updateStatus).toHaveBeenCalledWith(TASK_ID, { status: TaskStatus.COMPLETED }, user);
+    expect(mockTasksService.updateStatus).toHaveBeenCalledWith(TASK_ID, { status: TaskStatus.COMPLETED }, user, {
+      origin: AuditOrigin.AI,
+      request: undefined,
+    });
     expect(result.updated).toMatchObject({ id: TASK_ID, status: TaskStatus.COMPLETED });
   });
 
@@ -119,8 +122,22 @@ describe('AiToolsService', () => {
     expect(mockTasksService.create).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: PROJECT_ID, title: 'Nueva', dueDate: '2026-10-20' }),
       user,
+      { origin: AuditOrigin.AI, request: undefined },
     );
     expect(ok.created).toMatchObject({ id: TASK_ID });
+  });
+
+  it('HU39: las acciones que modifican datos viajan marcadas como IA con el pedido del usuario', async () => {
+    const withMessage: ToolContext = { user, project, message: 'creá la tarea Revisar diseño' };
+    mockTasksService.create.mockResolvedValue({ id: TASK_ID, title: 'Revisar diseño', status: TaskStatus.PENDING, dueDate: null });
+    mockTasksService.updateStatus.mockResolvedValue({ id: TASK_ID, title: 'X', status: TaskStatus.BLOCKED, dueDate: null });
+
+    await tools.execute(TOOL_NAMES.createTask, { title: 'Revisar diseño' }, withMessage);
+    await tools.execute(TOOL_NAMES.updateTaskStatus, { taskId: TASK_ID, status: TaskStatus.BLOCKED }, withMessage);
+
+    const source = { origin: AuditOrigin.AI, request: 'creá la tarea Revisar diseño' };
+    expect(mockTasksService.create).toHaveBeenCalledWith(expect.anything(), user, source);
+    expect(mockTasksService.updateStatus).toHaveBeenCalledWith(TASK_ID, { status: TaskStatus.BLOCKED }, user, source);
   });
 
   it('incluye al lider en el equipo aunque no tenga fila de miembro (puede ser responsable)', async () => {

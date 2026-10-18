@@ -5,6 +5,7 @@ import { ProjectMemberEntity } from '../database/entities/project-member.entity'
 import { ProjectEntity } from '../projects/project.entity';
 import { TaskEntity } from './task.entity';
 import {
+  AuditOrigin,
   ProjectActivityAction,
   ProjectActivityEntityType,
   ProjectMemberRole,
@@ -887,6 +888,24 @@ describe('TasksService - updateStatus (transiciones de estado)', () => {
       entityId: 'task-1',
       metadata: { changes: { status: { old: TaskStatus.PENDING, new: TaskStatus.IN_PROGRESS } } },
     });
+  });
+
+  it('HU39: un cambio de estado hecho por el asistente queda con origen AI y el pedido del usuario', async () => {
+    const { service, taskRepo, activityService } = makeService([]);
+    taskRepo.findOne.mockResolvedValue(makeTask({ project: makeProject(), status: TaskStatus.PENDING }));
+
+    await service.updateStatus('task-1', { status: TaskStatus.IN_PROGRESS }, makeUser('admin-1', [RoleName.ADMIN]), {
+      origin: AuditOrigin.AI,
+      request: 'pasá la tarea a en progreso',
+    });
+
+    expect(activityService.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: 'admin-1',
+        origin: AuditOrigin.AI,
+        metadata: expect.objectContaining({ viaAssistant: true, request: 'pasá la tarea a en progreso' }),
+      }),
+    );
   });
 
   it('lanza NotFoundException si la tarea no existe', async () => {

@@ -8,7 +8,7 @@ import { SubtaskEntity } from '../subtasks/subtask.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { CommentEntity } from '../database/entities/comment.entity';
 import { ProjectActivityService } from '../projects/project-activity.service';
-import { ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
+import { AuditOrigin, ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
 import { ProjectActivityEntity } from '../database/entities/project-activity.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 import { UsersService } from '../users/users.service';
@@ -31,6 +31,20 @@ import {
  * RN-03 (el responsable debe pertenecer al proyecto), la jerarquía de subtareas
  * y RN-04 (no completar con subtareas pendientes)
  */
+/** Desde dónde viene un cambio. Sin esto se asume que lo hizo el usuario desde la app. */
+export interface ChangeSource {
+  origin: AuditOrigin;
+  /** Pedido original del usuario cuando el cambio lo ejecutó el asistente. */
+  request?: string;
+}
+
+const originOf = (source?: ChangeSource) => (source ? { origin: source.origin } : {});
+
+function withSourceMetadata<T extends object>(metadata: T, source?: ChangeSource): T | (T & { viaAssistant: true; request?: string }) {
+  if (source?.origin !== AuditOrigin.AI) return metadata;
+  return { ...metadata, viaAssistant: true, request: source.request };
+}
+
 @Injectable()
 export class TasksService {
   constructor(
@@ -220,7 +234,7 @@ export class TasksService {
     }
   }
 
-  async create(dto: CreateTaskDto, user: RequestUser): Promise<TaskEntity> {
+  async create(dto: CreateTaskDto, user: RequestUser, source?: ChangeSource): Promise<TaskEntity> {
     const project = await this.findProjectOrThrow(dto.projectId);
 
     const allowed = await this.permissions.canCreateTask(user, project);
@@ -258,7 +272,8 @@ export class TasksService {
       actionType: ProjectActivityAction.TASK_CREATED,
       entityType: ProjectActivityEntityType.TASK,
       entityId: saved.id,
-      metadata: { title: saved.title, slug: saved.slug },
+      metadata: withSourceMetadata({ title: saved.title, slug: saved.slug }, source),
+      ...originOf(source),
     });
     return saved;
   }
@@ -519,7 +534,7 @@ export class TasksService {
    * Cambia el estado de una tarea validando la transición.
    * Endpoint dedicado: PATCH /tasks/:id/status
    */
-  async updateStatus(id: string, dto: UpdateTaskStatusDto, user: RequestUser): Promise<TaskEntity> {
+  async updateStatus(id: string, dto: UpdateTaskStatusDto, user: RequestUser, source?: ChangeSource): Promise<TaskEntity> {
     const task = await this.findTaskOrThrow(id);
 
     const allowed = await this.permissions.canEditTask(user, task, task.project);
@@ -555,7 +570,8 @@ export class TasksService {
       actionType: ProjectActivityAction.TASK_UPDATED,
       entityType: ProjectActivityEntityType.TASK,
       entityId: saved.id,
-      metadata: { changes: { status: { old: oldStatus, new: dto.status } } },
+      metadata: withSourceMetadata({ changes: { status: { old: oldStatus, new: dto.status } } }, source),
+      ...originOf(source),
     });
 
     return saved;
