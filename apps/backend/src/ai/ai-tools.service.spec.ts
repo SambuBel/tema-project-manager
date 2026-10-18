@@ -73,6 +73,25 @@ describe('AiToolsService', () => {
     expect(result).toEqual({ error: 'No podés cambiar el estado de esta tarea.' });
   });
 
+  it('una lista vacia de tareas o proyectos se marca como empty para que el modelo no invente', async () => {
+    const tasks = await tools.execute(TOOL_NAMES.listTasks, {}, ctx);
+    const overdue = await tools.execute(TOOL_NAMES.listOverdueTasks, {}, ctx);
+    const projects = await tools.execute(TOOL_NAMES.listProjects, {}, ctx);
+
+    for (const result of [tasks, overdue, projects]) {
+      expect(result).toMatchObject({ empty: true, note: expect.any(String) });
+    }
+  });
+
+  it('una lista con datos no lleva la marca empty', async () => {
+    mockTasksService.findAllByProject.mockResolvedValue([{ id: TASK_ID, title: 'X', status: TaskStatus.PENDING, dueDate: null }]);
+
+    const result = await tools.execute(TOOL_NAMES.listTasks, {}, ctx);
+
+    expect(result.empty).toBeUndefined();
+    expect(result.tasks).toHaveLength(1);
+  });
+
   it('rechaza enums invalidos sin llamar al service', async () => {
     const result = await tools.execute(TOOL_NAMES.updateTaskStatus, { taskId: TASK_ID, status: 'DONE' }, ctx);
 

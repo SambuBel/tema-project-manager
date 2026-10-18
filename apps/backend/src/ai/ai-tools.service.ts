@@ -169,7 +169,7 @@ export class AiToolsService {
           },
           ctx.user,
         );
-        return { projects: projects.map(toProjectSummary) };
+        return withEmptyNote({ projects: projects.map(toProjectSummary) }, 'projects', 'No se encontraron proyectos con esos criterios.');
       }
 
       case TOOL_NAMES.listTasks: {
@@ -184,7 +184,7 @@ export class AiToolsService {
           },
           ctx.user,
         );
-        return { project: project.name, tasks: tasks.map(toTaskSummary) };
+        return withEmptyNote({ project: project.name, tasks: tasks.map(toTaskSummary) }, 'tasks', 'No se encontraron tareas con esos criterios.');
       }
 
       case TOOL_NAMES.listOverdueTasks: {
@@ -195,7 +195,11 @@ export class AiToolsService {
             : { projectId: project.id },
           ctx.user,
         );
-        return { project: project.name, tasks: tasks.filter((task) => isOverdue(task)).map(toTaskSummary) };
+        return withEmptyNote(
+          { project: project.name, tasks: tasks.filter((task) => isOverdue(task)).map(toTaskSummary) },
+          'tasks',
+          'No hay tareas vencidas.',
+        );
       }
 
       case TOOL_NAMES.getTask: {
@@ -266,6 +270,12 @@ export class AiToolsService {
     if (ctx.project) return ctx.project;
     throw new ToolInputError('No sé de qué proyecto hablás: abrí un proyecto o decime cuál.');
   }
+}
+
+/** Si la lista viene vacía se lo marcamos al modelo: tiene que decir que no hay datos, no completarlos. */
+function withEmptyNote(result: ToolResult, listKey: string, note: string): ToolResult {
+  const list = result[listKey];
+  return Array.isArray(list) && list.length === 0 ? { ...result, empty: true, note } : result;
 }
 
 export function isOverdue(task: Pick<TaskEntity, 'dueDate' | 'status'>, today = new Date()): boolean {
