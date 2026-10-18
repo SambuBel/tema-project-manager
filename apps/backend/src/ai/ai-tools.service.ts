@@ -2,10 +2,10 @@ import { HttpException, Injectable } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { FunctionDeclaration } from '@google/genai';
-import { TasksService } from '../tasks/tasks.service';
+import { ChangeSource, TasksService } from '../tasks/tasks.service';
 import { ProjectsService } from '../projects/projects.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
-import { ProjectStatus, TaskPriority, TaskStatus } from '../database/enums';
+import { AuditOrigin, ProjectStatus, TaskPriority, TaskStatus } from '../database/enums';
 import { TaskEntity } from '../tasks/task.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { CreateTaskDto } from '../tasks/dto/create-task.dto';
@@ -14,9 +14,14 @@ export interface ToolContext {
   user: RequestUser;
   /** Proyecto que el usuario tiene abierto en pantalla (si hay), ya resuelto y con permiso verificado. */
   project: ProjectEntity | null;
+  /** Mensaje del usuario que originó la consulta: queda en el historial si el asistente modifica algo. */
+  message?: string;
 }
 
-export type ToolArgs = Record<string, unknown>;
+/** Marca de origen para los cambios que hace el asistente (HU39): el actor sigue siendo el usuario. */
+const aiSource = (ctx: ToolContext): ChangeSource => ({ origin: AuditOrigin.AI, request: ctx.message });
+
+export type ToolArgs =Record<string, unknown>;
 export type ToolResult = Record<string, unknown>;
 
 /** Error "esperable" de una tool (falta un dato, valor invalido): se le devuelve al modelo, no rompe el chat. */
@@ -228,7 +233,7 @@ export class AiToolsService {
       case TOOL_NAMES.updateTaskStatus: {
         const status = optionalEnum(args.status, TaskStatus, 'status');
         if (!status) throw new ToolInputError('Falta el estado nuevo de la tarea.');
-        const task = await this.tasksService.updateStatus(requiredString(args.taskId, 'taskId'), { status }, ctx.user);
+        const task = await this.tasksService.updateStatus(requiredString(args.taskId, 'taskId'), { status }, ctx.user, aiSource(ctx));
         return { updated: toTaskSummary(task) };
       }
 
@@ -248,7 +253,7 @@ export class AiToolsService {
         if (errors.length > 0) {
           throw new ToolInputError(errors.flatMap((e) => Object.values(e.constraints ?? {})).join('; '));
         }
-        const task = await this.tasksService.create(dto, ctx.user);
+        const task = await this.tasksService.create(dto, ctx.user, aiSource(ctx));
         return { created: toTaskSummary(task) };
       }
 
