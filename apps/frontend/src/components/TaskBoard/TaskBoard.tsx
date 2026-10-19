@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { DragDropContext, DropResult } from '@hello-pangea/dnd';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import type { Project, Task, TaskStatus } from '@tema/shared-types';
+import type { Project, Task, TaskPriority, TaskStatus } from '@tema/shared-types';
 import { BoardColumn } from './BoardColumn';
-import { taskStatusLabels } from '../../types/task';
+import { taskStatusLabels, taskPriorityLabels } from '../../types/task';
 import { handleDragEndLogic } from './dragDropLogic';
 import { getMutationOptions } from './mutationLogic';
 
@@ -19,6 +19,9 @@ const COLUMNS: TaskStatus[] = ['PENDING', 'IN_PROGRESS', 'IN_REVIEW', 'BLOCKED',
 export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) {
   const qc = useQueryClient();
   const [toast, setToast] = useState<string | null>(null);
+  /* Filtros del tablero (se aplican en el cliente, sobre las tareas ya cargadas). */
+  const [assigneeFilter, setAssigneeFilter] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | ''>('');
 
   useEffect(() => {
     if (toast) {
@@ -40,7 +43,7 @@ export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) 
         mutation.mutate({ taskId, status: destStatus });
       },
       onInvalidTransition: (sourceStatus, destStatus) => {
-        setToast(`No se puede pasar una tarea de ${taskStatusLabels[sourceStatus]} a ${taskStatusLabels[destStatus]}.`);
+        setToast('No se puede pasar una tarea de ' + taskStatusLabels[sourceStatus] + ' a ' + taskStatusLabels[destStatus] + '.');
       }
     });
   };
@@ -53,8 +56,29 @@ export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) 
     return <p className="text-sm text-red-600">Error al cargar las tareas.</p>;
   }
 
+  /* Responsables que aparecen en el tablero, sin repetidos y ordenados por nombre. */
+  const assignees = new Map<string, string>();
+  for (const t of tasks ?? []) {
+    if (t.assignedTo) assignees.set(t.assignedTo.id, t.assignedTo.name);
+  }
+  const assigneeOptions = [...assignees.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+
+  const hasActiveFilters = !!assigneeFilter || !!priorityFilter;
+
+  const filteredTasks = (tasks ?? []).filter((t) => {
+    if (priorityFilter && t.priority !== priorityFilter) return false;
+    if (assigneeFilter === 'UNASSIGNED') return !t.assignedToId;
+    if (assigneeFilter && t.assignedToId !== assigneeFilter) return false;
+    return true;
+  });
+
+  const clearFilters = () => {
+    setAssigneeFilter('');
+    setPriorityFilter('');
+  };
+
   const tasksByStatus = COLUMNS.reduce((acc, status) => {
-    acc[status] = tasks?.filter((t) => t.status === status) || [];
+    acc[status] = filteredTasks.filter((t) => t.status === status);
     return acc;
   }, {} as Record<TaskStatus, Task[]>);
 
@@ -68,6 +92,48 @@ export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) 
           {toast}
         </div>
       )}
+      {/* Filtros */}
+      <div className="mb-4 flex flex-wrap items-center justify-end gap-3 px-1">
+        {hasActiveFilters && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="rounded-lg px-3 py-2 text-sm text-[#607185] hover:underline"
+          >
+            Limpiar filtros
+          </button>
+        )}
+
+        <select
+          aria-label="Filtrar por responsable"
+          className="rounded-lg border border-[#DEE5EC] bg-white px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
+          value={assigneeFilter}
+          onChange={(e) => setAssigneeFilter(e.target.value)}
+        >
+          <option value="">Responsable: Todos</option>
+          <option value="UNASSIGNED">Sin asignar</option>
+          {assigneeOptions.map(([id, name]) => (
+            <option key={id} value={id}>
+              {name}
+            </option>
+          ))}
+        </select>
+
+        <select
+          aria-label="Filtrar por prioridad"
+          className="rounded-lg border border-[#DEE5EC] bg-white px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value as TaskPriority | '')}
+        >
+          <option value="">Prioridad: Todas</option>
+          {Object.entries(taskPriorityLabels).map(([key, label]) => (
+            <option key={key} value={key}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <DragDropContext onDragEnd={handleDragEnd}>
         <div className="flex min-h-[500px] w-full min-w-0 overflow-x-auto pb-4 px-1 overscroll-x-contain">
           {COLUMNS.map((status) => (
