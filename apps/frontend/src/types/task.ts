@@ -71,6 +71,13 @@ export const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   COMPLETED:   ALL_STATUSES.filter((s) => s !== 'COMPLETED'),
 };
 
+export interface CommentMention {
+  userId: string;
+  name: string;
+  startIndex: number;
+  endIndex: number;
+}
+
 export interface TaskTimelineItem {
   id: string;
   type: 'COMMENT' | 'HISTORY';
@@ -83,4 +90,6 @@ export interface TaskTimelineItem {
     avatar: string;
   };
   createdAt: string;
+  editedAt?: string | null;
+  mentions?: CommentMention[];
 }

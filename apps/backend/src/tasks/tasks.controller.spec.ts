@@ -19,10 +19,10 @@ const currentUser = { id: '33333333-3333-4333-8333-333333333333' } as UserEntity
 describe('TasksController - POST /tasks', () => {
   let app: INestApplication;
   let baseUrl: string;
-  let tasksService: { create: jest.Mock };
+  let tasksService: { create: jest.Mock; updateComment: jest.Mock; deleteComment: jest.Mock };
 
   async function startApp(opts: { authenticated: boolean }) {
-    tasksService = { create: jest.fn() };
+    tasksService = { create: jest.fn(), updateComment: jest.fn(), deleteComment: jest.fn() };
 
     const builder = Test.createTestingModule({
       controllers: [TasksController],
@@ -128,6 +128,131 @@ describe('TasksController - POST /tasks', () => {
 
       expect(res.status).toBe(401);
       expect(tasksService.create).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('TasksController - PATCH & DELETE /tasks/:id/comments/:commentId (HM22)', () => {
+  let app: INestApplication;
+  let baseUrl: string;
+  let tasksService: { create: jest.Mock; updateComment: jest.Mock; deleteComment: jest.Mock };
+
+  async function startApp(opts: { authenticated: boolean }) {
+    tasksService = { create: jest.fn(), updateComment: jest.fn(), deleteComment: jest.fn() };
+
+    const builder = Test.createTestingModule({
+      controllers: [TasksController],
+      providers: [
+        { provide: TasksService, useValue: tasksService },
+        { provide: JwtService, useValue: { verify: jest.fn() } },
+        { provide: UsersService, useValue: { findById: jest.fn() } },
+        { provide: AuthService, useValue: { getRoleNames: jest.fn(async () => []) } },
+      ],
+    });
+
+    if (opts.authenticated) {
+      builder.overrideGuard(JwtAuthGuard).useValue({
+        canActivate: (ctx: ExecutionContext) => {
+          ctx.switchToHttp().getRequest().user = currentUser;
+          return true;
+        },
+      });
+    }
+
+    const moduleRef = await builder.compile();
+    app = moduleRef.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    await app.listen(0, '127.0.0.1');
+    baseUrl = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}`;
+  }
+
+  const patchComment = (taskId: string, commentId: string, body: unknown) =>
+    fetch(`${baseUrl}/tasks/${taskId}/comments/${commentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  const deleteComment = (taskId: string, commentId: string) =>
+    fetch(`${baseUrl}/tasks/${taskId}/comments/${commentId}`, {
+      method: 'DELETE',
+    });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  describe('con usuario autenticado', () => {
+    beforeEach(() => startApp({ authenticated: true }));
+
+    it('PATCH responde 200 y delega en updateComment con id, commentId, content y usuario', async () => {
+      tasksService.updateComment.mockResolvedValue({ id: 'comm-1', content: 'Nuevo texto' });
+
+      const res = await patchComment('task-1', 'comm-1', { content: 'Nuevo texto' });
+
+      expect(res.status).toBe(200);
+      expect(tasksService.updateComment).toHaveBeenCalledWith('task-1', 'comm-1', 'Nuevo texto', currentUser, undefined);
+    });
+
+    it('PATCH con menciones delega en updateComment con las menciones validadas', async () => {
+      const mentions = [
+        {
+          userId: '11111111-1111-4111-8111-111111111111',
+          name: 'Ana Gómez',
+          startIndex: 5,
+          endIndex: 15,
+        },
+      ];
+      tasksService.updateComment.mockResolvedValue({ id: 'comm-1', content: 'Hola @Ana Gómez' });
+
+      const res = await patchComment('task-1', 'comm-1', {
+        content: 'Hola @Ana Gómez',
+        mentions,
+      });
+
+      expect(res.status).toBe(200);
+      expect(tasksService.updateComment).toHaveBeenCalledWith(
+        'task-1',
+        'comm-1',
+        'Hola @Ana Gómez',
+        currentUser,
+        mentions,
+      );
+    });
+
+    it('PATCH responde 400 si content está vacío o solo contiene espacios', async () => {
+      const res = await patchComment('task-1', 'comm-1', { content: '   ' });
+
+      expect(res.status).toBe(400);
+      expect(tasksService.updateComment).not.toHaveBeenCalled();
+    });
+
+    it('DELETE responde 200 y delega en deleteComment con id, commentId y usuario', async () => {
+      tasksService.deleteComment.mockResolvedValue({ success: true });
+
+      const res = await deleteComment('task-1', 'comm-1');
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ success: true });
+      expect(tasksService.deleteComment).toHaveBeenCalledWith('task-1', 'comm-1', currentUser);
+    });
+  });
+
+  describe('sin sesión', () => {
+    beforeEach(() => startApp({ authenticated: false }));
+
+    it('PATCH responde 401 sin sesión', async () => {
+      const res = await patchComment('task-1', 'comm-1', { content: 'Nuevo texto' });
+
+      expect(res.status).toBe(401);
+      expect(tasksService.updateComment).not.toHaveBeenCalled();
+    });
+
+    it('DELETE responde 401 sin sesión', async () => {
+      const res = await deleteComment('task-1', 'comm-1');
+
+      expect(res.status).toBe(401);
+      expect(tasksService.deleteComment).not.toHaveBeenCalled();
     });
   });
 });

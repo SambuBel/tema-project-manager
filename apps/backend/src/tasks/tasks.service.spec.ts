@@ -72,7 +72,8 @@ interface Deps {
   usersService: { findById: jest.Mock };
   subtaskRepo: { count: jest.Mock };
   activityService: { logEvent: jest.Mock };
-  commentRepo: { create: jest.Mock; save: jest.Mock; find: jest.Mock };
+  commentRepo: { create: jest.Mock; save: jest.Mock; find: jest.Mock; findOne: jest.Mock };
+  commentMentionRepo: { create: jest.Mock; save: jest.Mock; delete: jest.Mock; find: jest.Mock };
   taskSlugHistoryRepo: { findOne: jest.Mock; find: jest.Mock; create: jest.Mock; save: jest.Mock; delete: jest.Mock<any, [any]> };
 }
 
@@ -105,6 +106,13 @@ function makeService(
     create: jest.fn((c: unknown) => c),
     save: jest.fn(async (c: unknown) => c),
     find: jest.fn(async () => [] as unknown[]),
+    findOne: jest.fn(),
+  };
+  const commentMentionRepo = {
+    create: jest.fn((m: unknown) => m),
+    save: jest.fn(async (m: unknown) => m),
+    delete: jest.fn(async () => ({ affected: 1 })),
+    find: jest.fn(async () => []),
   };
   const usersService = { findById: jest.fn(async (id: string) => ({ id, active: true })) };
   const subtaskRepo = {
@@ -139,6 +147,7 @@ function makeService(
     taskRepo as unknown as import('typeorm').Repository<TaskEntity>,
     projectRepo as unknown as import('typeorm').Repository<ProjectEntity>,
     commentRepo as never,
+    commentMentionRepo as never,
     usersService as never,
     permissions as never,
     activityService as never,
@@ -156,6 +165,7 @@ function makeService(
     subtaskRepo,
     activityService,
     commentRepo,
+    commentMentionRepo,
     taskSlugHistoryRepo,
   };
 }
@@ -789,6 +799,478 @@ describe('TasksService - comentarios (canCommentOnTask) vs lectura (canViewTask)
       const { service, taskRepo } = makeService([]);
       taskRepo.findOne.mockResolvedValue(foreignTask());
       await expect(service.getTimeline('task-1', actor)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('excluye comentarios eliminados lógicamente (soft delete) e incluye editedAt', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(COLLAB.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+
+      const editedDate = new Date('2026-10-18T12:00:00.000Z');
+      commentRepo.find.mockResolvedValue([
+        {
+          id: 'c-active-unedited',
+          content: 'Activo sin editar',
+          author: { id: 'u1', name: 'Usuario Uno' },
+          createdAt: new Date('2026-10-18T10:00:00.000Z'),
+          editedAt: null,
+          deletedAt: null,
+        },
+        {
+          id: 'c-active-edited',
+          content: 'Activo y editado',
+          author: { id: 'u2', name: 'Usuario Dos' },
+          createdAt: new Date('2026-10-18T11:00:00.000Z'),
+          editedAt: editedDate,
+          deletedAt: null,
+        },
+        {
+          id: 'c-deleted',
+          content: 'Comentario eliminado',
+          author: { id: 'u3', name: 'Usuario Tres' },
+          createdAt: new Date('2026-10-18T09:00:00.000Z'),
+          editedAt: null,
+          deletedAt: new Date('2026-10-18T10:30:00.000Z'),
+        },
+      ]);
+
+      const timeline = await service.getTimeline('task-1', COLLAB);
+
+      // Comentario eliminado no debe estar en la timeline
+      expect(timeline.some((item) => item.id === 'c-deleted')).toBe(false);
+
+      // Comentarios activos presentes
+      const unedited = timeline.find((item) => item.id === 'c-active-unedited');
+      expect(unedited).toBeDefined();
+      expect(unedited.editedAt).toBeNull();
+
+      const edited = timeline.find((item) => item.id === 'c-active-edited');
+      expect(edited).toBeDefined();
+      expect(edited.editedAt).toEqual(editedDate);
+      expect(edited.content).toBe('Activo y editado');
+    });
+  });
+
+  describe('updateComment (HM22: edición de comentarios)', () => {
+    const AUTHOR = makeUser('author-1', [RoleName.COLLABORATOR]);
+    const OTHER_USER = makeUser('other-1', [RoleName.COLLABORATOR]);
+
+    const makeComment = (overrides: Record<string, unknown> = {}) => ({
+      id: 'comm-1',
+      taskId: 'task-1',
+      authorUserId: AUTHOR.id,
+      content: 'Comentario inicial',
+      createdAt: new Date('2026-10-18T10:00:00.000Z'),
+      editedAt: null as Date | null,
+      deletedAt: null as Date | null,
+      ...overrides,
+    });
+
+    it('el autor edita su comentario: actualiza content, setea editedAt y preserva id y createdAt', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      const initialComment = makeComment();
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(initialComment);
+
+      const beforeUpdate = new Date();
+      const result = await service.updateComment('task-1', 'comm-1', '  Contenido editado  ', AUTHOR);
+
+      expect(commentRepo.findOne).toHaveBeenCalledWith({ where: { id: 'comm-1' } });
+      expect(commentRepo.save).toHaveBeenCalledTimes(1);
+      expect(result.id).toBe('comm-1');
+      expect(result.createdAt).toEqual(initialComment.createdAt);
+      expect(result.content).toBe('Contenido editado');
+      expect(result.editedAt).toBeInstanceOf(Date);
+      expect(result.editedAt!.getTime()).toBeGreaterThanOrEqual(beforeUpdate.getTime());
+    });
+
+    it('un usuario que no es el autor recibe 403 ForbiddenException y no guarda', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(OTHER_USER.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(makeComment());
+
+      await expect(
+        service.updateComment('task-1', 'comm-1', 'Intento de edición ajena', OTHER_USER),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('usuario sin acceso a la tarea/proyecto recibe 403 ForbiddenException', async () => {
+      const { service, taskRepo, commentRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+
+      await expect(
+        service.updateComment('task-1', 'comm-1', 'Texto nuevo', STRANGER),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(commentRepo.findOne).not.toHaveBeenCalled();
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza 404 si la tarea no existe', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.updateComment('task-inexistente', 'comm-1', 'Texto nuevo', AUTHOR),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza 404 si el comentario no existe', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.updateComment('task-1', 'comm-inexistente', 'Texto nuevo', AUTHOR),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza 404 si el comentario pertenece a otra tarea', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(makeComment({ taskId: 'otra-tarea' }));
+
+      await expect(
+        service.updateComment('task-1', 'comm-1', 'Texto nuevo', AUTHOR),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza 404 si el comentario ya fue eliminado lógicamente (deletedAt != null)', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(makeComment({ deletedAt: new Date() }));
+
+      await expect(
+        service.updateComment('task-1', 'comm-1', 'Texto nuevo', AUTHOR),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza 400 BadRequestException si el contenido está vacío o solo tiene espacios y no guarda', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(makeComment());
+
+      await expect(
+        service.updateComment('task-1', 'comm-1', '   ', AUTHOR),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteComment (HM22: eliminación lógica de comentarios)', () => {
+    const AUTHOR = makeUser('author-1', [RoleName.COLLABORATOR]);
+    const OTHER_USER = makeUser('other-1', [RoleName.COLLABORATOR]);
+
+    const makeComment = (overrides: Record<string, unknown> = {}) => ({
+      id: 'comm-1',
+      taskId: 'task-1',
+      authorUserId: AUTHOR.id,
+      content: 'Comentario para borrar',
+      createdAt: new Date('2026-10-18T10:00:00.000Z'),
+      editedAt: null as Date | null,
+      deletedAt: null as Date | null,
+      ...overrides,
+    });
+
+    it('el autor elimina su comentario: setea deletedAt (soft delete), no elimina físicamente y retorna success', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      const initialComment = makeComment();
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(initialComment);
+
+      const beforeDelete = new Date();
+      const result = await service.deleteComment('task-1', 'comm-1', AUTHOR);
+
+      expect(result).toEqual({ success: true });
+      expect(commentRepo.save).toHaveBeenCalledTimes(1);
+      expect(initialComment.deletedAt).toBeInstanceOf(Date);
+      expect((initialComment.deletedAt as Date).getTime()).toBeGreaterThanOrEqual(beforeDelete.getTime());
+    });
+
+    it('un usuario que no es el autor recibe 403 ForbiddenException y no borra', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(OTHER_USER.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(makeComment());
+
+      await expect(
+        service.deleteComment('task-1', 'comm-1', OTHER_USER),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('usuario sin acceso a la tarea/proyecto recibe 403 ForbiddenException', async () => {
+      const { service, taskRepo, commentRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+
+      await expect(
+        service.deleteComment('task-1', 'comm-1', STRANGER),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(commentRepo.findOne).not.toHaveBeenCalled();
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza 404 si la tarea no existe', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.deleteComment('task-inexistente', 'comm-1', AUTHOR),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza 404 si el comentario no existe', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.deleteComment('task-1', 'comm-inexistente', AUTHOR),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza 404 si el comentario pertenece a otra tarea', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(makeComment({ taskId: 'otra-tarea' }));
+
+      await expect(
+        service.deleteComment('task-1', 'comm-1', AUTHOR),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lanza 404 si el comentario ya estaba eliminado lógicamente', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue(makeComment({ deletedAt: new Date() }));
+
+      await expect(
+        service.deleteComment('task-1', 'comm-1', AUTHOR),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('HM21: menciones de usuarios en comentarios', () => {
+    const AUTHOR = makeUser('author-1', [RoleName.COLLABORATOR]);
+    const MENTIONED_USER_1 = makeUser('m-1', [RoleName.COLLABORATOR]);
+    const MENTIONED_USER_2 = makeUser('m-2', [RoleName.COLLABORATOR]);
+    const STRANGER_USER = makeUser('stranger-m', [RoleName.COLLABORATOR]);
+
+    it('guarda menciones válidas en comment_mentions al crear comentario', async () => {
+      const { service, taskRepo, commentRepo, commentMentionRepo, usersService } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+        membership(MENTIONED_USER_1.id, ProjectMemberRole.COLLABORATOR),
+        membership(MENTIONED_USER_2.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      usersService.findById.mockImplementation(async (id: string) => {
+        if (id === MENTIONED_USER_1.id) return { id: MENTIONED_USER_1.id, active: true };
+        if (id === MENTIONED_USER_2.id) return { id: MENTIONED_USER_2.id, active: true };
+        return null;
+      });
+
+      const content = 'Hola @Juan Pérez y @María Gómez, favor revisar';
+      const mentions = [
+        { userId: MENTIONED_USER_1.id, name: 'Juan Pérez', startIndex: 5, endIndex: 16 },
+        { userId: MENTIONED_USER_2.id, name: 'María Gómez', startIndex: 19, endIndex: 31 },
+      ];
+
+      const res = await service.addComment('task-1', content, AUTHOR, mentions);
+
+      expect(commentRepo.save).toHaveBeenCalledTimes(1);
+      expect(commentMentionRepo.save).toHaveBeenCalledTimes(1);
+      expect(res.mentions).toHaveLength(2);
+      expect(commentMentionRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: MENTIONED_USER_1.id,
+          name: 'Juan Pérez',
+          startIndex: 5,
+          endIndex: 16,
+        }),
+      );
+      expect(commentMentionRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: MENTIONED_USER_2.id,
+          name: 'María Gómez',
+          startIndex: 19,
+          endIndex: 31,
+        }),
+      );
+    });
+
+    it('lanza 400 si el texto en el rango no coincide con @name', async () => {
+      const { service, taskRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+        membership(MENTIONED_USER_1.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+
+      const content = 'Hola @Juan Pérez';
+      const mentions = [
+        { userId: MENTIONED_USER_1.id, name: 'Otro Nombre', startIndex: 5, endIndex: 16 },
+      ];
+
+      await expect(service.addComment('task-1', content, AUTHOR, mentions)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza 400 si las menciones tienen rangos superpuestos', async () => {
+      const { service, taskRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+        membership(MENTIONED_USER_1.id, ProjectMemberRole.COLLABORATOR),
+        membership(MENTIONED_USER_2.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+
+      const content = 'Hola @Juan @Pedro';
+      const mentions = [
+        { userId: MENTIONED_USER_1.id, name: 'Juan', startIndex: 5, endIndex: 12 },
+        { userId: MENTIONED_USER_2.id, name: 'Pedro', startIndex: 10, endIndex: 17 },
+      ];
+
+      await expect(service.addComment('task-1', content, AUTHOR, mentions)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza 400 si el usuario mencionado no existe o está inactivo', async () => {
+      const { service, taskRepo, usersService } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      usersService.findById.mockResolvedValue({ id: 'inactivo-1', active: false });
+
+      const content = 'Hola @Inactivo';
+      const mentions = [
+        { userId: 'inactivo-1', name: 'Inactivo', startIndex: 5, endIndex: 14 },
+      ];
+
+      await expect(service.addComment('task-1', content, AUTHOR, mentions)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza 400 si el usuario mencionado no tiene acceso a la tarea', async () => {
+      const { service, taskRepo, usersService } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      usersService.findById.mockResolvedValue({ id: STRANGER_USER.id, active: true, roles: [RoleName.COLLABORATOR] });
+
+      const content = 'Hola @Ajeno';
+      const mentions = [
+        { userId: STRANGER_USER.id, name: 'Ajeno', startIndex: 5, endIndex: 11 },
+      ];
+
+      await expect(service.addComment('task-1', content, AUTHOR, mentions)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('al editar comentario, reemplaza menciones previas en comment_mentions', async () => {
+      const { service, taskRepo, commentRepo, commentMentionRepo, usersService } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+        membership(MENTIONED_USER_1.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      commentRepo.findOne.mockResolvedValue({
+        id: 'comm-1',
+        taskId: 'task-1',
+        authorUserId: AUTHOR.id,
+        content: 'Comentario viejo',
+        createdAt: new Date(),
+        editedAt: null,
+        deletedAt: null,
+      });
+      usersService.findById.mockResolvedValue({ id: MENTIONED_USER_1.id, active: true });
+
+      const newContent = 'Editado con @Juan Pérez';
+      const newMentions = [
+        { userId: MENTIONED_USER_1.id, name: 'Juan Pérez', startIndex: 12, endIndex: 23 },
+      ];
+
+      const updated = await service.updateComment('task-1', 'comm-1', newContent, AUTHOR, newMentions);
+
+      expect(commentMentionRepo.delete).toHaveBeenCalledWith({ commentId: 'comm-1' });
+      expect(commentMentionRepo.save).toHaveBeenCalledTimes(1);
+      expect(updated.mentions).toHaveLength(1);
+    });
+
+    it('getTimeline mapea las menciones asociadas al comentario', async () => {
+      const { service, taskRepo, commentRepo } = makeService([
+        membership(AUTHOR.id, ProjectMemberRole.COLLABORATOR),
+      ]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+
+      commentRepo.find.mockResolvedValue([
+        {
+          id: 'c-with-mentions',
+          content: 'Hola @Juan Pérez',
+          author: { id: AUTHOR.id, name: 'Autor' },
+          createdAt: new Date('2026-10-18T10:00:00.000Z'),
+          editedAt: null,
+          deletedAt: null,
+          mentions: [
+            { userId: 'u-1', name: 'Juan Pérez', startIndex: 5, endIndex: 16 },
+          ],
+        },
+      ]);
+
+      const timeline = await service.getTimeline('task-1', AUTHOR);
+      const item = timeline.find((i) => i.id === 'c-with-mentions');
+
+      expect(item).toBeDefined();
+      expect(item.mentions).toEqual([
+        { userId: 'u-1', name: 'Juan Pérez', startIndex: 5, endIndex: 16 },
+      ]);
     });
   });
 });

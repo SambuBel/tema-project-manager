@@ -23,7 +23,7 @@ import type {
   LoginDto,
   CreateUserDto,
 } from '@tema/shared-types';
-import type { Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
+import type { CommentMention, Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
 
 const BASE = '/api';
 
@@ -189,7 +189,12 @@ export const api = {
   deleteSubtask: (taskId: string, subtaskId: string) =>
     request<void>(`/tasks/${taskId}/subtasks/${subtaskId}` , { method: 'DELETE' }),
   getTaskTimeline: (taskId: string) => request<TaskTimelineItem[]>(`/tasks/${taskId}/timeline`),
-  addTaskComment: (taskId: string, content: string) => request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
+  addTaskComment: (taskId: string, content: string, mentions?: CommentMention[]) =>
+    request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content, mentions }) }),
+  updateTaskComment: (taskId: string, commentId: string, content: string, mentions?: CommentMention[]) =>
+    request<TaskTimelineItem>(`/tasks/${taskId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify({ content, mentions }) }),
+  deleteTaskComment: (taskId: string, commentId: string) =>
+    request<{ success: boolean }>(`/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' }),
 
   // --- Asistente ---
   sendChatMessage: (message: string, projectId?: string, history: ChatTurn[] = []) =>

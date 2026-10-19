@@ -281,7 +281,7 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
       <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
         <h3 className="text-lg font-semibold text-[#172B42]">Actividad y Comentarios</h3>
         <div className="mt-4">
-          <TaskTimeline taskId={task.id} canComment={canComment} />
+          <TaskTimeline taskId={task.id} projectId={task.projectId} canComment={canComment} />
         </div>
       </div>
 
