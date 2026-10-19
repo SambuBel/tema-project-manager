@@ -7,6 +7,8 @@ import { slugify } from '../projects/utils/slug.util';
 import { SubtaskEntity } from '../subtasks/subtask.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { CommentEntity } from '../database/entities/comment.entity';
+import { CommentMentionEntity } from '../database/entities/comment-mention.entity';
+import { CommentMentionDto } from './dto/comment-mention.dto';
 import { ProjectActivityService } from '../projects/project-activity.service';
 import { AuditOrigin, ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
 import { ProjectActivityEntity } from '../database/entities/project-activity.entity';
@@ -54,6 +56,8 @@ export class TasksService {
     private readonly projectRepo: Repository<ProjectEntity>,
     @InjectRepository(CommentEntity)
     private readonly commentRepo: Repository<CommentEntity>,
+    @InjectRepository(CommentMentionEntity)
+    private readonly commentMentionRepo: Repository<CommentMentionEntity>,
     private readonly usersService: UsersService,
     private readonly permissions: PermissionsService,
     private readonly activityService: ProjectActivityService,
@@ -504,7 +508,58 @@ export class TasksService {
     });
   }
 
-  async addComment(taskId: string, content: string, user: RequestUser): Promise<CommentEntity> {
+  private async validateMentions(
+    content: string,
+    mentions: CommentMentionDto[] | undefined,
+    task: TaskEntity,
+  ): Promise<CommentMentionDto[]> {
+    if (!mentions || mentions.length === 0) return [];
+
+    const sorted = [...mentions].sort((a, b) => a.startIndex - b.startIndex);
+
+    for (let i = 0; i < sorted.length; i++) {
+      const m = sorted[i]!;
+      if (m.startIndex < 0 || m.endIndex > content.length || m.startIndex >= m.endIndex) {
+        throw new BadRequestException(`Rango de mención inválido [${m.startIndex}, ${m.endIndex}]`);
+      }
+
+      const prev = sorted[i - 1];
+      if (prev && m.startIndex < prev.endIndex) {
+        throw new BadRequestException('Las menciones no pueden superponerse');
+      }
+
+      const expectedText = content.substring(m.startIndex, m.endIndex);
+      if (expectedText !== `@${m.name}`) {
+        throw new BadRequestException(
+          `El texto de la mención en posición [${m.startIndex}, ${m.endIndex}] ("${expectedText}") no coincide con "@${m.name}"`,
+        );
+      }
+
+      const user = await this.usersService.findById(m.userId);
+      if (!user || !user.active || (user as any).deletedAt) {
+        throw new BadRequestException(`El usuario mencionado ${m.name} no existe o no está activo`);
+      }
+
+      const requestUser: RequestUser = {
+        id: user.id,
+        roles: Array.isArray((user as any).roles) ? (user as any).roles : [],
+      } as RequestUser;
+
+      const hasAccess = await this.permissions.canViewTask(requestUser, task.project);
+      if (!hasAccess) {
+        throw new BadRequestException(`El usuario mencionado ${m.name} no tiene acceso a esta tarea`);
+      }
+    }
+
+    return sorted;
+  }
+
+  async addComment(
+    taskId: string,
+    content: string,
+    user: RequestUser,
+    mentions?: CommentMentionDto[],
+  ): Promise<CommentEntity> {
     const task = await this.findTaskOrThrow(taskId);
     // Escribir un comentario NO es ver la tarea: policy propia (OBSERVER ve pero no comenta).
     const allowed = await this.permissions.canCommentOnTask(user, task.project);
@@ -513,12 +568,113 @@ export class TasksService {
     const trimmed = content?.trim();
     if (!trimmed) throw new BadRequestException('El comentario no puede estar vacío');
 
+    const validatedMentions = await this.validateMentions(content, mentions, task);
+
     const comment = this.commentRepo.create({
       taskId,
       authorUserId: user.id,
       content: trimmed,
     });
-    return this.commentRepo.save(comment);
+    const saved = await this.commentRepo.save(comment);
+
+    if (validatedMentions.length > 0) {
+      const mentionEntities = validatedMentions.map((m) =>
+        this.commentMentionRepo.create({
+          commentId: saved.id,
+          userId: m.userId,
+          name: m.name,
+          startIndex: m.startIndex,
+          endIndex: m.endIndex,
+        }),
+      );
+      saved.mentions = await this.commentMentionRepo.save(mentionEntities);
+    } else {
+      saved.mentions = [];
+    }
+
+    return saved;
+  }
+
+  async updateComment(
+    taskId: string,
+    commentId: string,
+    content: string,
+    user: RequestUser,
+    mentions?: CommentMentionDto[],
+  ): Promise<CommentEntity> {
+    const task = await this.findTaskOrThrow(taskId);
+    const allowed = await this.permissions.canViewTask(user, task.project);
+    if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
+
+    const comment = await this.commentRepo.findOne({ where: { id: commentId } });
+    if (!comment || comment.deletedAt) {
+      throw new NotFoundException('Comentario no encontrado');
+    }
+
+    if (comment.taskId !== task.id) {
+      throw new NotFoundException('El comentario no pertenece a esta tarea');
+    }
+
+    if (comment.authorUserId !== user.id) {
+      throw new ForbiddenException('Solo el autor puede editar este comentario');
+    }
+
+    const trimmed = content?.trim();
+    if (!trimmed) {
+      throw new BadRequestException('El comentario no puede estar vacío');
+    }
+
+    const validatedMentions = await this.validateMentions(content, mentions, task);
+
+    comment.content = trimmed;
+    comment.editedAt = new Date();
+    const saved = await this.commentRepo.save(comment);
+
+    await this.commentMentionRepo.delete({ commentId: comment.id });
+
+    if (validatedMentions.length > 0) {
+      const mentionEntities = validatedMentions.map((m) =>
+        this.commentMentionRepo.create({
+          commentId: saved.id,
+          userId: m.userId,
+          name: m.name,
+          startIndex: m.startIndex,
+          endIndex: m.endIndex,
+        }),
+      );
+      saved.mentions = await this.commentMentionRepo.save(mentionEntities);
+    } else {
+      saved.mentions = [];
+    }
+
+    return saved;
+  }
+
+  async deleteComment(
+    taskId: string,
+    commentId: string,
+    user: RequestUser,
+  ): Promise<{ success: boolean }> {
+    const task = await this.findTaskOrThrow(taskId);
+    const allowed = await this.permissions.canViewTask(user, task.project);
+    if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
+
+    const comment = await this.commentRepo.findOne({ where: { id: commentId } });
+    if (!comment || comment.deletedAt) {
+      throw new NotFoundException('Comentario no encontrado');
+    }
+
+    if (comment.taskId !== task.id) {
+      throw new NotFoundException('El comentario no pertenece a esta tarea');
+    }
+
+    if (comment.authorUserId !== user.id) {
+      throw new ForbiddenException('Solo el autor puede eliminar este comentario');
+    }
+
+    comment.deletedAt = new Date();
+    await this.commentRepo.save(comment);
+    return { success: true };
   }
 
   async getTimeline(taskId: string, user: RequestUser): Promise<any[]> {
@@ -528,15 +684,24 @@ export class TasksService {
 
     const comments = await this.commentRepo.find({
       where: { taskId },
-      relations: ['author'],
+      relations: ['author', 'mentions'],
     });
 
-    const mappedComments = comments.map((c: CommentEntity) => ({
+    const activeComments = comments.filter((c: CommentEntity) => !c.deletedAt);
+
+    const mappedComments = activeComments.map((c: CommentEntity) => ({
       id: c.id,
       type: 'COMMENT',
       content: c.content,
       actor: { id: c.author.id, name: c.author.name, avatar: c.author.name.substring(0, 2).toUpperCase() },
       createdAt: c.createdAt,
+      editedAt: c.editedAt ?? null,
+      mentions: (c.mentions || []).map((m) => ({
+        userId: m.userId,
+        name: m.name,
+        startIndex: m.startIndex,
+        endIndex: m.endIndex,
+      })),
     }));
 
     const activities = await this.projectRepo.manager.find(ProjectActivityEntity, {
