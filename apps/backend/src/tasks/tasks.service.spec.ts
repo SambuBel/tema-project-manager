@@ -4,6 +4,7 @@ import { PermissionsService } from '../auth/permissions.service';
 import { ProjectMemberEntity } from '../database/entities/project-member.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { TaskEntity } from './task.entity';
+import { TaskSlugHistoryEntity } from './task-slug-history.entity';
 import {
   AuditOrigin,
   ProjectActivityAction,
@@ -63,13 +64,16 @@ function membership(userId: string, projectRole: ProjectMemberRole): Partial<Pro
 }
 
 interface Deps {
-  taskRepo: { findOne: jest.Mock; find: jest.Mock; findOneBy: jest.Mock; count: jest.Mock; save: jest.Mock; createQueryBuilder: jest.Mock; manager: { query: jest.Mock; find: jest.Mock } };
+  taskRepo: { findOne: jest.Mock; find: jest.Mock; findOneBy: jest.Mock; count: jest.Mock; save: jest.Mock; createQueryBuilder: jest.Mock; manager: { query: jest.Mock; find: jest.Mock; transaction: jest.Mock } };
+  /** EntityManager transaccional que recibe el callback de manager.transaction(). */
+  txManager: { query: jest.Mock; find: jest.Mock; save: jest.Mock; delete: jest.Mock };
+  permissions: PermissionsService;
   projectRepo: { findOneBy: jest.Mock; manager: { find: jest.Mock } };
   usersService: { findById: jest.Mock };
   subtaskRepo: { count: jest.Mock };
   activityService: { logEvent: jest.Mock };
   commentRepo: { create: jest.Mock; save: jest.Mock; find: jest.Mock };
-  taskSlugHistoryRepo: { findOne: jest.Mock; find: jest.Mock; create: jest.Mock; save: jest.Mock; delete: jest.Mock };
+  taskSlugHistoryRepo: { findOne: jest.Mock; find: jest.Mock; create: jest.Mock; save: jest.Mock; delete: jest.Mock<any, [any]> };
 }
 
 function makeService(
@@ -93,6 +97,7 @@ function makeService(
     manager: {
       query: jest.fn(async () => []),
       find: jest.fn(async () => []),
+      transaction: jest.fn(),
     },
   };
   const projectRepo = { findOneBy: jest.fn(async () => project), manager: { find: jest.fn(async () => []) } };
@@ -110,10 +115,25 @@ function makeService(
     find: jest.fn(),
     create: jest.fn((h: unknown) => h),
     save: jest.fn(async (h: unknown) => h),
-    delete: jest.fn(async () => ({ affected: 1 })),
+    delete: jest.fn(async (_criteria: unknown) => ({ affected: 1 })),
   };
   const permissions = makePermissions(members);
   const activityService = { logEvent: jest.fn() };
+
+  // Igual que TypeORM: manager.transaction(cb) ejecuta cb con un EntityManager transaccional.
+  // Las escrituras del txManager se enrutan a los mocks de repositorio existentes, así los tests
+  // siguen verificando qué se persiste sin que producción necesite un camino "sin transacción".
+  const txManager = {
+    query: jest.fn((...args: unknown[]) => (taskRepo.manager.query as jest.Mock)(...args)),
+    find: jest.fn((...args: unknown[]) => (taskRepo.manager.find as jest.Mock)(...args)),
+    save: jest.fn(async (entity: unknown, data: unknown) =>
+      entity === TaskSlugHistoryEntity ? taskSlugHistoryRepo.save(data) : taskRepo.save(data),
+    ),
+    delete: jest.fn(async (entity: unknown, criteria: unknown) =>
+      entity === TaskSlugHistoryEntity ? taskSlugHistoryRepo.delete(criteria) : { affected: 0 },
+    ),
+  };
+  taskRepo.manager.transaction.mockImplementation(async (cb: (m: unknown) => Promise<unknown>) => cb(txManager));
 
   const service = new TasksService(
     taskRepo as unknown as import('typeorm').Repository<TaskEntity>,
@@ -126,7 +146,18 @@ function makeService(
     taskSlugHistoryRepo as never,
   );
 
-  return { service, taskRepo, projectRepo, usersService, subtaskRepo, activityService, commentRepo, taskSlugHistoryRepo };
+  return {
+    service,
+    taskRepo,
+    txManager,
+    permissions,
+    projectRepo,
+    usersService,
+    subtaskRepo,
+    activityService,
+    commentRepo,
+    taskSlugHistoryRepo,
+  };
 }
 
 describe('TasksService - create (canCreateTask)', () => {
@@ -685,6 +716,54 @@ describe('TasksService - comentarios (canCommentOnTask) vs lectura (canViewTask)
     });
   });
 
+  describe('addComment - regresión: la autorización espera el resultado de la promesa', () => {
+    it('si canCommentOnTask resuelve false de forma asíncrona: 403 y no guarda (una Promise sin await sería truthy)', async () => {
+      const { service, taskRepo, commentRepo, permissions } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      let resolvedPolicy = false;
+      const spy = jest.spyOn(permissions, 'canCommentOnTask').mockImplementation(
+        () =>
+          new Promise<boolean>((resolve) =>
+            setImmediate(() => {
+              resolvedPolicy = true;
+              resolve(false);
+            }),
+          ),
+      );
+
+      await expect(service.addComment('task-1', 'hola', ADMIN)).rejects.toThrow(ForbiddenException);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(resolvedPolicy).toBe(true);
+      expect(commentRepo.create).not.toHaveBeenCalled();
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('si canCommentOnTask resuelve true de forma asíncrona: guarda el comentario una sola vez', async () => {
+      const { service, taskRepo, commentRepo, permissions } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+      jest
+        .spyOn(permissions, 'canCommentOnTask')
+        .mockImplementation(() => new Promise<boolean>((resolve) => setImmediate(() => resolve(true))));
+
+      await expect(service.addComment('task-1', 'hola', STRANGER)).resolves.toMatchObject({
+        taskId: 'task-1',
+        authorUserId: STRANGER.id,
+        content: 'hola',
+      });
+      expect(commentRepo.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('usuario ajeno al proyecto (sin membership) con la policy REAL: 403 y no guarda', async () => {
+      const { service, taskRepo, commentRepo } = makeService([]);
+      taskRepo.findOne.mockResolvedValue(foreignTask());
+
+      await expect(service.addComment('task-1', 'hola', STRANGER)).rejects.toThrow(ForbiddenException);
+      expect(commentRepo.create).not.toHaveBeenCalled();
+      expect(commentRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getTimeline (lectura: canViewTask, el OBSERVER sigue pudiendo leer)', () => {
     it.each([
       ['OBSERVER local', OBSERVER, [membership('obs-1', ProjectMemberRole.OBSERVER)]],
@@ -880,14 +959,17 @@ describe('TasksService - updateStatus (transiciones de estado)', () => {
       makeUser('admin-1', [RoleName.ADMIN]),
     );
 
-    expect(activityService.logEvent).toHaveBeenCalledWith({
-      projectId: PROJECT_ID,
-      actorId: 'admin-1',
-      actionType: ProjectActivityAction.TASK_UPDATED,
-      entityType: ProjectActivityEntityType.TASK,
-      entityId: 'task-1',
-      metadata: { changes: { status: { old: TaskStatus.PENDING, new: TaskStatus.IN_PROGRESS } } },
-    });
+    expect(activityService.logEvent).toHaveBeenCalledWith(
+      {
+        projectId: PROJECT_ID,
+        actorId: 'admin-1',
+        actionType: ProjectActivityAction.TASK_UPDATED,
+        entityType: ProjectActivityEntityType.TASK,
+        entityId: 'task-1',
+        metadata: { changes: { status: { old: TaskStatus.PENDING, new: TaskStatus.IN_PROGRESS } } },
+      },
+      expect.anything(),
+    );
   });
 
   it('HU39: un cambio de estado hecho por el asistente queda con origen AI y el pedido del usuario', async () => {
@@ -905,6 +987,7 @@ describe('TasksService - updateStatus (transiciones de estado)', () => {
         origin: AuditOrigin.AI,
         metadata: expect.objectContaining({ viaAssistant: true, request: 'pasá la tarea a en progreso' }),
       }),
+      expect.anything(),
     );
   });
 
@@ -1218,3 +1301,163 @@ describe('TasksService - Slugs de tareas e histórico de URLs legibles', () => {
   });
 });
 
+describe('TasksService - atomicidad en creación de subtareas (regresión error 500 y duplicados)', () => {
+  const leaderUser = makeUser(LEADER_ID, [RoleName.PROJECT_LEADER]);
+  const parentTask = makeTask({
+    id: 'parent-task-1',
+    project: makeProject(),
+    parentTaskId: null,
+    archivedAt: null,
+  });
+
+  it('persiste subtarea y registra evento de actividad dentro de la misma transacción', async () => {
+    const { service, taskRepo, activityService } = makeService([]);
+    taskRepo.findOneBy.mockResolvedValue(parentTask);
+
+    const committedTasks: TaskEntity[] = [];
+    const txManager = {
+      query: jest.fn(async () => []),
+      save: jest.fn(async (_entity: unknown, data: TaskEntity) => {
+        const saved = { ...data, id: 'subtask-new-1' } as TaskEntity;
+        committedTasks.push(saved);
+        return saved;
+      }),
+    };
+    taskRepo.manager.transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) => cb(txManager)) as jest.Mock;
+
+    const created = await service.create(
+      {
+        projectId: PROJECT_ID,
+        title: 'Subtarea de prueba',
+        parentTaskId: parentTask.id,
+      },
+      leaderUser,
+    );
+
+    expect(created.id).toBe('subtask-new-1');
+    expect(created.parentTaskId).toBe(parentTask.id);
+    expect(created.slug).toBe('subtarea-de-prueba');
+    expect(committedTasks).toHaveLength(1);
+    expect(activityService.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: PROJECT_ID,
+        actorId: LEADER_ID,
+        actionType: ProjectActivityAction.TASK_CREATED,
+        entityType: ProjectActivityEntityType.TASK,
+        entityId: 'subtask-new-1',
+        metadata: expect.objectContaining({
+          title: 'Subtarea de prueba',
+          slug: 'subtarea-de-prueba',
+        }),
+      }),
+      txManager,
+    );
+  });
+
+  it('revierte la creación de la subtarea si falla logEvent (evita subtareas fantasma y duplicados al reintentar)', async () => {
+    const { service, taskRepo, activityService } = makeService([]);
+    taskRepo.findOneBy.mockResolvedValue(parentTask);
+
+    const persistedInDb: TaskEntity[] = [];
+
+    taskRepo.manager.transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) => {
+      const stagedTasks: TaskEntity[] = [];
+      const txManager = {
+        query: jest.fn(async () =>
+          persistedInDb.map((t) => ({ slug: t.slug, task_id: t.id, source: 'active' })),
+        ),
+        save: jest.fn(async (_entity: unknown, data: TaskEntity) => {
+          const saved = { ...data, id: `subtask-${stagedTasks.length + 1}` } as TaskEntity;
+          stagedTasks.push(saved);
+          return saved;
+        }),
+      };
+      // Si cb lanza excepción, no se vuelcan stagedTasks a persistedInDb (rollback transaccional)
+      const result = await cb(txManager);
+      persistedInDb.push(...stagedTasks);
+      return result;
+    });
+
+    // Primer intento: falla el registro de actividad (ej. error SQL en project_activities)
+    activityService.logEvent.mockRejectedValueOnce(
+      new Error('column "origin" of relation "project_activities" does not exist'),
+    );
+
+    await expect(
+      service.create(
+        {
+          projectId: PROJECT_ID,
+          title: 'Saludar',
+          parentTaskId: parentTask.id,
+        },
+        leaderUser,
+      ),
+    ).rejects.toThrow('column "origin" of relation "project_activities" does not exist');
+
+    // La subtarea NO debe haber quedado persistida tras el fallo
+    expect(persistedInDb).toHaveLength(0);
+
+    // Segundo intento (reintento del usuario tras resolver el problema): tiene éxito sin duplicados
+    activityService.logEvent.mockResolvedValueOnce(undefined);
+
+    const createdOnRetry = await service.create(
+      {
+        projectId: PROJECT_ID,
+        title: 'Saludar',
+        parentTaskId: parentTask.id,
+      },
+      leaderUser,
+    );
+
+    expect(persistedInDb).toHaveLength(1);
+    expect(createdOnRetry.slug).toBe('saludar');
+  });
+});
+
+describe('TasksService - findAllByProject: contadores agregados de subtareas sin N+1', () => {
+  const leaderUser = makeUser(LEADER_ID, [RoleName.PROJECT_LEADER]);
+
+  it('calcula subtaskCount y completedSubtaskCount en una única consulta agregada', async () => {
+    const { service, taskRepo } = makeService([]);
+    const rootTasks = [
+      makeTask({ id: 'task-a', title: 'Tarea A', project: makeProject() }),
+      makeTask({ id: 'task-b', title: 'Tarea B', project: makeProject() }),
+      makeTask({ id: 'task-c', title: 'Tarea C', project: makeProject() }),
+    ];
+
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn(async () => rootTasks),
+    };
+    taskRepo.createQueryBuilder.mockReturnValue(qb);
+
+    taskRepo.manager.query.mockResolvedValueOnce([
+      { parentTaskId: 'task-a', total: 5, completed: 0 },
+      { parentTaskId: 'task-b', total: 3, completed: 2 },
+    ]);
+
+    const result = await service.findAllByProject({ projectId: PROJECT_ID }, leaderUser);
+
+    expect(taskRepo.manager.query).toHaveBeenCalledTimes(1);
+    expect(taskRepo.manager.query).toHaveBeenCalledWith(
+      expect.stringContaining('GROUP BY parent_task_id'),
+      [PROJECT_ID, TaskStatus.COMPLETED, ['task-a', 'task-b', 'task-c']],
+    );
+
+    expect(result).toHaveLength(3);
+    expect(result[0]).toMatchObject({ id: 'task-a', subtaskCount: 5, completedSubtaskCount: 0 });
+    expect(result[1]).toMatchObject({ id: 'task-b', subtaskCount: 3, completedSubtaskCount: 2 });
+    expect(result[2]).toMatchObject({ id: 'task-c', subtaskCount: 0, completedSubtaskCount: 0 });
+  });
+
+  it('no ejecuta consulta de conteo si el listado de tareas está vacío', async () => {
+    const { service, taskRepo } = makeService([]);
+    const result = await service.findAllByProject({ projectId: PROJECT_ID }, leaderUser);
+
+    expect(result).toEqual([]);
+    expect(taskRepo.manager.query).not.toHaveBeenCalled();
+  });
+});

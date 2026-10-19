@@ -105,4 +105,10 @@ export class TaskEntity {
 
   @Column({ name: 'archived_at', type: 'timestamptz', nullable: true })
   archivedAt!: Date | null;
+
+  /** Cantidad total de subtareas activas (calculada de forma agregada al listar). */
+  subtaskCount?: number;
+
+  /** Cantidad de subtareas activas completadas (calculada de forma agregada al listar). */
+  completedSubtaskCount?: number;
 }

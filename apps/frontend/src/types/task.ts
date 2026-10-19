@@ -32,6 +32,8 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  subtaskCount?: number;
+  completedSubtaskCount?: number;
 }
 
 export interface TaskFilters {
