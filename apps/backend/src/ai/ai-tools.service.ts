@@ -184,7 +184,7 @@ export class AiToolsService {
           },
           ctx.user,
         );
-        return { project: project.name, tasks: tasks.map(toTaskSummary) };
+        return { project: project.name, tasks: tasks.data.map(toTaskSummary) };
       }
 
       case TOOL_NAMES.listOverdueTasks: {
@@ -195,7 +195,7 @@ export class AiToolsService {
             : { projectId: project.id },
           ctx.user,
         );
-        return { project: project.name, tasks: tasks.filter((task) => isOverdue(task)).map(toTaskSummary) };
+        return { project: project.name, tasks: tasks.data.filter((task) => isOverdue(task)).map(toTaskSummary) };
       }
 
       case TOOL_NAMES.getTask: {

@@ -2,7 +2,7 @@
  * Tipos de tareas sincronizados con @tema/shared-types.
  * Cuando se migre completamente a shared-types, reemplazar estos imports.
  */
-import type { User } from '@tema/shared-types';
+import type { User, PaginatedResponse } from '@tema/shared-types';
 
 export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED';
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -39,6 +39,14 @@ export interface TaskFilters {
   priority?: TaskPriority;
   assignedToId?: string;
   search?: string;
+  page?: number;
+  limit?: number;
+  myTasks?: boolean;
+  atRisk?: boolean;
+}
+
+export interface TaskListResponse extends PaginatedResponse<Task> {
+  counts: { all: number; mine: number; atRisk: number };
 }
 
 export const taskStatusLabels: Record<TaskStatus, string> = {

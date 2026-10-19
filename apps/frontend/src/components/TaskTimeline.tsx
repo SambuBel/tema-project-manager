@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { Pagination } from './Pagination';
 import { TaskTimelineItem, taskStatusLabels, taskPriorityLabels } from '../types/task';
 import type { TaskPriority, TaskStatus } from '../types/task';
 
@@ -65,16 +66,21 @@ const formatValue = (field: string, value: any) => {
 export function TaskTimeline({ taskId, canComment }: TaskTimelineProps) {
   const qc = useQueryClient();
   const [newComment, setNewComment] = useState('');
+  const [page, setPage] = useState(1);
 
-  const { data: timeline, isLoading } = useQuery({
-    queryKey: ['task', taskId, 'timeline'],
-    queryFn: () => api.getTaskTimeline(taskId),
+  const { data: response, isLoading } = useQuery({
+    queryKey: ['task', taskId, 'timeline', page],
+    queryFn: () => api.getTaskTimeline(taskId, page, 10),
+    placeholderData: keepPreviousData,
   });
+
+  const timeline = response?.data ?? [];
 
   const addCommentMutation = useMutation({
     mutationFn: (content: string) => api.addTaskComment(taskId, content),
     onSuccess: () => {
       setNewComment('');
+      setPage(1);
       void qc.invalidateQueries({ queryKey: ['task', taskId, 'timeline'] });
     },
   });
@@ -130,10 +136,10 @@ export function TaskTimeline({ taskId, canComment }: TaskTimelineProps) {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
-        {timeline?.length === 0 ? (
+        {timeline.length === 0 ? (
           <p className="text-sm italic text-[#607185]">No hay actividad registrada.</p>
         ) : (
-          timeline?.map((item: TaskTimelineItem) => (
+          timeline.map((item: TaskTimelineItem) => (
             <div
               key={item.id}
               className="rounded-xl border border-[#DEE5EC] bg-white p-4 shadow-sm"
@@ -170,6 +176,12 @@ export function TaskTimeline({ taskId, canComment }: TaskTimelineProps) {
           ))
         )}
       </div>
+
+      <Pagination
+        page={page}
+        totalPages={response?.totalPages ?? 1}
+        onPageChange={setPage}
+      />
 
       {canComment && (
         <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/types/authenticated-request-user';
@@ -34,11 +34,6 @@ export class TasksController {
     return this.tasksService.findOne(id, user);
   }
 
-  @Get(':id/subtasks')
-  findSubtasks(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
-    return this.tasksService.findSubtasks(id, user);
-  }
-
   @Patch(':id')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTaskDto, @CurrentUser() user: RequestUser) {
     return this.tasksService.update(id, dto, user);
@@ -65,9 +60,11 @@ export class TasksController {
   @Get(':id/timeline')
   getTimeline(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.tasksService.getTimeline(id, user);
+    return this.tasksService.getTimeline(id, user, page, limit);
   }
 
   @Patch(':id/archive')

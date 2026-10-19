@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
@@ -8,6 +8,7 @@ import { SubtaskCreateModal } from './SubtaskCreateModal';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
+import { Pagination } from './Pagination';
 
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
@@ -75,7 +76,7 @@ interface TaskListProps {
  */
 export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   const { user: currentUser } = useCurrentUser();
-  const [filters, setFilters] = useState<TaskFilters>({ projectId });
+  const [filters, setFilters] = useState<TaskFilters>({ projectId, page: 1, limit: 10 });
   const [searchInput, setSearchInput] = useState('');
   const [viewFilter, setViewFilter] = useState<ViewFilter>('ALL');
   const [subtaskParent, setSubtaskParent] = useState<Task | null>(null);
@@ -90,9 +91,14 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
     if (member.user) assignees.set(member.user.id, member.user);
   }
 
-  const tasks = useQuery({
-    queryKey: ['tasks', filters],
-    queryFn: () => api.listTasks(filters),
+    const tasks = useQuery({
+    queryKey: ['tasks', filters, viewFilter],
+    queryFn: () => api.listTasks({
+      ...filters,
+      myTasks: viewFilter === 'MINE' ? true : undefined,
+      atRisk: viewFilter === 'AT_RISK' ? true : undefined,
+    }),
+    placeholderData: keepPreviousData,
   });
 
   const { membership } = useMyMembership(projectId);
@@ -102,7 +108,7 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   useEffect(() => {
     const timer = setTimeout(() => {
       const next = searchInput || undefined;
-      setFilters((prev) => (prev.search === next ? prev : { ...prev, search: next }));
+      setFilters((prev) => (prev.search === next ? prev : { ...prev, search: next, page: 1 }));
     }, 300);
     return () => clearTimeout(timer);
   }, [searchInput]);
@@ -110,41 +116,31 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   /* Estado, prioridad y responsable se aplican apenas se elige una opción. */
   const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value as TaskStatus | '';
-    setFilters((prev) => ({ ...prev, status: value || undefined }));
+    setFilters((prev) => ({ ...prev, status: value || undefined, page: 1 }));
   };
 
   const handlePriorityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value as TaskPriority | '';
-    setFilters((prev) => ({ ...prev, priority: value || undefined }));
+    setFilters((prev) => ({ ...prev, priority: value || undefined, page: 1 }));
   };
 
   const handleAssigneeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
-    setFilters((prev) => ({ ...prev, assignedToId: value || undefined }));
+    setFilters((prev) => ({ ...prev, assignedToId: value || undefined, page: 1 }));
   };
 
   const clearFilters = () => {
-    setFilters({ projectId });
+    setFilters({ projectId, page: 1, limit: 10 });
     setSearchInput('');
     setViewFilter('ALL');
   };
 
   const hasActiveFilters = !!(filters.status || filters.priority || filters.search || filters.assignedToId);
 
-  /* "Mis tareas" y "En riesgo" se aplican sobre los datos ya cargados (client-side):
-     comparten la misma consulta que "Todas", solo cambia qué se muestra de esa lista. */
-  const isMine = (task: Task): boolean => !!currentUser && task.assignedToId === currentUser.id;
-
-  const visibleTasks: Task[] = (() => {
-    if (!tasks.data) return [];
-    if (viewFilter === 'AT_RISK') return tasks.data.filter(isAtRisk);
-    if (viewFilter === 'MINE') return tasks.data.filter(isMine);
-    return tasks.data;
-  })();
-
-  const totalCount = tasks.data?.length ?? 0;
-  const atRiskCount = tasks.data?.filter(isAtRisk).length ?? 0;
-  const mineCount = tasks.data?.filter(isMine).length ?? 0;
+    /* Los datos ya vienen filtrados y paginados del backend. */
+  const visibleTasks: Task[] = tasks.data?.data ?? [];
+  const counts = tasks.data?.counts ?? { all: 0, mine: 0, atRisk: 0 };
+  const totalPages = tasks.data?.totalPages ?? 1;
 
   return (
     <div className="flex flex-col gap-4">
@@ -156,9 +152,9 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
               ? 'bg-[#245B78] text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-[#EAF2F7]'
           }`}
-          onClick={() => setViewFilter('ALL')}
+          onClick={() => { setViewFilter('ALL'); setFilters((prev) => ({ ...prev, page: 1 })); }}
         >
-          Todas ({totalCount})
+          Todas ({counts.all})
         </button>
         <button
           className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -166,9 +162,9 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
               ? 'bg-[#245B78] text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-[#EAF2F7]'
           }`}
-          onClick={() => setViewFilter('MINE')}
+          onClick={() => { setViewFilter('MINE'); setFilters((prev) => ({ ...prev, page: 1 })); }}
         >
-          Mis tareas ({mineCount})
+          Mis tareas ({counts.mine})
         </button>
         <button
           className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -176,9 +172,9 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
               ? 'bg-red-600 text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-red-50'
           }`}
-          onClick={() => setViewFilter('AT_RISK')}
+          onClick={() => { setViewFilter('AT_RISK'); setFilters((prev) => ({ ...prev, page: 1 })); }}
         >
-          En riesgo ({atRiskCount})
+          En riesgo ({counts.atRisk})
         </button>
       </div>
 
@@ -384,15 +380,15 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-[#DEE5EC] bg-[#F7F9FB] px-5 py-2.5 text-xs text-[#607185]">
             <span>
-              {viewFilter === 'AT_RISK'
-                ? visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '') + ' en riesgo'
-                : viewFilter === 'MINE'
-                  ? visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '') + ' asignada' + (visibleTasks.length !== 1 ? 's' : '') + ' a vos'
-                  : visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '')}
+              {tasks.data
+                ? `Mostrando ${visibleTasks.length} de ${tasks.data.total} tarea${tasks.data.total !== 1 ? 's' : ''}`
+                : ''}
             </span>
-            {hasActiveFilters && (
-              <span className="italic">Filtros activos</span>
-            )}
+            <Pagination
+              page={filters.page ?? 1}
+              totalPages={totalPages}
+              onPageChange={(p) => setFilters((prev) => ({ ...prev, page: p }))}
+            />
           </div>
         </div>
       )}
