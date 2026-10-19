@@ -52,6 +52,7 @@ export function TaskStatusDropdown({ taskId, currentStatus, canChange }: TaskSta
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['task'] });
       qc.invalidateQueries({ queryKey: ['tasks'] });
+      qc.invalidateQueries({ queryKey: ['subtasks'] });
       setOpen(false);
     },
     onError: () => {

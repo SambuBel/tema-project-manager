@@ -250,32 +250,75 @@ export class TasksService {
       await this.assertValidParentTask(dto.projectId, dto.parentTaskId);
     }
 
-    const slug = await this.generateUniqueSlug(dto.title, project.id, this.repo.manager);
+    return this.repo.manager.transaction(async (manager) => {
+      const slug = await this.generateUniqueSlug(dto.title, project.id, manager);
 
-    const task = new TaskEntity();
-    task.projectId = dto.projectId;
-    task.parentTaskId = dto.parentTaskId ?? null;
-    task.title = dto.title;
-    task.slug = slug;
-    task.description = dto.description ?? null;
-    task.status = dto.status ?? TaskStatus.PENDING;
-    task.priority = dto.priority ?? TaskPriority.MEDIUM;
-    task.assignedToId = dto.assignedToId ?? null;
-    task.startDate = dto.startDate ?? null;
-    task.dueDate = dto.dueDate ?? null;
-    task.createdBy = user.id;
+      const task = new TaskEntity();
+      task.projectId = dto.projectId;
+      task.parentTaskId = dto.parentTaskId ?? null;
+      task.title = dto.title;
+      task.slug = slug;
+      task.description = dto.description ?? null;
+      task.status = dto.status ?? TaskStatus.PENDING;
+      task.priority = dto.priority ?? TaskPriority.MEDIUM;
+      task.assignedToId = dto.assignedToId ?? null;
+      task.startDate = dto.startDate ?? null;
+      task.dueDate = dto.dueDate ?? null;
+      task.createdBy = user.id;
 
-    const saved = await this.repo.save(task);
-    await this.activityService.logEvent({
-      projectId: saved.projectId,
-      actorId: user.id,
-      actionType: ProjectActivityAction.TASK_CREATED,
-      entityType: ProjectActivityEntityType.TASK,
-      entityId: saved.id,
-      metadata: withSourceMetadata({ title: saved.title, slug: saved.slug }, source),
-      ...originOf(source),
+      const saved = await manager.save(TaskEntity, task);
+
+      await this.activityService.logEvent(
+        {
+          projectId: saved.projectId,
+          actorId: user.id,
+          actionType: ProjectActivityAction.TASK_CREATED,
+          entityType: ProjectActivityEntityType.TASK,
+          entityId: saved.id,
+          metadata: withSourceMetadata({ title: saved.title, slug: saved.slug }, source),
+          ...originOf(source),
+        },
+        manager,
+      );
+
+      return saved;
     });
-    return saved;
+  }
+
+  private async getSubtaskCountsByParentIds(
+    projectId: string,
+    parentIds: string[],
+  ): Promise<Map<string, { total: number; completed: number }>> {
+    const map = new Map<string, { total: number; completed: number }>();
+    if (parentIds.length === 0 || typeof this.repo.manager?.query !== 'function') {
+      return map;
+    }
+
+    const rows = await this.repo.manager.query(
+      `SELECT
+         parent_task_id AS "parentTaskId",
+         COUNT(*)::int AS "total",
+         COUNT(*) FILTER (WHERE status = $2)::int AS "completed"
+       FROM tasks
+       WHERE project_id = $1
+         AND parent_task_id = ANY($3::uuid[])
+         AND archived_at IS NULL
+       GROUP BY parent_task_id`,
+      [projectId, TaskStatus.COMPLETED, parentIds],
+    );
+
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        if (row?.parentTaskId) {
+          map.set(row.parentTaskId, {
+            total: Number(row.total) || 0,
+            completed: Number(row.completed) || 0,
+          });
+        }
+      }
+    }
+
+    return map;
   }
 
   async findAllByProject(filters: FilterTasksDto, user: RequestUser): Promise<TaskEntity[]> {
@@ -314,7 +357,23 @@ export class TasksService {
       );
     }
 
-    return qb.orderBy('task.createdAt', 'DESC').getMany();
+    const tasks = await qb.orderBy('task.createdAt', 'DESC').getMany();
+    if (tasks.length === 0) {
+      return tasks;
+    }
+
+    const countsByParent = await this.getSubtaskCountsByParentIds(
+      filters.projectId,
+      tasks.map((t) => t.id),
+    );
+
+    for (const task of tasks) {
+      const counts = countsByParent.get(task.id);
+      task.subtaskCount = counts?.total ?? 0;
+      task.completedSubtaskCount = counts?.completed ?? 0;
+    }
+
+    return tasks;
   }
 
   async findOne(id: string, user: RequestUser, projectId?: string): Promise<TaskEntity> {
@@ -378,72 +437,73 @@ export class TasksService {
       }
     }
 
-    const changes: Record<string, { old: any; new: any }> = {};
+    return this.repo.manager.transaction(async (manager) => {
+      const changes: Record<string, { old: any; new: any }> = {};
 
-    // Si cambió el título, actualizar el slug de la tarea y registrar el anterior en el histórico
-    if (dto.title !== undefined && dto.title.trim() && dto.title.trim() !== task.title) {
-      const oldSlug = task.slug;
-      const candidateBaseSlug = slugify(dto.title.trim(), 'tarea');
-      if (candidateBaseSlug && candidateBaseSlug !== task.slug) {
-        const newSlug = await this.generateUniqueSlug(
-          dto.title.trim(),
-          task.projectId,
-          this.repo.manager,
-          task.id,
-        );
-        if (newSlug !== task.slug) {
-          // Si el newSlug estaba en el histórico de esta misma tarea, liberarlo
-          await this.taskSlugHistoryRepo.delete({ taskId: task.id, slug: newSlug });
+      // Si cambió el título, actualizar el slug de la tarea y registrar el anterior en el histórico
+      if (dto.title !== undefined && dto.title.trim() && dto.title.trim() !== task.title) {
+        const oldSlug = task.slug;
+        const candidateBaseSlug = slugify(dto.title.trim(), 'tarea');
+        if (candidateBaseSlug && candidateBaseSlug !== task.slug) {
+          const newSlug = await this.generateUniqueSlug(
+            dto.title.trim(),
+            task.projectId,
+            manager,
+            task.id,
+          );
+          if (newSlug !== task.slug) {
+            // Si el newSlug estaba en el histórico de esta misma tarea, liberarlo
+            await manager.delete(TaskSlugHistoryEntity, { taskId: task.id, slug: newSlug });
 
-          if (oldSlug) {
-            await this.taskSlugHistoryRepo.save(
-              this.taskSlugHistoryRepo.create({
+            if (oldSlug) {
+              const historyRecord = this.taskSlugHistoryRepo.create({
                 taskId: task.id,
                 projectId: task.projectId,
                 slug: oldSlug,
-              }),
-            );
+              });
+              await manager.save(TaskSlugHistoryEntity, historyRecord);
+            }
+            changes.slug = { old: oldSlug, new: newSlug };
+            task.slug = newSlug;
           }
-          changes.slug = { old: oldSlug, new: newSlug };
-          task.slug = newSlug;
         }
       }
-    }
 
-    const trackChange = (field: keyof TaskEntity, dtoField: keyof UpdateTaskDto) => {
-      if (dto[dtoField] !== undefined && task[field] !== dto[dtoField]) {
-        changes[field as string] = { old: task[field], new: dto[dtoField] };
-        (task as any)[field] = dto[dtoField];
+      const trackChange = (field: keyof TaskEntity, dtoField: keyof UpdateTaskDto) => {
+        if (dto[dtoField] !== undefined && task[field] !== dto[dtoField]) {
+          changes[field as string] = { old: task[field], new: dto[dtoField] };
+          (task as any)[field] = dto[dtoField];
+        }
+      };
+
+      trackChange('title', 'title');
+      trackChange('description', 'description');
+      trackChange('priority', 'priority');
+      trackChange('status', 'status');
+      trackChange('assignedToId', 'assignedToId');
+      trackChange('startDate', 'startDate');
+      trackChange('dueDate', 'dueDate');
+
+      const saved = await manager.save(TaskEntity, task);
+
+      if (Object.keys(changes).length > 0) {
+        await this.activityService.logEvent(
+          {
+            projectId: saved.projectId,
+            actorId: user.id,
+            actionType: ProjectActivityAction.TASK_UPDATED,
+            entityType: ProjectActivityEntityType.TASK,
+            entityId: saved.id,
+            metadata: { changes },
+          },
+          manager,
+        );
       }
-    };
 
-    trackChange('title', 'title');
-    trackChange('description', 'description');
-    trackChange('priority', 'priority');
-    trackChange('status', 'status');
-    trackChange('assignedToId', 'assignedToId');
-    trackChange('startDate', 'startDate');
-    trackChange('dueDate', 'dueDate');
-
-    const saved = await this.repo.save(task);
-
-    if (Object.keys(changes).length > 0) {
-      await this.activityService.logEvent({
-        projectId: saved.projectId,
-        actorId: user.id,
-        actionType: ProjectActivityAction.TASK_UPDATED,
-        entityType: ProjectActivityEntityType.TASK,
-        entityId: saved.id,
-        metadata: { changes },
-      });
-    }
-
-    return saved;
-
+      return saved;
+    });
   }
 
-
-  
   async addComment(taskId: string, content: string, user: RequestUser): Promise<CommentEntity> {
     const task = await this.findTaskOrThrow(taskId);
     // Escribir un comentario NO es ver la tarea: policy propia (OBSERVER ve pero no comenta).
@@ -515,19 +575,24 @@ export class TasksService {
       return task;
     }
 
-    task.archivedAt = new Date();
-    const saved = await this.repo.save(task);
+    return this.repo.manager.transaction(async (manager) => {
+      task.archivedAt = new Date();
+      const saved = await manager.save(TaskEntity, task);
 
-    await this.activityService.logEvent({
-      projectId: saved.projectId,
-      actorId: user.id,
-      actionType: ProjectActivityAction.TASK_DELETED,
-      entityType: ProjectActivityEntityType.TASK,
-      entityId: saved.id,
-      metadata: { archivedAt: saved.archivedAt },
+      await this.activityService.logEvent(
+        {
+          projectId: saved.projectId,
+          actorId: user.id,
+          actionType: ProjectActivityAction.TASK_DELETED,
+          entityType: ProjectActivityEntityType.TASK,
+          entityId: saved.id,
+          metadata: { archivedAt: saved.archivedAt },
+        },
+        manager,
+      );
+
+      return saved;
     });
-
-    return saved;
   }
 
   /**
@@ -560,21 +625,26 @@ export class TasksService {
       }
     }
 
-    const oldStatus = task.status;
-    task.status = dto.status;
-    const saved = await this.repo.save(task);
+    return this.repo.manager.transaction(async (manager) => {
+      const oldStatus = task.status;
+      task.status = dto.status;
+      const saved = await manager.save(TaskEntity, task);
 
-    await this.activityService.logEvent({
-      projectId: saved.projectId,
-      actorId: user.id,
-      actionType: ProjectActivityAction.TASK_UPDATED,
-      entityType: ProjectActivityEntityType.TASK,
-      entityId: saved.id,
-      metadata: withSourceMetadata({ changes: { status: { old: oldStatus, new: dto.status } } }, source),
-      ...originOf(source),
+      await this.activityService.logEvent(
+        {
+          projectId: saved.projectId,
+          actorId: user.id,
+          actionType: ProjectActivityAction.TASK_UPDATED,
+          entityType: ProjectActivityEntityType.TASK,
+          entityId: saved.id,
+          metadata: withSourceMetadata({ changes: { status: { old: oldStatus, new: dto.status } } }, source),
+          ...originOf(source),
+        },
+        manager,
+      );
+
+      return saved;
     });
-
-    return saved;
   }
 
   /**

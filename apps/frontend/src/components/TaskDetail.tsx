@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { taskPriorityLabels } from '../types/task';
-import type { TaskPriority, TaskStatus } from '../types/task';
+import type { Task, TaskPriority } from '../types/task';
 import { SubtaskList } from './SubtaskList';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useCurrentUser } from '../hooks/useCurrentUser';
@@ -85,8 +85,26 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
     mutationFn: () => api.archiveTask(task?.id ?? taskId),
     onSuccess: () => {
       setConfirmArchive(false);
+      if (task?.parentTaskId) {
+        qc.setQueryData<Task[]>(['subtasks', task.parentTaskId], (old) => {
+          if (!old) return old;
+          return old.filter((s) => s.id !== (task?.id ?? taskId));
+        });
+        qc.setQueriesData<Task[]>({ queryKey: ['tasks'] }, (old) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((t) =>
+            t.id === task.parentTaskId
+              ? {
+                  ...t,
+                  subtaskCount: Math.max(0, (t.subtaskCount ?? 1) - 1),
+                }
+              : t,
+          );
+        });
+      }
       void qc.invalidateQueries({ queryKey: ['task'] });
-      void qc.invalidateQueries({ queryKey: ['tasks', task?.projectId] });
+      void qc.invalidateQueries({ queryKey: ['tasks'] });
+      void qc.invalidateQueries({ queryKey: ['subtasks'] });
     },
   });
 

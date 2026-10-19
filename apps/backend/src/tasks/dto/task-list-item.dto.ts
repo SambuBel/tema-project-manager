@@ -23,6 +23,8 @@ export interface TaskListItemDto {
   createdAt: Date;
   updatedAt: Date;
   archivedAt: Date | null;
+  subtaskCount?: number;
+  completedSubtaskCount?: number;
 }
 
 export function toTaskListItem(task: TaskEntity): TaskListItemDto {
@@ -43,5 +45,7 @@ export function toTaskListItem(task: TaskEntity): TaskListItemDto {
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     archivedAt: task.archivedAt,
+    subtaskCount: task.subtaskCount,
+    completedSubtaskCount: task.completedSubtaskCount,
   };
 }

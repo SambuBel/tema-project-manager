@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { ProjectDetail } from '../components/ProjectDetail';
 import { ProjectMembers } from '../components/ProjectMembers';
 import { TaskList } from '../components/TaskList';
+import type { TaskListPersistedState } from '../components/TaskList';
 import { TaskDetail } from '../components/TaskDetail';
 import { TaskBoard } from '../components/TaskBoard/TaskBoard';
 import { ProjectActivityList } from '../components/ProjectActivityList';
@@ -52,6 +53,7 @@ export function ProjectPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const { user } = useCurrentUser();
+  const [taskListState, setTaskListState] = useState<TaskListPersistedState | null>(null);
 
   const viewParam = searchParams.get('view');
   const taskIdParam = searchParams.get('taskId');
@@ -99,6 +101,12 @@ export function ProjectPage() {
     queryFn: () => api.getProject(projectId),
     enabled: !!projectId,
   });
+
+  useEffect(() => {
+    if (project?.id && taskListState && taskListState.projectId !== project.id) {
+      setTaskListState(null);
+    }
+  }, [project?.id, taskListState]);
 
   useEffect(() => {
     if (project?.slug && projectId !== project.slug) {
@@ -276,6 +284,12 @@ export function ProjectPage() {
         <TaskList
           projectId={project.id}
           onSelectTask={openTask}
+          persistedState={
+            taskListState && taskListState.projectId === project.id
+              ? taskListState
+              : null
+          }
+          onPersistedStateChange={setTaskListState}
         />
       )}
 

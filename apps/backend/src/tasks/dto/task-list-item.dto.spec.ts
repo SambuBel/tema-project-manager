@@ -59,4 +59,11 @@ describe('toTaskListItem', () => {
     expect(item.assignedTo).toBeNull();
     expect(item.assignedToId).toBeNull();
   });
+
+  it('conserva subtaskCount y completedSubtaskCount calculados', () => {
+    const item = toTaskListItem(makeTask({ subtaskCount: 4, completedSubtaskCount: 2 }));
+
+    expect(item.subtaskCount).toBe(4);
+    expect(item.completedSubtaskCount).toBe(2);
+  });
 });
