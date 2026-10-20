@@ -788,8 +788,8 @@ describe('TasksService - comentarios (canCommentOnTask) vs lectura (canViewTask)
       commentRepo.find.mockResolvedValue([
         { id: 'c1', content: 'existente', createdAt: new Date(), author: { id: 'x', name: 'Ana Gómez' } },
       ]);
-      const timeline = await service.getTimeline('task-1', actor);
-      expect(timeline).toEqual([expect.objectContaining({ type: 'COMMENT', content: 'existente' })]);
+      const result = await service.getTimeline('task-1', actor);
+      expect(result.data).toEqual([expect.objectContaining({ type: 'COMMENT', content: 'existente' })]);
     });
 
     it.each([
@@ -835,20 +835,21 @@ describe('TasksService - comentarios (canCommentOnTask) vs lectura (canViewTask)
         },
       ]);
 
-      const timeline = await service.getTimeline('task-1', COLLAB);
+      const result = await service.getTimeline('task-1', COLLAB);
+      const timeline = result.data;
 
       // Comentario eliminado no debe estar en la timeline
       expect(timeline.some((item) => item.id === 'c-deleted')).toBe(false);
 
       // Comentarios activos presentes
-      const unedited = timeline.find((item) => item.id === 'c-active-unedited');
+      const unedited = timeline.find((item) => item.id === 'c-active-unedited') as any;
       expect(unedited).toBeDefined();
-      expect(unedited.editedAt).toBeNull();
+      expect(unedited!.editedAt).toBeNull();
 
-      const edited = timeline.find((item) => item.id === 'c-active-edited');
+      const edited = timeline.find((item) => item.id === 'c-active-edited') as any;
       expect(edited).toBeDefined();
-      expect(edited.editedAt).toEqual(editedDate);
-      expect(edited.content).toBe('Activo y editado');
+      expect(edited!.editedAt).toEqual(editedDate);
+      expect(edited!.content).toBe('Activo y editado');
     });
   });
 
@@ -1264,11 +1265,11 @@ describe('TasksService - comentarios (canCommentOnTask) vs lectura (canViewTask)
         },
       ]);
 
-      const timeline = await service.getTimeline('task-1', AUTHOR);
-      const item = timeline.find((i) => i.id === 'c-with-mentions');
+      const result = await service.getTimeline('task-1', AUTHOR);
+      const item = result.data.find((i) => i.id === 'c-with-mentions') as any;
 
       expect(item).toBeDefined();
-      expect(item.mentions).toEqual([
+      expect(item!.mentions).toEqual([
         { userId: 'u-1', name: 'Juan Pérez', startIndex: 5, endIndex: 16 },
       ]);
     });
@@ -1907,12 +1908,15 @@ describe('TasksService - findAllByProject: contadores agregados de subtareas sin
       makeTask({ id: 'task-c', title: 'Tarea C', project: makeProject() }),
     ];
 
-    const qb = {
+        const qb = {
       leftJoinAndSelect: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
-      getMany: jest.fn(async () => rootTasks),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(async () => [rootTasks, rootTasks.length]),
+      getCount: jest.fn(async () => rootTasks.length),
     };
     taskRepo.createQueryBuilder.mockReturnValue(qb);
 
@@ -1929,17 +1933,30 @@ describe('TasksService - findAllByProject: contadores agregados de subtareas sin
       [PROJECT_ID, TaskStatus.COMPLETED, ['task-a', 'task-b', 'task-c']],
     );
 
-    expect(result).toHaveLength(3);
-    expect(result[0]).toMatchObject({ id: 'task-a', subtaskCount: 5, completedSubtaskCount: 0 });
-    expect(result[1]).toMatchObject({ id: 'task-b', subtaskCount: 3, completedSubtaskCount: 2 });
-    expect(result[2]).toMatchObject({ id: 'task-c', subtaskCount: 0, completedSubtaskCount: 0 });
+    expect(result.data).toHaveLength(3);
+    expect(result.data[0]).toMatchObject({ id: 'task-a', subtaskCount: 5, completedSubtaskCount: 0 });
+    expect(result.data[1]).toMatchObject({ id: 'task-b', subtaskCount: 3, completedSubtaskCount: 2 });
+    expect(result.data[2]).toMatchObject({ id: 'task-c', subtaskCount: 0, completedSubtaskCount: 0 });
   });
 
-  it('no ejecuta consulta de conteo si el listado de tareas está vacío', async () => {
+    it('no ejecuta consulta de conteo si el listado de tareas está vacío', async () => {
     const { service, taskRepo } = makeService([]);
+
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(async () => [[], 0]),
+      getCount: jest.fn(async () => 0),
+    };
+    taskRepo.createQueryBuilder.mockReturnValue(qb);
+
     const result = await service.findAllByProject({ projectId: PROJECT_ID }, leaderUser);
 
-    expect(result).toEqual([]);
+    expect(result.data).toEqual([]);
     expect(taskRepo.manager.query).not.toHaveBeenCalled();
   });
 });

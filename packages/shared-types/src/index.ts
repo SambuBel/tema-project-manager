@@ -288,6 +288,13 @@ export interface GanttResponse {
   dependencies: GanttDependency[];
 }
 
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
 // --- Presupuesto (POST/GET /projects/:projectId/budget) ---------------------------------------
 // Datos económicos: solo los reciben ADMIN, PROGRAM_MANAGER y (GET) el líder real del proyecto.
 

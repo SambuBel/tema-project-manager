@@ -22,8 +22,9 @@ import type {
   GanttResponse,
   LoginDto,
   CreateUserDto,
+  PaginatedResponse,
 } from '@tema/shared-types';
-import type { CommentMention, Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
+import type { Task, TaskFilters, TaskStatus, TaskTimelineItem, TaskListResponse, CommentMention } from '../types/task'
 
 const BASE = '/api';
 
@@ -169,7 +170,11 @@ export const api = {
     if (filters.priority) params.append('priority', filters.priority);
     if (filters.assignedToId) params.append('assignedToId', filters.assignedToId);
     if (filters.search) params.append('search', filters.search);
-    return request<Task[]>(`/tasks?${params.toString()}`);
+    if (filters.page) params.append('page', String(filters.page));
+    if (filters.limit) params.append('limit', String(filters.limit));
+    if (filters.myTasks) params.append('myTasks', 'true');
+    if (filters.atRisk) params.append('atRisk', 'true');
+    return request<TaskListResponse>(`/tasks?${params.toString()}`);
   },
   createTask: (dto: CreateTaskDto) =>
     request<Task>('/tasks', { method: 'POST', body: JSON.stringify(dto) }),
@@ -188,7 +193,7 @@ export const api = {
     request<Subtask>(`/tasks/${taskId}/subtasks/${subtaskId}` , { method: 'PATCH', body: JSON.stringify(dto)}),
   deleteSubtask: (taskId: string, subtaskId: string) =>
     request<void>(`/tasks/${taskId}/subtasks/${subtaskId}` , { method: 'DELETE' }),
-  getTaskTimeline: (taskId: string) => request<TaskTimelineItem[]>(`/tasks/${taskId}/timeline`),
+  getTaskTimeline: (taskId: string, page = 1, limit = 10) => request<PaginatedResponse<TaskTimelineItem>>(`/tasks/${taskId}/timeline?page=${page}&limit=${limit}`),
   addTaskComment: (taskId: string, content: string, mentions?: CommentMention[]) =>
     request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content, mentions }) }),
   updateTaskComment: (taskId: string, commentId: string, content: string, mentions?: CommentMention[]) =>

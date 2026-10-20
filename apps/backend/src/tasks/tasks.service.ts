@@ -325,7 +325,7 @@ export class TasksService {
     return map;
   }
 
-  async findAllByProject(filters: FilterTasksDto, user: RequestUser): Promise<TaskEntity[]> {
+  async findAllByProject(filters: FilterTasksDto, user: RequestUser) {
     const project = await this.findProjectOrThrow(filters.projectId);
 
     const allowed = await this.permissions.canViewTask(user, project);
@@ -333,51 +333,74 @@ export class TasksService {
       throw new ForbiddenException('No tenés acceso a este proyecto.');
     }
 
-    const qb = this.repo
-      .createQueryBuilder('task')
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 10;
+
+    const buildBaseQb = () => {
+      const qb = this.repo
+        .createQueryBuilder('task')
+        .where('task.projectId = :projectId', { projectId: filters.projectId });
+
+      if (filters.status) {
+        qb.andWhere('task.status = :status', { status: filters.status });
+      }
+      if (filters.priority) {
+        qb.andWhere('task.priority = :priority', { priority: filters.priority });
+      }
+      if (filters.assignedToId) {
+        qb.andWhere('task.assignedToId = :assignedToId', { assignedToId: filters.assignedToId });
+      }
+      if (filters.search) {
+        qb.andWhere(
+          '(task.title ILIKE :search OR task.description ILIKE :search)',
+          { search: `%${filters.search}%` },
+        );
+      }
+      return qb;
+    };
+
+    const dataQb = buildBaseQb()
       .leftJoinAndSelect('task.assignedTo', 'assignedTo')
-      .leftJoinAndSelect('task.project', 'project')
-      .where('task.projectId = :projectId', { projectId: filters.projectId })
-      .andWhere('task.parentTaskId IS NULL');
+      .leftJoinAndSelect('task.project', 'project');
 
-    if (filters.status) {
-      qb.andWhere('task.status = :status', { status: filters.status });
+    if (filters.myTasks) {
+      dataQb.andWhere('task.assignedToId = :currentUserId', { currentUserId: user.id });
     }
-
-    if (filters.priority) {
-      qb.andWhere('task.priority = :priority', { priority: filters.priority });
-    }
-
-    if (filters.assignedToId) {
-      qb.andWhere('task.assignedToId = :assignedToId', {
-        assignedToId: filters.assignedToId,
-      });
-    }
-
-    if (filters.search) {
-      qb.andWhere(
-        '(task.title ILIKE :search OR task.description ILIKE :search)',
-        { search: `%${filters.search}%` },
+    if (filters.atRisk) {
+      dataQb.andWhere(
+        '((task.dueDate < NOW() AND task.status != :completedStatus) OR task.status = :blockedStatus)',
+        { completedStatus: TaskStatus.COMPLETED, blockedStatus: TaskStatus.BLOCKED },
       );
     }
 
-    const tasks = await qb.orderBy('task.createdAt', 'DESC').getMany();
-    if (tasks.length === 0) {
-      return tasks;
-    }
+    dataQb.orderBy('task.createdAt', 'DESC');
 
-    const countsByParent = await this.getSubtaskCountsByParentIds(
-      filters.projectId,
-      tasks.map((t) => t.id),
-    );
+    const [data, total] = await dataQb
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
 
-    for (const task of tasks) {
-      const counts = countsByParent.get(task.id);
-      task.subtaskCount = counts?.total ?? 0;
-      task.completedSubtaskCount = counts?.completed ?? 0;
-    }
+    const [allCount, mineCount, atRiskCount] = await Promise.all([
+      buildBaseQb().getCount(),
+      buildBaseQb()
+        .andWhere('task.assignedToId = :currentUserId', { currentUserId: user.id })
+        .getCount(),
+      buildBaseQb()
+        .andWhere(
+          '((task.dueDate < NOW() AND task.status != :completedStatus) OR task.status = :blockedStatus)',
+          { completedStatus: TaskStatus.COMPLETED, blockedStatus: TaskStatus.BLOCKED },
+        )
+        .getCount(),
+    ]);
 
-    return tasks;
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      counts: { all: allCount, mine: mineCount, atRisk: atRiskCount },
+    };
   }
 
   async findOne(id: string, user: RequestUser, projectId?: string): Promise<TaskEntity> {
@@ -677,7 +700,7 @@ export class TasksService {
     return { success: true };
   }
 
-  async getTimeline(taskId: string, user: RequestUser): Promise<any[]> {
+  async getTimeline(taskId: string, user: RequestUser, page = 1, limit = 10) {
     const task = await this.findTaskOrThrow(taskId);
     const allowed = await this.permissions.canViewTask(user, task.project);
     if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
@@ -725,7 +748,17 @@ export class TasksService {
       return a.id.localeCompare(b.id);
     });
 
-    return timeline;
+    const total = timeline.length;
+    const start = (page - 1) * limit;
+    const data = timeline.slice(start, start + limit);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async archive(id: string, user: RequestUser): Promise<TaskEntity> {
