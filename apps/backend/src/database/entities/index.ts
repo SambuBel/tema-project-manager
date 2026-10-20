@@ -12,6 +12,7 @@ import { TaskDependencyEntity } from './task-dependency.entity';
 import { TagEntity } from './tag.entity';
 import { TaskTagEntity } from './task-tag.entity';
 import { CommentEntity } from './comment.entity';
+import { CommentMentionEntity } from './comment-mention.entity';
 import { AttachmentEntity } from './attachment.entity';
 import { CostCategoryEntity } from './cost-category.entity';
 import { BudgetEntity } from './budget.entity';
@@ -37,6 +38,7 @@ export * from './task-dependency.entity';
 export * from './tag.entity';
 export * from './task-tag.entity';
 export * from './comment.entity';
+export * from './comment-mention.entity';
 export * from './attachment.entity';
 export * from './cost-category.entity';
 export * from './budget.entity';
@@ -75,6 +77,7 @@ export const ALL_ENTITIES = [
   TagEntity,
   TaskTagEntity,
   CommentEntity,
+  CommentMentionEntity,
   AttachmentEntity,
   CostCategoryEntity,
   BudgetEntity,

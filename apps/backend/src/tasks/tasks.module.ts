@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { TaskEntity } from './task.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { CommentEntity } from '../database/entities/comment.entity';
+import { CommentMentionEntity } from '../database/entities/comment-mention.entity';
 import { ProjectsModule } from '../projects/projects.module';
 import { TasksController } from './tasks.controller';
 import { TasksService } from './tasks.service';
@@ -17,6 +18,7 @@ import { TaskSlugHistoryEntity } from './task-slug-history.entity';
       TaskEntity,
       ProjectEntity,
       CommentEntity,
+      CommentMentionEntity,
       SubtaskEntity,
       TaskSlugHistoryEntity,
     ]),

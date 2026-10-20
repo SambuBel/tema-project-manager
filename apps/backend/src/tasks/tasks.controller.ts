@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
+import { UpdateCommentDto } from './dto/update-comment.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { FilterTasksDto } from './dto/filter-tasks.dto';
 import { TaskListItemDto, toTaskListItem } from './dto/task-list-item.dto';
@@ -65,7 +66,26 @@ export class TasksController {
     @Body() dto: CreateCommentDto,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.tasksService.addComment(id, dto.content, user);
+    return this.tasksService.addComment(id, dto.content, user, dto.mentions);
+  }
+
+  @Patch(':id/comments/:commentId')
+  updateComment(
+    @Param('id') id: string,
+    @Param('commentId') commentId: string,
+    @Body() dto: UpdateCommentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.tasksService.updateComment(id, commentId, dto.content, user, dto.mentions);
+  }
+
+  @Delete(':id/comments/:commentId')
+  deleteComment(
+    @Param('id') id: string,
+    @Param('commentId') commentId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.tasksService.deleteComment(id, commentId, user);
   }
 
   @Get(':id/timeline')
