@@ -1,7 +1,7 @@
 import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { ProjectEntity } from '../../projects/project.entity';
 import { UserEntity } from './user.entity';
-import { ProjectActivityAction, ProjectActivityEntityType } from '../enums';
+import { AuditOrigin, ProjectActivityAction, ProjectActivityEntityType } from '../enums';
 
 @Entity('project_activities')
 export class ProjectActivityEntity {
@@ -41,6 +41,10 @@ export class ProjectActivityEntity {
 
   @Column({ name: 'entity_id', type: 'uuid', nullable: true })
   entityId!: string | null;
+
+  /** Desde dónde se hizo el cambio: la app (UI) o el asistente de IA. El actor siempre es el usuario. */
+  @Column({ name: 'origin', type: 'enum', enum: AuditOrigin, enumName: 'audit_origin_enum', default: AuditOrigin.UI })
+  origin!: AuditOrigin;
 
   @Column({ type: 'jsonb', nullable: true })
   metadata!: any;

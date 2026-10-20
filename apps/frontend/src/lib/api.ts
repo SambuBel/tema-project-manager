@@ -24,7 +24,7 @@ import type {
   CreateUserDto,
   PaginatedResponse,
 } from '@tema/shared-types';
-import type { Task, TaskFilters, TaskStatus, TaskTimelineItem, TaskListResponse } from '../types/task'
+import type { Task, TaskFilters, TaskStatus, TaskTimelineItem, TaskListResponse, CommentMention } from '../types/task'
 
 const BASE = '/api';
 
@@ -178,14 +178,15 @@ export const api = {
   },
   createTask: (dto: CreateTaskDto) =>
     request<Task>('/tasks', { method: 'POST', body: JSON.stringify(dto) }),
-  getTask: (id: string) => request<Task>(`/tasks/${id}`),
+  getTask: (idOrSlug: string, projectId?: string) =>
+    request<Task>(`/tasks/${encodeURIComponent(idOrSlug)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
   updateTask: (id: string, dto: UpdateTaskDto) =>
     request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
   updateTaskStatus: (id: string, status: TaskStatus) =>
     request<Task>(`/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   archiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
-  getSubtasks: (taskId: string, page = 1, limit = 5) => request<PaginatedResponse<Task>>(`/tasks/${taskId}/subtasks?page=${page}&limit=${limit}`),
+  getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
   createSubtask: (taskId: string, dto: CreateSubtaskDto) =>
     request<Subtask>(`/tasks/${taskId}/subtasks` , { method: 'POST', body: JSON.stringify(dto)}),
   updateSubtask: (taskId: string, subtaskId: string, dto: UpdateSubtaskDto) =>
@@ -193,7 +194,12 @@ export const api = {
   deleteSubtask: (taskId: string, subtaskId: string) =>
     request<void>(`/tasks/${taskId}/subtasks/${subtaskId}` , { method: 'DELETE' }),
   getTaskTimeline: (taskId: string, page = 1, limit = 10) => request<PaginatedResponse<TaskTimelineItem>>(`/tasks/${taskId}/timeline?page=${page}&limit=${limit}`),
-  addTaskComment: (taskId: string, content: string) => request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
+  addTaskComment: (taskId: string, content: string, mentions?: CommentMention[]) =>
+    request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content, mentions }) }),
+  updateTaskComment: (taskId: string, commentId: string, content: string, mentions?: CommentMention[]) =>
+    request<TaskTimelineItem>(`/tasks/${taskId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify({ content, mentions }) }),
+  deleteTaskComment: (taskId: string, commentId: string) =>
+    request<{ success: boolean }>(`/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' }),
 
   // --- Asistente ---
   sendChatMessage: (message: string, projectId?: string, history: ChatTurn[] = []) =>

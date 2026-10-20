@@ -9,6 +9,7 @@ export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Task {
   id: string;
+  slug?: string;
   projectId: string;
   parentTaskId: string | null;
   title: string;
@@ -31,6 +32,8 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  subtaskCount?: number;
+  completedSubtaskCount?: number;
 }
 
 export interface TaskFilters {
@@ -76,6 +79,13 @@ export const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   COMPLETED:   ALL_STATUSES.filter((s) => s !== 'COMPLETED'),
 };
 
+export interface CommentMention {
+  userId: string;
+  name: string;
+  startIndex: number;
+  endIndex: number;
+}
+
 export interface TaskTimelineItem {
   id: string;
   type: 'COMMENT' | 'HISTORY';
@@ -88,4 +98,13 @@ export interface TaskTimelineItem {
     avatar: string;
   };
   createdAt: string;
+  editedAt?: string | null;
+  mentions?: CommentMention[];
+}
+
+export interface CommentMention {
+  userId: string;
+  name: string;
+  startIndex: number;
+  endIndex: number;
 }

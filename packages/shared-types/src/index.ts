@@ -174,6 +174,7 @@ export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Task {
   id: ID;
+  slug?: string;
   projectId: ID;
   parentTaskId: ID | null;
   title: string;
@@ -188,6 +189,8 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  subtaskCount?: number;
+  completedSubtaskCount?: number;
 }
 
 export interface CreateTaskDto {
@@ -291,4 +294,36 @@ export interface PaginatedResponse<T> {
   page: number;
   limit: number;
   totalPages: number;
+}
+// --- Presupuesto (POST/GET /projects/:projectId/budget) ---------------------------------------
+// Datos económicos: solo los reciben ADMIN, PROGRAM_MANAGER y (GET) el líder real del proyecto.
+
+/** Alta del presupuesto inicial. `version`, `isCurrent` y `createdBy` los fija el servidor. */
+export interface CreateBudgetDto {
+  /** Importe como STRING (nunca number: sin floating point), hasta 12 enteros y 2 decimales, >= 0. */
+  totalAmount: string;
+  /** 3 letras mayúsculas (formato ISO 4217). Todavía sin catálogo de monedas habilitadas. */
+  currency: string;
+  /** YYYY-MM-DD */
+  approvalDate: string;
+}
+
+/** Nueva versión del presupuesto. `expectedVersion` = versión vigente que el usuario vio (control optimista, RNF-20). */
+export interface CreateBudgetVersionDto extends CreateBudgetDto {
+  expectedVersion: number;
+}
+
+export interface Budget {
+  id: ID;
+  projectId: ID;
+  version: number;
+  /** String con 2 decimales, ej. "1500000.50". */
+  totalAmount: string;
+  currency: string;
+  /** YYYY-MM-DD */
+  approvalDate: string;
+  isCurrent: boolean;
+  supersededAt: string | null;
+  createdBy: ID;
+  createdAt: string;
 }

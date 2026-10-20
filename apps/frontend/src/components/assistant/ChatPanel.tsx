@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, type ChatTurn } from '../../lib/api';
+import { assistantErrorMessage } from '../../lib/assistantErrors';
+import { useCurrentUser } from '../../hooks/useCurrentUser';
 
 /** Tiene que coincidir con MAX_HISTORY_TURNS del backend (ChatMessageDto). */
 const MAX_HISTORY_TURNS = 20;
@@ -15,6 +17,19 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  isError?: boolean;
+}
+
+/** La charla se guarda por usuario y por pestaña: sobrevive a recargar, no a cerrar la pestaña. */
+const storageKey = (userId: string) => `tema.assistant.chat.${userId}`;
+
+function loadMessages(key: string): ChatMessage[] {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as ChatMessage[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -24,8 +39,28 @@ interface ChatMessage {
  */
 export function ChatPanel({ open, onClose }: ChatPanelProps) {
   const { projectId } = useParams<{ projectId?: string }>();
+  const { user } = useCurrentUser();
+  const key = user ? storageKey(user.id) : null;
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => (key ? loadMessages(key) : []));
+  const [lastQuestion, setLastQuestion] = useState('');
+  // Clave de la que ya se cargó la charla: evita guardar mensajes de otro usuario bajo la clave nueva.
+  const [loadedKey, setLoadedKey] = useState(key);
+
+  useEffect(() => {
+    if (!key) return;
+    setMessages(loadMessages(key));
+    setLoadedKey(key);
+  }, [key]);
+
+  useEffect(() => {
+    if (!key || loadedKey !== key) return;
+    try {
+      sessionStorage.setItem(key, JSON.stringify(messages));
+    } catch {
+      // sin storage la charla sigue andando, solo que no se conserva al recargar
+    }
+  }, [key, loadedKey, messages]);
 
   const status = useQuery({ queryKey: ['assistant-status'], queryFn: api.getAssistantStatus, enabled: open, staleTime: Infinity });
 
@@ -35,24 +70,41 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
     onSuccess: (data) => {
       setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', text: data.reply }]);
     },
-    onError: () => {
+    onError: (error) => {
       setMessages((prev) => [
         ...prev,
-        { id: crypto.randomUUID(), role: 'assistant', text: 'No pude responder eso ahora, probá de nuevo en un momento.' },
+        { id: crypto.randomUUID(), role: 'assistant', text: assistantErrorMessage(error), isError: true },
       ]);
     },
   });
+
+  const ask = (text: string) => {
+    // Los avisos de error no son parte de la charla, no se mandan como historial.
+    const history = messages
+      .filter((m) => !m.isError)
+      .slice(-MAX_HISTORY_TURNS)
+      .map(({ role, text }) => ({ role, text }));
+    setLastQuestion(text);
+    send.mutate({ message: text, history });
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const text = input.trim();
     if (!text || send.isPending) return;
 
-    const history = messages.slice(-MAX_HISTORY_TURNS).map(({ role, text }) => ({ role, text }));
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text }]);
     setInput('');
-    send.mutate({ message: text, history });
+    ask(text);
   };
+
+  const retry = () => {
+    if (!lastQuestion || send.isPending) return;
+    setMessages((prev) => prev.filter((m, i) => !(m.isError && i === prev.length - 1)));
+    ask(lastQuestion);
+  };
+
+  const canRetry = !!messages[messages.length - 1]?.isError && !!lastQuestion && !send.isPending;
 
   if (!open) return null;
 
@@ -93,14 +145,31 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
               className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${
                 m.role === 'user'
                   ? 'self-end bg-sidebar-card text-white'
-                  : 'self-start bg-slate-100 text-slate-800'
+                  : m.isError
+                    ? 'self-start border border-red-200 bg-red-50 text-red-800'
+                    : 'self-start bg-slate-100 text-slate-800'
               }`}
             >
               {m.text}
             </div>
           ))}
+          {canRetry && (
+            <button
+              type="button"
+              onClick={retry}
+              className="self-start text-xs font-medium text-sidebar-card underline hover:text-sidebar-hover"
+            >
+              Reintentar
+            </button>
+          )}
           {send.isPending && (
-            <div className="self-start rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-400">Pensando...</div>
+            <div
+              role="status"
+              aria-live="polite"
+              className="self-start rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-500"
+            >
+              Consultando tus proyectos...
+            </div>
           )}
         </div>
       </div>

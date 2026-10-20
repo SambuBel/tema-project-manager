@@ -9,6 +9,7 @@ import { UsersModule } from './users/users.module';
 import { TasksModule } from './tasks/tasks.module';
 import { SubtasksModule } from './subtasks/subtasks.module';
 import { GanttModule } from './gantt/gantt.module';
+import { BudgetsModule } from './budgets/budgets.module';
 import { AiModule } from './ai/ai.module';
 import { envValidationSchema } from './config/env.validation';
 
@@ -35,6 +36,7 @@ import { envValidationSchema } from './config/env.validation';
     TasksModule,
     SubtasksModule,
     GanttModule,
+    BudgetsModule,
     AiModule,
   ],
   controllers: [HealthController],

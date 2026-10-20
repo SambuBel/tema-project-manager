@@ -7,6 +7,7 @@ describe('BoardColumn layout & scroll compatibility', () => {
       status: 'PENDING',
       title: 'Pendiente',
       tasks: [],
+      project: { id: 'p1' } as any,
       onSelectTask: vi.fn(),
     }) as any;
 
