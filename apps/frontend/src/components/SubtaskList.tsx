@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Pagination } from './Pagination';
 import type { TaskStatus } from '@tema/shared-types';
@@ -21,9 +21,8 @@ export function SubtaskList({ parentTaskId }: SubtaskListProps) {
   const [page, setPage] = useState(1);
 
   const { data: response, isLoading, isError } = useQuery({
-    queryKey: ['subtasks', parentTaskId, page],
-    queryFn: () => api.getSubtasks(parentTaskId, page, 5),
-    placeholderData: keepPreviousData,
+    queryKey: ['subtasks', parentTaskId],
+    queryFn: () => api.getSubtasks(parentTaskId),
   });
 
   if (isLoading) {
@@ -34,7 +33,7 @@ export function SubtaskList({ parentTaskId }: SubtaskListProps) {
     return <p className="text-sm text-red-600">Error al cargar las subtareas.</p>;
   }
 
-  const subtasks = response?.data ?? [];
+  const subtasks = (response ?? []).slice((page - 1) * 5, page * 5);
 
   if (subtasks.length === 0 && page === 1) {
     return <p className="text-sm italic text-[#607185]">Todavía no hay subtareas.</p>;
@@ -63,7 +62,7 @@ export function SubtaskList({ parentTaskId }: SubtaskListProps) {
 
       <Pagination
         page={page}
-        totalPages={response?.totalPages ?? 1}
+        totalPages={Math.max(1, Math.ceil((response?.length ?? 0) / 5))}
         onPageChange={setPage}
       />
     </div>

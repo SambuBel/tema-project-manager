@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { AuthenticatedUser } from '@tema/shared-types';
-import type { Task } from '../types/task';
+import type { Task, TaskListResponse } from '../types/task';
 import { api, ApiRequestError } from '../lib/api';
 import { TaskList } from './TaskList';
 import type { TaskListPersistedState } from './TaskList';
@@ -40,6 +40,11 @@ function makeTask(overrides: Partial<Task> & { id: string; title: string }): Tas
   };
 }
 
+function taskPage(data: Task[]): TaskListResponse {
+  return { data, total: data.length, page: 1, limit: 10, totalPages: Math.ceil(data.length / 10),
+    counts: { all: data.length, mine: data.filter(t => t.assignedToId === currentUser.id).length, atRisk: 0 } };
+}
+
 function setupRender(
   tasks: Task[],
   onSelectTask = vi.fn(),
@@ -70,7 +75,7 @@ function setupRender(
       user: { id: 'user-2', name: 'Carlos Ruiz', email: 'carlos@tema.com', avatarUrl: null, active: true },
     },
   ]);
-  client.setQueryData(['tasks', { projectId: PROJECT_ID }], tasks);
+  client.setQueryData(['tasks', { projectId: PROJECT_ID, page: 1, limit: 10 }, 'ALL'], taskPage(tasks));
 
   const utils = render(
     <QueryClientProvider client={client}>
@@ -343,7 +348,7 @@ describe('TaskList - desplegable de subtareas', () => {
       makeTask({ id: 's1', parentTaskId: 't1', title: 'Subtarea Existente', status: 'PENDING' }),
     ];
 
-    vi.spyOn(api, 'listTasks').mockImplementation(async () => [parentTask]);
+    vi.spyOn(api, 'listTasks').mockImplementation(async () => taskPage([parentTask]));
     vi.spyOn(api, 'getSubtasks').mockImplementation(async () => subtasksList);
 
     const createTaskSpy = vi.spyOn(api, 'createTask');
@@ -413,7 +418,7 @@ describe('TaskList - desplegable de subtareas', () => {
       makeTask({ id: 's2', parentTaskId: 't1', title: 'Subtarea 2', status: 'COMPLETED' }),
     ];
 
-    vi.spyOn(api, 'listTasks').mockImplementation(async () => [parent]);
+    vi.spyOn(api, 'listTasks').mockImplementation(async () => taskPage([parent]));
     vi.spyOn(api, 'getSubtasks').mockImplementation(async () => currentSubtasks);
     const { client } = setupRender([parent]);
 
@@ -478,12 +483,13 @@ describe('TaskList - desplegable de subtareas', () => {
       makeTask({ id: 's1', parentTaskId: 't1', title: 'Revisar matriz de roles', status: 'COMPLETED' }),
     ]);
     const listTasksSpy = vi.spyOn(api, 'listTasks').mockImplementation(async (filters) => {
-      return [taskMine, taskOther].filter((t) => {
+      return taskPage([taskMine, taskOther].filter((t) => {
+        if (filters.myTasks && t.assignedToId !== currentUser.id) return false;
         if (filters.status && t.status !== filters.status) return false;
         if (filters.priority && t.priority !== filters.priority) return false;
         if (filters.search && !t.title.toLowerCase().includes(filters.search.toLowerCase())) return false;
         return true;
-      });
+      }));
     });
 
     setupRender([taskMine, taskOther]);
@@ -496,7 +502,7 @@ describe('TaskList - desplegable de subtareas', () => {
     fireEvent.click(screen.getByRole('button', { name: /Mis tareas/i }));
     expect(screen.getByText('Auditar permisos')).toBeTruthy();
     expect(screen.getByText('Revisar matriz de roles')).toBeTruthy();
-    expect(screen.queryByText('Redactar informe')).toBeNull();
+    await waitFor(() => expect(screen.queryByText('Redactar informe')).toBeNull());
 
     // Volver a "Todas"
     fireEvent.click(screen.getByRole('button', { name: /Todas/i }));
@@ -506,7 +512,7 @@ describe('TaskList - desplegable de subtareas', () => {
     const selects = screen.getAllByRole('combobox');
     fireEvent.change(selects[0]!, { target: { value: 'IN_PROGRESS' } });
     await waitFor(() => {
-      expect(listTasksSpy).toHaveBeenCalledWith({ projectId: PROJECT_ID, status: 'IN_PROGRESS' });
+      expect(listTasksSpy).toHaveBeenCalledWith(expect.objectContaining({ projectId: PROJECT_ID, status: 'IN_PROGRESS', page: 1, limit: 10 }));
     });
     expect(await screen.findByText('Auditar permisos')).toBeTruthy();
     expect(screen.getByText('Revisar matriz de roles')).toBeTruthy();
@@ -566,11 +572,12 @@ describe('TaskList - desplegable de subtareas', () => {
     });
     vi.spyOn(api, 'getProjectMembers').mockResolvedValue([]);
     vi.spyOn(api, 'listTasks').mockImplementation(async (filters) => {
-      return [task1, task2].filter((t) => {
+      return taskPage([task1, task2].filter((t) => {
+        if (filters.myTasks && t.assignedToId !== currentUser.id) return false;
         if (filters.status && t.status !== filters.status) return false;
         if (filters.search && !t.title.toLowerCase().includes(filters.search.toLowerCase())) return false;
         return true;
-      });
+      }));
     });
     vi.spyOn(api, 'getSubtasks').mockImplementation(async (taskId: string) => {
       if (taskId === 't1') return [sub1];
@@ -581,7 +588,7 @@ describe('TaskList - desplegable de subtareas', () => {
       if (identifier === 'esquema-base-datos' || identifier === 's1') return sub1;
       return task1;
     });
-    vi.spyOn(api, 'getTaskTimeline').mockResolvedValue([]);
+    vi.spyOn(api, 'getTaskTimeline').mockResolvedValue({ data: [], total: 0, page: 1, limit: 10, totalPages: 0 });
 
     let simulatedScrollY = 0;
     Object.defineProperty(window, 'scrollY', {
@@ -715,7 +722,7 @@ describe('TaskList - desplegable de subtareas', () => {
       estimatedEndDate: '2026-12-31',
     });
     client.setQueryData(['project-members', 'project-2'], []);
-    client.setQueryData(['tasks', { projectId: 'project-2' }], [taskProj2]);
+    client.setQueryData(['tasks', { projectId: 'project-2', page: 1, limit: 10 }, 'ALL'], taskPage([taskProj2]));
 
     render(
       <QueryClientProvider client={client}>
@@ -740,7 +747,7 @@ describe('TaskList - desplegable de subtareas', () => {
     });
     let subtasksList: Task[] = [];
 
-    vi.spyOn(api, 'listTasks').mockImplementation(async () => [parentTask]);
+    vi.spyOn(api, 'listTasks').mockImplementation(async () => taskPage([parentTask]));
     vi.spyOn(api, 'getSubtasks').mockImplementation(async () => subtasksList);
     vi.spyOn(api, 'createTask').mockImplementation(async (payload) => {
       const created = makeTask({
@@ -835,12 +842,13 @@ describe('TaskList - desplegable de subtareas', () => {
 
     const getSubtasksSpy = vi.spyOn(api, 'getSubtasks').mockResolvedValue([]);
     const listTasksSpy = vi.spyOn(api, 'listTasks').mockImplementation(async (filters) => {
-      return [taskWithSubtasksA, taskWithSubtasksB, taskWithoutSubtasks].filter((t) => {
+      return taskPage([taskWithSubtasksA, taskWithSubtasksB, taskWithoutSubtasks].filter((t) => {
+        if (filters.myTasks && t.assignedToId !== currentUser.id) return false;
         if (filters.status && t.status !== filters.status) return false;
         if (filters.priority && t.priority !== filters.priority) return false;
         if (filters.search && !t.title.toLowerCase().includes(filters.search.toLowerCase())) return false;
         return true;
-      });
+      }));
     });
 
     setupRender([taskWithSubtasksA, taskWithSubtasksB, taskWithoutSubtasks]);
@@ -920,7 +928,7 @@ describe('TaskList - desplegable de subtareas', () => {
       status: 'PENDING',
     });
 
-    vi.spyOn(api, 'listTasks').mockResolvedValue([taskWithSubtasks, taskWithoutSubtasks]);
+    vi.spyOn(api, 'listTasks').mockResolvedValue(taskPage([taskWithSubtasks, taskWithoutSubtasks]));
     vi.spyOn(api, 'getSubtasks').mockResolvedValue([subtask]);
 
     let savedState: TaskListPersistedState | null = null;
@@ -990,7 +998,7 @@ describe('TaskList - desplegable de subtareas', () => {
       estimatedEndDate: '2026-12-31',
     });
     client.setQueryData(['project-members', 'project-2'], []);
-    client.setQueryData(['tasks', { projectId: 'project-2' }], [taskProj2]);
+    client.setQueryData(['tasks', { projectId: 'project-2', page: 1, limit: 10 }, 'ALL'], taskPage([taskProj2]));
 
     rerender(
       <QueryClientProvider client={client}>
@@ -1028,7 +1036,7 @@ describe('TaskList - desplegable de subtareas', () => {
       'task-b': [],
     };
 
-    vi.spyOn(api, 'listTasks').mockImplementation(async () => [taskA, taskB]);
+    vi.spyOn(api, 'listTasks').mockImplementation(async () => taskPage([taskA, taskB]));
     vi.spyOn(api, 'getSubtasks').mockImplementation(async (taskId) => subtasksMap[taskId] ?? []);
     vi.spyOn(api, 'createTask').mockImplementation(async (payload) => {
       const pId = payload.parentTaskId!;
