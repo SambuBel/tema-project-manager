@@ -176,6 +176,15 @@ export const api = {
     if (filters.atRisk) params.append('atRisk', 'true');
     return request<TaskListResponse>(`/tasks?${params.toString()}`);
   },
+  listAllTasks: async (filters: TaskFilters): Promise<Task[]> => {
+    const first = await api.listTasks({ ...filters, page: 1, limit: 100 });
+    const tasks = [...first.data];
+    for (let page = 2; page <= first.totalPages; page++) {
+      const next = await api.listTasks({ ...filters, page, limit: 100 });
+      tasks.push(...next.data);
+    }
+    return tasks;
+  },
   createTask: (dto: CreateTaskDto) =>
     request<Task>('/tasks', { method: 'POST', body: JSON.stringify(dto) }),
   getTask: (idOrSlug: string, projectId?: string) =>

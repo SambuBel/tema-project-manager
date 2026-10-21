@@ -106,7 +106,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
 
   const { data: projectTasks = [] } = useQuery({
     queryKey: ['tasks', initialData?.id],
-    queryFn: () => api.listTasks({ projectId: initialData!.id }),
+    queryFn: () => api.listAllTasks({ projectId: initialData!.id }),
     enabled: isEditing && !!initialData?.id,
   });
 

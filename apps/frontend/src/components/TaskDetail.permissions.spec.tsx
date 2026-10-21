@@ -49,7 +49,7 @@ function render(currentUser: AuthenticatedUser, members: ProjectMember[], taskOv
   client.setQueryData(['task', TASK_ID], task(taskOverrides));
   client.setQueryData(['project-members', PROJECT_ID], members);
   client.setQueryData(['subtasks', TASK_ID], []);
-  client.setQueryData(['task', TASK_ID, 'timeline'], [
+  client.setQueryData(['task', TASK_ID, 'timeline', 1], { data: [
     {
       id: 'c1',
       type: 'COMMENT',
@@ -57,7 +57,7 @@ function render(currentUser: AuthenticatedUser, members: ProjectMember[], taskOv
       actor: { id: 'x', name: 'Ana Gómez', avatar: 'AG' },
       createdAt: new Date().toISOString(),
     },
-  ]);
+  ], total: 1, page: 1, limit: 10, totalPages: 1 });
   return renderToString(
     <QueryClientProvider client={client}>
       <MemoryRouter>
