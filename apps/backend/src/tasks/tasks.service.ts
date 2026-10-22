@@ -341,6 +341,10 @@ export class TasksService {
         .createQueryBuilder('task')
         .where('task.projectId = :projectId', { projectId: filters.projectId });
 
+      if (!filters.includeSubtasks) {
+        qb.andWhere('task.parentTaskId IS NULL');
+      }
+
       if (filters.status) {
         qb.andWhere('task.status = :status', { status: filters.status });
       }
@@ -379,6 +383,19 @@ export class TasksService {
       .skip((page - 1) * limit)
       .take(limit)
       .getManyAndCount();
+
+    if (data.length > 0) {
+      const countsByParent = await this.getSubtaskCountsByParentIds(
+        filters.projectId,
+        data.map((t) => t.id),
+      );
+
+      for (const task of data) {
+        const counts = countsByParent.get(task.id);
+        task.subtaskCount = counts?.total ?? 0;
+        task.completedSubtaskCount = counts?.completed ?? 0;
+      }
+    }
 
     const [allCount, mineCount, atRiskCount] = await Promise.all([
       buildBaseQb().getCount(),

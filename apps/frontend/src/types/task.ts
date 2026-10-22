@@ -46,6 +46,7 @@ export interface TaskFilters {
   limit?: number;
   myTasks?: boolean;
   atRisk?: boolean;
+  includeSubtasks?: boolean;
 }
 
 export interface TaskListResponse extends PaginatedResponse<Task> {

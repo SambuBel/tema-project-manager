@@ -55,4 +55,9 @@ export class FilterTasksDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   myTasks?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  includeSubtasks?: boolean;
 }
