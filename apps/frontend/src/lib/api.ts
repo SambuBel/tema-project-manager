@@ -199,6 +199,7 @@ export const api = {
     if (filters.limit) params.append('limit', String(filters.limit));
     if (filters.myTasks) params.append('myTasks', 'true');
     if (filters.atRisk) params.append('atRisk', 'true');
+    if (filters.includeSubtasks) params.append('includeSubtasks', 'true');
     return request<TaskListResponse>(`/tasks?${params.toString()}`);
   },
   listAllTasks: async (filters: TaskFilters): Promise<Task[]> => {

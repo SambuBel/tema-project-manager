@@ -41,7 +41,7 @@ export function MilestoneTaskSelectorModal({
   // Carga todas las tareas del proyecto recorriendo todas las páginas transparentemente
   const { data: allTasks, isLoading: loadingTasks, isError: errorTasks } = useQuery({
     queryKey: ['all-tasks-for-milestone', milestone.projectId],
-    queryFn: () => api.listAllTasks({ projectId: milestone.projectId }),
+    queryFn: () => api.listAllTasks({ projectId: milestone.projectId, includeSubtasks: true }),
     enabled: isOpen,
   });
 

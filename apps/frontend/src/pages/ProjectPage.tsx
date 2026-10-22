@@ -61,7 +61,7 @@ export function ProjectPage() {
   const taskIdParam = searchParams.get('taskId');
   const taskSlugParam = searchParams.get('task');
 
-  const validViews = ['resumen', 'tablero', 'tasks', 'gantt', 'equipo', 'actividad'];
+  const validViews = ['resumen', 'tablero', 'tasks', 'hitos', 'gantt', 'equipo', 'actividad'];
   const baseView = (validViews.includes(viewParam as string) ? viewParam : 'resumen') as ProjectView;
 
   const selectedTaskIdentifier = taskSlugParam || taskIdParam;
@@ -159,6 +159,7 @@ export function ProjectPage() {
     view === 'resumen' ? 'RESUMEN'
     : view === 'tablero' ? 'TABLERO'
     : view === 'tasks' || view === 'task-detail' ? 'TAREAS'
+    : view === 'hitos' ? 'HITOS'
     : view === 'gantt' ? 'GANTT'
     : view === 'equipo' ? 'EQUIPO'
     : 'ACTIVIDAD';
