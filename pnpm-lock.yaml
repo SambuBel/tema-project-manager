@@ -141,6 +141,12 @@ importers:
       '@hello-pangea/dnd':
         specifier: ^18.0.1
         version: 18.0.1(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@svar-ui/core-locales':
+        specifier: ^2.6.1
+        version: 2.6.1
+      '@svar-ui/react-core':
+        specifier: ^2.6.1
+        version: 2.6.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@svar-ui/react-gantt':
         specifier: ^2.8.0
         version: 2.8.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)

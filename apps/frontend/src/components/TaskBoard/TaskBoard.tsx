@@ -7,6 +7,7 @@ import { BoardColumn } from './BoardColumn';
 import { taskStatusLabels } from '../../types/task';
 import { handleDragEndLogic } from './dragDropLogic';
 import { getMutationOptions } from './mutationLogic';
+import { useBlockedTasks } from '../../hooks/useBlockedTasks';
 
 interface TaskBoardProps {
   projectId: string;
@@ -29,8 +30,10 @@ export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) 
 
   const { data: tasks, isLoading, isError } = useQuery({
     queryKey: ['tasks', projectId],
-    queryFn: () => api.listTasks({ projectId }),
+    queryFn: () => api.listTasks({ projectId, limit: 100 }),
   });
+
+  const { blockedIds } = useBlockedTasks(projectId);
 
   const mutation = useMutation(getMutationOptions(qc, projectId, api.updateTaskStatus, setToast));
 
@@ -54,7 +57,7 @@ export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) 
   }
 
   const tasksByStatus = COLUMNS.reduce((acc, status) => {
-    acc[status] = tasks?.filter((t) => t.status === status) || [];
+    acc[status] = tasks?.data?.filter((t) => t.status === status) || [];
     return acc;
   }, {} as Record<TaskStatus, Task[]>);
 
@@ -78,6 +81,7 @@ export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) 
               tasks={tasksByStatus[status]}
               project={project}
               onSelectTask={onSelectTask}
+              blockedIds={blockedIds}
             />
           ))}
         </div>

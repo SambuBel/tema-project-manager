@@ -8,9 +8,10 @@ interface BoardColumnProps {
   tasks: Task[];
   project: Project;
   onSelectTask: (taskId: string) => void;
+  blockedIds?: Set<string>;
 }
 
-export function BoardColumn({ status, title, tasks, project, onSelectTask }: BoardColumnProps) {
+export function BoardColumn({ status, title, tasks, project, onSelectTask, blockedIds }: BoardColumnProps) {
   return (
     <div className="relative flex flex-1 shrink-0 basis-[280px] min-w-[280px] max-w-[400px] flex-col rounded-xl bg-[#F7F9FB] mx-3 pt-4">
       <div className="mb-4 px-4 flex items-center justify-between">
@@ -38,7 +39,7 @@ export function BoardColumn({ status, title, tasks, project, onSelectTask }: Boa
                 </div>
               ) : (
                 tasks.map((task, index) => (
-                  <BoardCard key={task.id} task={task} index={index} project={project} onSelectTask={onSelectTask} />
+                  <BoardCard key={task.id} task={task} index={index} project={project} onSelectTask={onSelectTask} blockedByDependency={blockedIds?.has(task.id)} />
                 ))
               )}
               {provided.placeholder}
