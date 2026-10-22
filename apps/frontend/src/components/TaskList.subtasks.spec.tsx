@@ -1116,4 +1116,38 @@ describe('TaskList - desplegable de subtareas', () => {
     expect(screen.getByText('Tarea Alpha')).toBeTruthy();
     expect(screen.getByText('Tarea Beta')).toBeTruthy();
   });
+  it('15) exclusión de subtareas: el listado general sólo renderiza tareas raíz y visualiza subtareas exclusivamente en el desplegable', async () => {
+    const parentTask = makeTask({
+      id: 'parent-task-1',
+      title: 'Tarea Raíz Única',
+      parentTaskId: null,
+      subtaskCount: 1,
+      completedSubtaskCount: 0,
+    });
+
+    const subtask = makeTask({
+      id: 'subtask-1',
+      title: 'Subtarea Hija',
+      parentTaskId: 'parent-task-1',
+    });
+
+    vi.spyOn(api, 'getSubtasks').mockImplementation(async () => [subtask]);
+
+    // El listado general solo contiene tareas raíz devueltas por GET /tasks
+    const { container } = setupRender([parentTask]);
+
+    // 1. La tabla muestra la tarea raíz como única fila de datos principal
+    expect(screen.getByText('Tarea Raíz Única')).toBeTruthy();
+
+    // 2. La subtarea NO aparece inicialmente como fila independiente en el listado
+    expect(screen.queryByText('Subtarea Hija')).toBeNull();
+
+    // 3. Al expandir el acordeón de la tarea raíz, la subtarea se carga y visualiza exclusivamente dentro de su desplegable
+    fireEvent.click(screen.getByRole('button', { name: 'Expandir subtareas de Tarea Raíz Única' }));
+    expect(await screen.findByText('Subtarea Hija')).toBeTruthy();
+
+    // 4. Se asegura que sólo hay 1 botón de fila principal para tareas raíz
+    const rootTaskButtons = container.querySelectorAll('button.py-3\\.5');
+    expect(rootTaskButtons.length).toBe(1);
+  });
 });

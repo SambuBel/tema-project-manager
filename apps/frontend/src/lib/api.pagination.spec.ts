@@ -14,3 +14,25 @@ it('carga todas las páginas para no truncar el tablero ni la validación de fec
   expect(await api.listAllTasks({ projectId: 'project-1' })).toEqual([firstTask, lastTask]);
   expect(list).toHaveBeenNthCalledWith(2, { projectId: 'project-1', page: 2, limit: 100 });
 });
+
+it('listTasks envía includeSubtasks=true cuando se solicita', async () => {
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+    ok: true,
+    json: async () => ({ data: [], page: 1, limit: 10, total: 0, totalPages: 0, counts: { all: 0, mine: 0, atRisk: 0 } }),
+  } as Response);
+
+  await api.listTasks({ projectId: 'p1', includeSubtasks: true });
+
+  expect(fetchSpy).toHaveBeenCalledWith('/api/tasks?projectId=p1&includeSubtasks=true', expect.anything());
+});
+
+it('listTasks omite includeSubtasks en la query por defecto', async () => {
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+    ok: true,
+    json: async () => ({ data: [], page: 1, limit: 10, total: 0, totalPages: 0, counts: { all: 0, mine: 0, atRisk: 0 } }),
+  } as Response);
+
+  await api.listTasks({ projectId: 'p1' });
+
+  expect(fetchSpy).toHaveBeenCalledWith('/api/tasks?projectId=p1', expect.anything());
+});
