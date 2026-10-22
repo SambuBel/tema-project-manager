@@ -6,11 +6,13 @@ import { TaskEntity } from '../tasks/task.entity';
 import { MilestonesController } from './milestones.controller';
 import { MilestonesService } from './milestones.service';
 import { AuthModule } from '../auth/auth.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([MilestoneEntity, ProjectEntity, TaskEntity]),
     AuthModule,
+    UsersModule,
   ],
   controllers: [MilestonesController],
   providers: [MilestonesService],
