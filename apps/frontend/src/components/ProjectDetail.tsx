@@ -1,4 +1,6 @@
-import type { Project } from '@tema/shared-types';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../lib/api';
+import type { MilestoneStatus, Project } from '@tema/shared-types';
 
 /**
  * Contenido de la pestaña "Resumen" del proyecto.
@@ -7,6 +9,7 @@ import type { Project } from '@tema/shared-types';
 interface ProjectDetailProps {
   project: Project;
   onManageTeam: () => void;
+  onViewMilestones?: () => void;
 }
 
 function formatDate(dateStr: string | null | undefined): string {
@@ -22,7 +25,18 @@ function formatDate(dateStr: string | null | undefined): string {
   }
 }
 
-export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
+const MILESTONE_STATUS_STYLES: Record<MilestoneStatus, { bg: string; text: string; label: string }> = {
+  PENDING: { bg: 'bg-[#EAF2F7]', text: 'text-[#245B78]', label: 'Pendiente' },
+  OVERDUE: { bg: 'bg-[#FDECEA]', text: 'text-[#C62828]', label: 'Vencido' },
+  COMPLETED: { bg: 'bg-[#EAF5EA]', text: 'text-[#2E7D32]', label: 'Alcanzado' },
+};
+
+export function ProjectDetail({ project, onManageTeam, onViewMilestones }: ProjectDetailProps) {
+  const { data: upcomingMilestones, isLoading: loadingMilestones, isError: errorMilestones } = useQuery({
+    queryKey: ['milestones-upcoming', project.id],
+    queryFn: () => api.listMilestones(project.id, { upcoming: true, limit: 3 }),
+  });
+
   return (
     <>
       {/* Tarjetas Superiores */}
@@ -119,12 +133,84 @@ export function ProjectDetail({ project, onManageTeam }: ProjectDetailProps) {
         </div>
       </div>
 
-      {/* Próximos hitos */}
+      {/* Próximos hitos (KAN-246) */}
       <div className="flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-6">
-        <h3 className="text-lg font-semibold text-[#172B42]">Próximos hitos</h3>
-        <p className="mt-4 text-sm italic text-[#607185]">
-          No hay hitos disponibles todavía.
-        </p>
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-[#172B42]">Próximos hitos</h3>
+          {onViewMilestones && (
+            <button
+              onClick={onViewMilestones}
+              className="text-sm font-medium text-[#245B78] hover:underline"
+            >
+              Ver todos los hitos &rarr;
+            </button>
+          )}
+        </div>
+
+        {loadingMilestones && (
+          <p className="mt-4 text-sm text-[#607185]">Cargando próximos hitos...</p>
+        )}
+
+        {errorMilestones && (
+          <p className="mt-4 text-sm text-red-600">No se pudieron cargar los próximos hitos.</p>
+        )}
+
+        {!loadingMilestones && !errorMilestones && (!upcomingMilestones || upcomingMilestones.length === 0) && (
+          <div className="mt-4 flex flex-col items-start gap-2">
+            <p className="text-sm italic text-[#607185]">
+              No hay próximos hitos programados en este proyecto.
+            </p>
+            {onViewMilestones && (
+              <button
+                onClick={onViewMilestones}
+                className="mt-2 rounded-lg border border-[#DEE5EC] bg-white px-3 py-1.5 text-xs font-medium text-[#172B42] hover:bg-gray-50"
+              >
+                Ir a la pestaña de Hitos
+              </button>
+            )}
+          </div>
+        )}
+
+        {!loadingMilestones && !errorMilestones && upcomingMilestones && upcomingMilestones.length > 0 && (
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+            {upcomingMilestones.map((m) => {
+              const statusInfo = MILESTONE_STATUS_STYLES[m.status] || MILESTONE_STATUS_STYLES.PENDING;
+              return (
+                <div
+                  key={m.id}
+                  className="flex flex-col justify-between rounded-lg border border-[#DEE5EC] bg-[#FAFCFD] p-4 transition-shadow hover:shadow-sm"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <h4 className="font-medium text-[#172B42] line-clamp-1" title={m.name}>
+                        {m.name}
+                      </h4>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${statusInfo.bg} ${statusInfo.text}`}>
+                        {statusInfo.label}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-[#607185]">
+                      Fecha objetivo: <span className="font-medium text-[#172B42]">{formatDate(m.dueDate)}</span>
+                    </p>
+                  </div>
+
+                  <div className="mt-4">
+                    <div className="flex justify-between text-xs text-[#607185] mb-1">
+                      <span>Progreso ({m.completedTaskCount}/{m.taskCount})</span>
+                      <span className="font-semibold text-[#172B42]">{m.progress}%</span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-[#E5E9EB]">
+                      <div
+                        className="h-full rounded-full bg-[#245B78] transition-all duration-300"
+                        style={{ width: `${m.progress}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </>
   );

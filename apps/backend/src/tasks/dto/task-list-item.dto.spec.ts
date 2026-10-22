@@ -42,6 +42,7 @@ describe('toTaskListItem', () => {
       dueDate: '2026-10-20',
       createdBy: 'user-9',
       archivedAt: null,
+      milestoneId: null,
     });
   });
 
@@ -58,6 +59,17 @@ describe('toTaskListItem', () => {
 
     expect(item.assignedTo).toBeNull();
     expect(item.assignedToId).toBeNull();
+  });
+
+
+  it('mapea milestoneId cuando la tarea tiene un hito asignado', () => {
+    const item = toTaskListItem(makeTask({ milestoneId: 'milestone-123' }));
+    expect(item.milestoneId).toBe('milestone-123');
+  });
+
+  it('devuelve milestoneId null cuando la tarea no tiene hito asignado', () => {
+    const item = toTaskListItem(makeTask({ milestoneId: null }));
+    expect(item.milestoneId).toBeNull();
   });
 
   it('conserva subtaskCount y completedSubtaskCount calculados', () => {

@@ -12,6 +12,7 @@ import {
   canManageGlobalRolesUI,
   canManageProjectUI,
   canManageTaskPlanningUI,
+  canManageMilestonesUI,
   canManageTeamUI,
   canManageUserStatusUI,
   canRemoveGlobalRoleUI,
@@ -109,6 +110,28 @@ describe('canManageProjectUI / canManageTeamUI', () => {
 
   it('multi-rol: ADMIN + PROGRAM_MANAGER conserva el permiso', () => {
     expect(canManageProjectUI(makeUser('u1', ['ADMIN', 'PROGRAM_MANAGER']), project)).toBe(true);
+  });
+});
+
+describe('canManageMilestonesUI', () => {
+  const project = makeProject();
+
+  it('ADMIN y PROGRAM_MANAGER pueden gestionar hitos en cualquier proyecto', () => {
+    expect(canManageMilestonesUI(makeUser('admin-1', ['ADMIN']), project)).toBe(true);
+    expect(canManageMilestonesUI(makeUser('pm-1', ['PROGRAM_MANAGER']), project)).toBe(true);
+  });
+
+  it('el líder del proyecto puede gestionar hitos', () => {
+    expect(canManageMilestonesUI(makeUser(LEADER_ID, ['PROJECT_LEADER']), project)).toBe(true);
+  });
+
+  it('PROJECT_LEADER de otro proyecto no puede', () => {
+    expect(canManageMilestonesUI(makeUser('otro-leader', ['PROJECT_LEADER']), project)).toBe(false);
+  });
+
+  it('COLLABORATOR y OBSERVER no pueden gestionar hitos', () => {
+    expect(canManageMilestonesUI(makeUser('u1', ['COLLABORATOR']), project)).toBe(false);
+    expect(canManageMilestonesUI(makeUser('u1', ['OBSERVER']), project)).toBe(false);
   });
 });
 

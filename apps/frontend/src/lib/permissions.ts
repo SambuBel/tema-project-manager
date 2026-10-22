@@ -46,6 +46,11 @@ export function canManageProjectUI(user: AuthenticatedUser, project: Pick<Projec
 }
 
 /** Espeja PermissionsService.canManageProjectTeam (hoy idéntico a canManageProject). */
+/** Espeja PermissionsService.canManageMilestones. */
+export function canManageMilestonesUI(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
+  return isAdminPmOrLeader(user, project);
+}
+
 export function canManageTeamUI(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
   return isAdminPmOrLeader(user, project);
 }

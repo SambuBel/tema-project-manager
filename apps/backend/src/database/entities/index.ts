@@ -56,8 +56,10 @@ import { ProjectInvitationEntity } from '../../projects/project-invitation.entit
 import { SubtaskEntity } from '../../subtasks/subtask.entity';
 import { ProjectSlugHistoryEntity } from '../../projects/project-slug-history.entity';
 import { TaskSlugHistoryEntity } from '../../tasks/task-slug-history.entity';
+import { MilestoneEntity } from '../../milestones/milestone.entity';
 
 export const ALL_ENTITIES = [
+  MilestoneEntity,
   ProjectInvitationEntity,
   ProjectActivityEntity,
   ProjectSlugHistoryEntity,
@@ -96,3 +98,4 @@ export * from './project-activity.entity';
 export { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
 export { ProjectSlugHistoryEntity } from '../../projects/project-slug-history.entity';
 export { TaskSlugHistoryEntity } from '../../tasks/task-slug-history.entity';
+export { MilestoneEntity } from '../../milestones/milestone.entity';

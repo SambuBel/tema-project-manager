@@ -10,6 +10,7 @@ import { TaskDetail } from '../components/TaskDetail';
 import { TaskBoard } from '../components/TaskBoard/TaskBoard';
 import { ProjectActivityList } from '../components/ProjectActivityList';
 import { ProjectGantt } from '../components/gantt/ProjectGantt';
+import { MilestonesManager } from '../components/milestones/MilestonesManager';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { canManageProjectUI } from '../lib/permissions';
 import type { ProjectStatus } from '@tema/shared-types';
@@ -26,12 +27,13 @@ const statusLabels: Record<ProjectStatus, string> = {
 
 /* Tipos de vista */
 
-type ProjectView = 'resumen' | 'tablero' | 'tasks' | 'gantt' | 'task-detail' | 'actividad' | 'equipo';
+type ProjectView = 'resumen' | 'tablero' | 'tasks' | 'hitos' | 'gantt' | 'task-detail' | 'actividad' | 'equipo';
 
 const TABS = [
   { key: 'RESUMEN', label: 'Resumen', view: 'resumen' as ProjectView },
   { key: 'TABLERO', label: 'Tablero', view: 'tablero' as ProjectView },
   { key: 'TAREAS', label: 'Tareas', view: 'tasks' as ProjectView },
+  { key: 'HITOS', label: 'Hitos', view: 'hitos' as ProjectView },
   { key: 'GANTT', label: 'Gantt', view: 'gantt' as ProjectView },
   { key: 'EQUIPO', label: 'Equipo', view: 'equipo' as ProjectView },
   { key: 'ACTIVIDAD', label: 'Actividad', view: 'actividad' as ProjectView },
@@ -267,7 +269,7 @@ export function ProjectPage() {
       {/* Contenido de la vista activa */}
 
       {view === 'resumen' && (
-        <ProjectDetail project={project} onManageTeam={() => setView('equipo')} />
+        <ProjectDetail project={project} onManageTeam={() => setView('equipo')} onViewMilestones={() => setView('hitos')} />
       )}
 
       {view === 'tablero' && (
@@ -300,6 +302,8 @@ export function ProjectPage() {
           onBack={closeTask}
         />
       )}
+
+      {view === 'hitos' && <MilestonesManager project={project} />}
 
       {view === 'gantt' && <ProjectGantt projectId={project.id} />}
 

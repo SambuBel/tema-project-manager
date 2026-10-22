@@ -11,6 +11,7 @@ import { SubtasksModule } from './subtasks/subtasks.module';
 import { GanttModule } from './gantt/gantt.module';
 import { BudgetsModule } from './budgets/budgets.module';
 import { AiModule } from './ai/ai.module';
+import { MilestonesModule } from './milestones/milestones.module';
 import { envValidationSchema } from './config/env.validation';
 
 @Module({
@@ -38,8 +39,8 @@ import { envValidationSchema } from './config/env.validation';
     GanttModule,
     BudgetsModule,
     AiModule,
+    MilestonesModule,
   ],
   controllers: [HealthController],
 })
 export class AppModule {}
-
