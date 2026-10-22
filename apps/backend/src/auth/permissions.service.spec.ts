@@ -157,7 +157,7 @@ describe('PermissionsService', () => {
       expect(service.isProjectLeader(makeUser([RoleName.COLLABORATOR, RoleName.PROJECT_LEADER], 'u1'), project)).toBe(true);
     });
 
-    it.each(['canManageProject', 'canManageProjectTeam', 'canManageCosts', 'canViewEconomicData', 'canDeleteTask', 'canManageTaskPlanning'] as const)(
+    it.each(['canManageProject', 'canManageProjectTeam', 'canManageCosts', 'canViewEconomicData', 'canDeleteTask', 'canManageTaskPlanning', 'canManageMilestones'] as const)(
       '%s: COLLABORATOR/OBSERVER con leaderId propio -> false; líder real -> true; PROJECT_LEADER ajeno -> false',
       (policy) => {
         expect(service[policy](stale, project)).toBe(false);

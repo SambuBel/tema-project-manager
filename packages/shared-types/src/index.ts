@@ -176,6 +176,7 @@ export interface Task {
   id: ID;
   slug?: string;
   projectId: ID;
+  milestoneId?: ID | null;
   parentTaskId: ID | null;
   title: string;
   description: string | null;
@@ -326,4 +327,83 @@ export interface Budget {
   supersededAt: string | null;
   createdBy: ID;
   createdAt: string;
+}
+// --- Milestones (Hitos) --------------------------------------------------------
+export type MilestoneStatus = 'PENDING' | 'OVERDUE' | 'COMPLETED';
+
+export interface Milestone {
+  id: ID;
+  projectId: ID;
+  name: string;
+  description: string | null;
+  dueDate: string;
+  completedAt: string | null;
+  completedById: ID | null;
+  completedBy?: User | null;
+  createdBy: ID;
+  creator?: User;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  progress?: number;
+  taskCount?: number;
+  completedTaskCount?: number;
+}
+export interface MilestoneUser {
+  id: ID;
+  name: string;
+  email?: string;
+  avatarUrl?: string | null;
+}
+
+export interface MilestoneSummary {
+  id: ID;
+  projectId: ID;
+  name: string;
+  description: string | null;
+  dueDate: string;
+  completedAt: string | null;
+  completedById: ID | null;
+  completedBy?: MilestoneUser | null;
+  createdBy: ID;
+  creator?: MilestoneUser;
+  createdAt: string;
+  updatedAt: string;
+  status: MilestoneStatus;
+  taskCount: number;
+  completedTaskCount: number;
+  progress: number;
+}
+
+export interface MilestoneTask {
+  id: ID;
+  title: string;
+  slug?: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  startDate: string | null;
+  dueDate: string | null;
+  parentTaskId: string | null;
+  assignedTo: MilestoneUser | null;
+}
+
+export interface MilestoneDetail extends MilestoneSummary {
+  tasks: MilestoneTask[];
+}
+
+export type MilestoneSummaryDto = MilestoneSummary;
+export type MilestoneDetailDto = MilestoneDetail;
+export type MilestoneTaskDto = MilestoneTask;
+export type MilestoneUserDto = MilestoneUser;
+
+export interface CreateMilestoneDto {
+  name: string;
+  dueDate: string;
+  description?: string;
+}
+
+export interface UpdateMilestoneDto {
+  name?: string;
+  dueDate?: string;
+  description?: string;
 }

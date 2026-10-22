@@ -23,6 +23,10 @@ import type {
   LoginDto,
   CreateUserDto,
   PaginatedResponse,
+  CreateMilestoneDto,
+  UpdateMilestoneDto,
+  MilestoneSummaryDto,
+  MilestoneDetailDto,
 } from '@tema/shared-types';
 import type { Task, TaskFilters, TaskStatus, TaskTimelineItem, TaskListResponse, CommentMention } from '../types/task'
 
@@ -161,6 +165,27 @@ export const api = {
     request<UserWithRoles>(`/users/${id}/roles`, { method: 'POST', body: JSON.stringify({ role }) }),
   removeUserRole: (id: string, role: RoleName) =>
     request<UserWithRoles>(`/users/${id}/roles/${role}`, { method: 'DELETE' }),
+
+  // --- Milestones ---
+  listMilestones: (projectId: string, query?: { upcoming?: boolean; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (query?.upcoming !== undefined) params.append('upcoming', String(query.upcoming));
+    if (query?.limit !== undefined) params.append('limit', String(query.limit));
+    const qs = params.toString();
+    return request<MilestoneSummaryDto[]>(`/projects/${projectId}/milestones${qs ? `?${qs}` : ''}`);
+  },
+  getMilestone: (id: string) => request<MilestoneDetailDto>(`/milestones/${id}`),
+  createMilestone: (projectId: string, dto: CreateMilestoneDto) =>
+    request<MilestoneSummaryDto>(`/projects/${projectId}/milestones`, { method: 'POST', body: JSON.stringify(dto) }),
+  updateMilestone: (id: string, dto: UpdateMilestoneDto) =>
+    request<MilestoneSummaryDto>(`/milestones/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  deleteMilestone: (id: string) => request<void>(`/milestones/${id}`, { method: 'DELETE' }),
+  completeMilestone: (id: string) => request<MilestoneSummaryDto>(`/milestones/${id}/complete`, { method: 'PATCH' }),
+  reopenMilestone: (id: string) => request<MilestoneSummaryDto>(`/milestones/${id}/reopen`, { method: 'PATCH' }),
+  associateMilestoneTask: (milestoneId: string, taskId: string) =>
+    request<MilestoneSummaryDto>(`/milestones/${milestoneId}/tasks/${taskId}`, { method: 'PUT' }),
+  disassociateMilestoneTask: (milestoneId: string, taskId: string) =>
+    request<MilestoneSummaryDto>(`/milestones/${milestoneId}/tasks/${taskId}`, { method: 'DELETE' }),
 
   // --- Tasks ---
   listTasks: (filters: TaskFilters) => {

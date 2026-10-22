@@ -100,6 +100,11 @@ export class PermissionsService {
     return this.canManageProject(user, project);
   }
 
+  /** Administrar hitos del proyecto (crear, editar, eliminar): ADMIN/PM o líder real del proyecto. */
+  canManageMilestones(user: RequestUser, project: ProjectEntity): boolean {
+    return this.isAdminPmOrLeader(user, project);
+  }
+
   // ---------------------------------------------------------------------------
   // Económicos: preparados para cuando existan endpoints de Budget/Cost (no en
   // esta HU). Tres policies separadas a propósito, nunca una sola bandera
