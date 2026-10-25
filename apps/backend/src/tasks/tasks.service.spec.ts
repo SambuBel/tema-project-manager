@@ -86,6 +86,10 @@ function makeService(
     where: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    take: jest.fn().mockReturnThis(),
+    getManyAndCount: jest.fn(async () => [[], 0]),
+    getCount: jest.fn(async () => 0),
     getMany: jest.fn(async () => []),
   };
   const taskRepo = {
@@ -261,19 +265,19 @@ describe('TasksService - findAllByProject / findOne (canViewTask)', () => {
 
   it('findAllByProject: ADMIN no miembro puede ver', async () => {
     const { service } = makeService([]);
-    await expect(service.findAllByProject({ projectId: PROJECT_ID }, makeUser('admin-1', [RoleName.ADMIN]))).resolves.toEqual([]);
+    await expect(service.findAllByProject({ projectId: PROJECT_ID }, makeUser('admin-1', [RoleName.ADMIN]))).resolves.toMatchObject({ data: [] });
   });
 
   it('findAllByProject: PM no miembro puede ver', async () => {
     const { service } = makeService([]);
     await expect(
       service.findAllByProject({ projectId: PROJECT_ID }, makeUser('pm-1', [RoleName.PROGRAM_MANAGER])),
-    ).resolves.toEqual([]);
+    ).resolves.toMatchObject({ data: [] });
   });
 
   it('findAllByProject: líder del proyecto propio puede ver', async () => {
     const { service } = makeService([]);
-    await expect(service.findAllByProject({ projectId: PROJECT_ID }, makeUser(LEADER_ID))).resolves.toEqual([]);
+    await expect(service.findAllByProject({ projectId: PROJECT_ID }, makeUser(LEADER_ID))).resolves.toMatchObject({ data: [] });
   });
 
   it('findAllByProject: líder de OTRO proyecto -> 403 salvo membership', async () => {
@@ -287,12 +291,12 @@ describe('TasksService - findAllByProject / findOne (canViewTask)', () => {
     const { service } = makeService([membership('collab-1', ProjectMemberRole.COLLABORATOR)]);
     await expect(
       service.findAllByProject({ projectId: PROJECT_ID }, makeUser('collab-1', [RoleName.COLLABORATOR])),
-    ).resolves.toEqual([]);
+    ).resolves.toMatchObject({ data: [] });
   });
 
   it('findAllByProject: OBSERVER miembro puede ver', async () => {
     const { service } = makeService([membership('obs-1', ProjectMemberRole.OBSERVER)]);
-    await expect(service.findAllByProject({ projectId: PROJECT_ID }, makeUser('obs-1', [RoleName.OBSERVER]))).resolves.toEqual([]);
+    await expect(service.findAllByProject({ projectId: PROJECT_ID }, makeUser('obs-1', [RoleName.OBSERVER]))).resolves.toMatchObject({ data: [] });
   });
 
   it('findAllByProject: no miembro -> 403', async () => {
@@ -788,8 +792,8 @@ describe('TasksService - comentarios (canCommentOnTask) vs lectura (canViewTask)
       commentRepo.find.mockResolvedValue([
         { id: 'c1', content: 'existente', createdAt: new Date(), author: { id: 'x', name: 'Ana Gómez' } },
       ]);
-      const timeline = await service.getTimeline('task-1', actor);
-      expect(timeline).toEqual([expect.objectContaining({ type: 'COMMENT', content: 'existente' })]);
+      const result = await service.getTimeline('task-1', actor);
+      expect(result.data).toEqual([expect.objectContaining({ type: 'COMMENT', content: 'existente' })]);
     });
 
     it.each([
@@ -835,20 +839,21 @@ describe('TasksService - comentarios (canCommentOnTask) vs lectura (canViewTask)
         },
       ]);
 
-      const timeline = await service.getTimeline('task-1', COLLAB);
+      const result = await service.getTimeline('task-1', COLLAB);
+      const timeline = result.data;
 
       // Comentario eliminado no debe estar en la timeline
       expect(timeline.some((item) => item.id === 'c-deleted')).toBe(false);
 
       // Comentarios activos presentes
-      const unedited = timeline.find((item) => item.id === 'c-active-unedited');
+      const unedited = timeline.find((item) => item.id === 'c-active-unedited') as any;
       expect(unedited).toBeDefined();
-      expect(unedited.editedAt).toBeNull();
+      expect(unedited!.editedAt).toBeNull();
 
-      const edited = timeline.find((item) => item.id === 'c-active-edited');
+      const edited = timeline.find((item) => item.id === 'c-active-edited') as any;
       expect(edited).toBeDefined();
-      expect(edited.editedAt).toEqual(editedDate);
-      expect(edited.content).toBe('Activo y editado');
+      expect(edited!.editedAt).toEqual(editedDate);
+      expect(edited!.content).toBe('Activo y editado');
     });
   });
 
@@ -1264,11 +1269,11 @@ describe('TasksService - comentarios (canCommentOnTask) vs lectura (canViewTask)
         },
       ]);
 
-      const timeline = await service.getTimeline('task-1', AUTHOR);
-      const item = timeline.find((i) => i.id === 'c-with-mentions');
+      const result = await service.getTimeline('task-1', AUTHOR);
+      const item = result.data.find((i) => i.id === 'c-with-mentions') as any;
 
       expect(item).toBeDefined();
-      expect(item.mentions).toEqual([
+      expect(item!.mentions).toEqual([
         { userId: 'u-1', name: 'Juan Pérez', startIndex: 5, endIndex: 16 },
       ]);
     });
@@ -1907,12 +1912,15 @@ describe('TasksService - findAllByProject: contadores agregados de subtareas sin
       makeTask({ id: 'task-c', title: 'Tarea C', project: makeProject() }),
     ];
 
-    const qb = {
+        const qb = {
       leftJoinAndSelect: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
-      getMany: jest.fn(async () => rootTasks),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(async () => [rootTasks, rootTasks.length]),
+      getCount: jest.fn(async () => rootTasks.length),
     };
     taskRepo.createQueryBuilder.mockReturnValue(qb);
 
@@ -1929,17 +1937,127 @@ describe('TasksService - findAllByProject: contadores agregados de subtareas sin
       [PROJECT_ID, TaskStatus.COMPLETED, ['task-a', 'task-b', 'task-c']],
     );
 
-    expect(result).toHaveLength(3);
-    expect(result[0]).toMatchObject({ id: 'task-a', subtaskCount: 5, completedSubtaskCount: 0 });
-    expect(result[1]).toMatchObject({ id: 'task-b', subtaskCount: 3, completedSubtaskCount: 2 });
-    expect(result[2]).toMatchObject({ id: 'task-c', subtaskCount: 0, completedSubtaskCount: 0 });
+    expect(result.data).toHaveLength(3);
+    expect(result.data[0]).toMatchObject({ id: 'task-a', subtaskCount: 5, completedSubtaskCount: 0 });
+    expect(result.data[1]).toMatchObject({ id: 'task-b', subtaskCount: 3, completedSubtaskCount: 2 });
+    expect(result.data[2]).toMatchObject({ id: 'task-c', subtaskCount: 0, completedSubtaskCount: 0 });
   });
 
-  it('no ejecuta consulta de conteo si el listado de tareas está vacío', async () => {
+    it('no ejecuta consulta de conteo si el listado de tareas está vacío', async () => {
     const { service, taskRepo } = makeService([]);
+
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(async () => [[], 0]),
+      getCount: jest.fn(async () => 0),
+    };
+    taskRepo.createQueryBuilder.mockReturnValue(qb);
+
     const result = await service.findAllByProject({ projectId: PROJECT_ID }, leaderUser);
 
-    expect(result).toEqual([]);
+    expect(result.data).toEqual([]);
     expect(taskRepo.manager.query).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('TasksService - findAllByProject: exclusión de subtareas en listado general y soporte includeSubtasks', () => {
+  const leaderUser = makeUser(LEADER_ID, [RoleName.PROJECT_LEADER]);
+
+  it('por defecto excluye subtareas agregando task.parentTaskId IS NULL', async () => {
+    const { service, taskRepo } = makeService([]);
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(async () => [[], 0]),
+      getCount: jest.fn(async () => 0),
+    };
+    taskRepo.createQueryBuilder.mockReturnValue(qb);
+
+    await service.findAllByProject({ projectId: PROJECT_ID }, leaderUser);
+
+    expect(qb.andWhere).toHaveBeenCalledWith('task.parentTaskId IS NULL');
+  });
+
+  it('con includeSubtasks: true no agrega la cláusula task.parentTaskId IS NULL', async () => {
+    const { service, taskRepo } = makeService([]);
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(async () => [[], 0]),
+      getCount: jest.fn(async () => 0),
+    };
+    taskRepo.createQueryBuilder.mockReturnValue(qb);
+
+    await service.findAllByProject({ projectId: PROJECT_ID, includeSubtasks: true }, leaderUser);
+
+    expect(qb.andWhere).not.toHaveBeenCalledWith('task.parentTaskId IS NULL');
+  });
+
+  it('al crear una subtarea se guarda 1 solo registro con parentTaskId y no aparece como tarea raíz en el listado', async () => {
+    const { service, taskRepo, txManager } = makeService([]);
+    const parentTask = makeTask({ id: 'parent-1', projectId: PROJECT_ID, parentTaskId: null, title: 'Tarea Padre', project: makeProject() });
+    taskRepo.findOneBy.mockResolvedValueOnce(parentTask);
+
+    const createdSubtask = makeTask({
+      id: 'subtask-1',
+      projectId: PROJECT_ID,
+      parentTaskId: 'parent-1',
+      title: 'Subtarea hijo',
+      project: makeProject(),
+    });
+    txManager.save.mockResolvedValueOnce(createdSubtask);
+
+    // 1. Crear subtarea
+    const created = await service.create(
+      {
+        projectId: PROJECT_ID,
+        parentTaskId: 'parent-1',
+        title: 'Subtarea hijo',
+      },
+      leaderUser,
+    );
+    expect(created.parentTaskId).toBe('parent-1');
+    expect(txManager.save).toHaveBeenCalledTimes(1);
+
+    // 2. Comprobar que findSubtasks devuelve la subtarea bajo su padre
+    taskRepo.findOne.mockResolvedValueOnce(parentTask);
+    taskRepo.find.mockResolvedValueOnce([createdSubtask]);
+
+    const subtasks = await service.findSubtasks('parent-1', leaderUser);
+    expect(subtasks).toHaveLength(1);
+    expect(subtasks[0]!.id).toBe('subtask-1');
+
+    // 3. Comprobar que findAllByProject lista sólo las tareas raíz (parentTaskId IS NULL)
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(async () => [[parentTask], 1]),
+      getCount: jest.fn(async () => 1),
+    };
+    taskRepo.createQueryBuilder.mockReturnValue(qb);
+
+    const listResult = await service.findAllByProject({ projectId: PROJECT_ID }, leaderUser);
+    expect(qb.andWhere).toHaveBeenCalledWith('task.parentTaskId IS NULL');
+    expect(listResult.data).toHaveLength(1);
+    expect(listResult.data[0]!.id).toBe('parent-1');
+    expect(listResult.data[0]!.parentTaskId).toBeNull();
   });
 });

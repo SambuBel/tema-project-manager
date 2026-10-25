@@ -2,8 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useMatch } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
-import { canViewUsersUI } from '../../lib/permissions';
-import { BellIcon, HomeIcon, InfoIcon, ShieldIcon } from './icons';
+import { canViewResourceProfilesUI, canViewUsersUI } from '../../lib/permissions';
+import { BellIcon, HomeIcon, InfoIcon, ProfilesIcon, ShieldIcon } from './icons';
 import { SidebarHeader } from './SidebarHeader';
 import { SidebarNavLink } from './SidebarNavItem';
 import { SidebarSection } from './SidebarSection';
@@ -30,6 +30,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
 
   // Solo visibilidad de UI; la autorizacion real la hace el backend.
   const canManageUsers = !!user && canViewUsersUI(user);
+  const canSeeResourceProfiles = !!user && canViewResourceProfilesUI(user);
 
   return (
     <nav aria-label="Navegación principal" className="flex h-full flex-col overflow-hidden bg-sidebar text-white">
@@ -57,6 +58,9 @@ export function Sidebar({ onNavigate }: SidebarProps) {
           <SidebarSection>
             {canManageUsers && (
               <SidebarNavLink to="/users" icon={<ShieldIcon />} label="Permisos y usuarios" onNavigate={onNavigate} />
+            )}
+            {canSeeResourceProfiles && (
+              <SidebarNavLink to="/resource-profiles" icon={<ProfilesIcon />} label="Perfiles de recurso" onNavigate={onNavigate} />
             )}
             <SidebarNavLink to="/roles" icon={<InfoIcon />} label="Roles y permisos" onNavigate={onNavigate} />
             <SidebarNavLink to="/notifications" icon={<BellIcon />} label="Notificaciones" onNavigate={onNavigate} />

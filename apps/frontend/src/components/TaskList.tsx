@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
@@ -9,6 +9,7 @@ import { CreateTaskDrawer } from './CreateTaskDrawer';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
+import { Pagination } from './Pagination';
 
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
@@ -439,13 +440,11 @@ export function TaskList({
 }: TaskListProps) {
   const qc = useQueryClient();
   const { user: currentUser } = useCurrentUser();
-
   const initialRestoredState = persistedState && persistedState.projectId === projectId
     ? persistedState
     : null;
-
   const [filters, setFilters] = useState<TaskFilters>(
-    () => initialRestoredState?.filters ?? { projectId },
+    () => initialRestoredState?.filters ?? { projectId, page: 1, limit: 10 },
   );
   const [searchInput, setSearchInput] = useState<string>(
     () => initialRestoredState?.searchInput ?? '',
@@ -481,7 +480,7 @@ export function TaskList({
   useEffect(() => {
     if (prevProjectIdRef.current !== projectId) {
       prevProjectIdRef.current = projectId;
-      setFilters({ projectId });
+      setFilters({ projectId, page: 1, limit: 10 });
       setSearchInput('');
       setViewFilter('ALL');
       setOnlyWithSubtasks(false);
@@ -510,7 +509,7 @@ export function TaskList({
     setExpandedTasks((prev) => {
       const nextExpanded = !prev[taskId];
       if (nextExpanded) {
-        const taskObj = tasks.data?.find((t) => t.id === taskId);
+        const taskObj = tasks.data?.data?.find((t) => t.id === taskId);
         const cachedSubtasks = qc.getQueryData<Task[]>(['subtasks', taskId]);
         const activeCachedCount = cachedSubtasks
           ? cachedSubtasks.filter((s) => !s.archivedAt).length
@@ -552,9 +551,14 @@ export function TaskList({
     if (member.user) assignees.set(member.user.id, member.user);
   }
 
-  const tasks = useQuery({
-    queryKey: ['tasks', filters],
-    queryFn: () => api.listTasks(filters),
+    const tasks = useQuery({
+    queryKey: ['tasks', filters, viewFilter],
+    queryFn: () => api.listTasks({
+      ...filters,
+      myTasks: viewFilter === 'MINE' ? true : undefined,
+      atRisk: viewFilter === 'AT_RISK' ? true : undefined,
+    }),
+    placeholderData: keepPreviousData,
   });
 
   const { membership } = useMyMembership(projectId);
@@ -564,7 +568,7 @@ export function TaskList({
   useEffect(() => {
     const timer = setTimeout(() => {
       const next = searchInput || undefined;
-      setFilters((prev) => (prev.search === next ? prev : { ...prev, search: next }));
+      setFilters((prev) => (prev.search === next ? prev : { ...prev, search: next, page: 1 }));
     }, 300);
     return () => clearTimeout(timer);
   }, [searchInput]);
@@ -572,21 +576,21 @@ export function TaskList({
   /* Estado, prioridad y responsable se aplican apenas se elige una opción. */
   const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value as TaskStatus | '';
-    setFilters((prev) => ({ ...prev, status: value || undefined }));
+    setFilters((prev) => ({ ...prev, status: value || undefined, page: 1 }));
   };
 
   const handlePriorityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value as TaskPriority | '';
-    setFilters((prev) => ({ ...prev, priority: value || undefined }));
+    setFilters((prev) => ({ ...prev, priority: value || undefined, page: 1 }));
   };
 
   const handleAssigneeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
-    setFilters((prev) => ({ ...prev, assignedToId: value || undefined }));
+    setFilters((prev) => ({ ...prev, assignedToId: value || undefined, page: 1 }));
   };
 
   const clearFilters = () => {
-    setFilters({ projectId });
+    setFilters({ projectId, page: 1, limit: 10 });
     setSearchInput('');
     setViewFilter('ALL');
     setOnlyWithSubtasks(false);
@@ -600,28 +604,26 @@ export function TaskList({
     onlyWithSubtasks
   );
 
-  /* "Mis tareas", "En riesgo" y "Solo tareas con subtareas" se aplican sobre los datos ya cargados (client-side):
-     comparten la misma consulta que "Todas", sin disparar nuevas peticiones por tarea. */
-  const isMine = (task: Task): boolean => !!currentUser && task.assignedToId === currentUser.id;
-  const hasSubtasksForFilter = (task: Task): boolean => {
-    const cachedSubtasks = qc.getQueryData<Task[]>(['subtasks', task.id]);
-    const activeCachedCount = cachedSubtasks
-      ? cachedSubtasks.filter((s) => !s.archivedAt).length
-      : 0;
-    const effectiveCount = Math.max(task.subtaskCount ?? 0, activeCachedCount);
-    return effectiveCount > 0;
-  };
-
+  /* Los datos ya vienen filtrados y paginados del backend.
+     "Solo con subtareas" se filtra client-side sobre la página actual. */
   const visibleTasks: Task[] = (() => {
-    if (!tasks.data) return [];
-    let list = tasks.data;
-    if (viewFilter === 'AT_RISK') list = list.filter(isAtRisk);
-    else if (viewFilter === 'MINE') list = list.filter(isMine);
-    if (onlyWithSubtasks) list = list.filter(hasSubtasksForFilter);
-    return list;
+    const serverData = tasks.data?.data ?? [];
+    if (onlyWithSubtasks) {
+      return serverData.filter((task) => {
+        const cachedSubtasks = qc.getQueryData<Task[]>(['subtasks', task.id]);
+        const activeCachedCount = cachedSubtasks
+          ? cachedSubtasks.filter((s) => !s.archivedAt).length
+          : 0;
+        const effectiveCount = Math.max(task.subtaskCount ?? 0, activeCachedCount);
+        return effectiveCount > 0;
+      });
+    }
+    return serverData;
   })();
+  const counts = tasks.data?.counts ?? { all: 0, mine: 0, atRisk: 0 };
+  const totalPages = tasks.data?.totalPages ?? 1;
 
-  // Restauración determinística del scroll una vez que la lista y las subtareas expandidas están disponibles en el DOM
+  // Restauración determinística del scroll
   useEffect(() => {
     if (pendingScrollTop === null) return;
     if (!tasks.isSuccess) return;
@@ -650,10 +652,6 @@ export function TaskList({
     qc,
   ]);
 
-  const totalCount = tasks.data?.length ?? 0;
-  const atRiskCount = tasks.data?.filter(isAtRisk).length ?? 0;
-  const mineCount = tasks.data?.filter(isMine).length ?? 0;
-
   return (
     <div className="flex flex-col gap-4">
       {/* Toggle Todas / Mis tareas / En riesgo */}
@@ -664,9 +662,9 @@ export function TaskList({
               ? 'bg-[#245B78] text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-[#EAF2F7]'
           }`}
-          onClick={() => setViewFilter('ALL')}
+          onClick={() => { setViewFilter('ALL'); setFilters((prev) => ({ ...prev, page: 1 })); }}
         >
-          Todas ({totalCount})
+          Todas ({counts.all})
         </button>
         <button
           className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -674,9 +672,9 @@ export function TaskList({
               ? 'bg-[#245B78] text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-[#EAF2F7]'
           }`}
-          onClick={() => setViewFilter('MINE')}
+          onClick={() => { setViewFilter('MINE'); setFilters((prev) => ({ ...prev, page: 1 })); }}
         >
-          Mis tareas ({mineCount})
+          Mis tareas ({counts.mine})
         </button>
         <button
           className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -684,9 +682,9 @@ export function TaskList({
               ? 'bg-red-600 text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-red-50'
           }`}
-          onClick={() => setViewFilter('AT_RISK')}
+          onClick={() => { setViewFilter('AT_RISK'); setFilters((prev) => ({ ...prev, page: 1 })); }}
         >
-          En riesgo ({atRiskCount})
+          En riesgo ({counts.atRisk})
         </button>
 
         {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}
@@ -788,8 +786,8 @@ export function TaskList({
           <p className="text-sm text-[#607185]">
             {hasActiveFilters &&
             (viewFilter === 'ALL' ||
-              (viewFilter === 'AT_RISK' && atRiskCount > 0) ||
-              (viewFilter === 'MINE' && mineCount > 0))
+              (viewFilter === 'AT_RISK' && counts.atRisk > 0) ||
+              (viewFilter === 'MINE' && counts.mine > 0))
               ? 'No se encontraron tareas con los filtros actuales.'
               : viewFilter === 'AT_RISK'
                 ? 'No hay tareas en riesgo. ¡Todo en orden!'
@@ -840,15 +838,15 @@ export function TaskList({
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-[#DEE5EC] bg-[#F7F9FB] px-5 py-2.5 text-xs text-[#607185]">
             <span>
-              {viewFilter === 'AT_RISK'
-                ? visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '') + ' en riesgo'
-                : viewFilter === 'MINE'
-                  ? visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '') + ' asignada' + (visibleTasks.length !== 1 ? 's' : '') + ' a vos'
-                  : visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '')}
+              {tasks.data
+                ? `Mostrando ${visibleTasks.length} de ${tasks.data.total} tarea${tasks.data.total !== 1 ? 's' : ''}`
+                : ''}
             </span>
-            {hasActiveFilters && (
-              <span className="italic">Filtros activos</span>
-            )}
+            <Pagination
+              page={filters.page ?? 1}
+              totalPages={totalPages}
+              onPageChange={(p) => setFilters((prev) => ({ ...prev, page: p }))}
+            />
           </div>
         </div>
       )}

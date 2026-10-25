@@ -1,14 +1,17 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -24,8 +27,12 @@ export class SubtasksController {
   constructor(private readonly subtasksService: SubtasksService) {}
 
   @Get()
-  findAll(@Param('taskId', ParseUUIDPipe) taskId: string) {
-    return this.subtasksService.findByTask(taskId);
+  findAll(
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(5), ParseIntPipe) limit: number,
+  ) {
+    return this.subtasksService.findByTask(taskId, page, limit);
   }
 
   @Post()

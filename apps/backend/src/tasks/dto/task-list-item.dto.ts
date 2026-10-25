@@ -11,6 +11,7 @@ export interface TaskListItemDto {
   slug: string;
   projectId: string;
   parentTaskId: string | null;
+  milestoneId: string | null;
   title: string;
   description: string | null;
   status: TaskStatus;
@@ -33,6 +34,7 @@ export function toTaskListItem(task: TaskEntity): TaskListItemDto {
     slug: task.slug,
     projectId: task.projectId,
     parentTaskId: task.parentTaskId,
+    milestoneId: task.milestoneId ?? null,
     title: task.title,
     description: task.description,
     status: task.status,

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { Pagination } from './Pagination';
 import { TaskTimelineItem, taskStatusLabels, taskPriorityLabels, CommentMention } from '../types/task';
 import type { TaskPriority, TaskStatus } from '../types/task';
 import { useCurrentUser } from '../hooks/useCurrentUser';
@@ -73,16 +74,17 @@ export function TaskTimeline({ taskId, projectId, canComment }: TaskTimelineProp
 
   // Estado para nuevo comentario
   const [newComment, setNewComment] = useState('');
+  const [page, setPage] = useState(1);
   const [newMentions, setNewMentions] = useState<CommentMention[]>([]);
   const [addError, setAddError] = useState<string | null>(null);
 
-  // Estado para edición de comentario (HM22)
+  // Estado para edición de comentario
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editCommentText, setEditCommentText] = useState('');
   const [editCommentMentions, setEditCommentMentions] = useState<CommentMention[]>([]);
   const [editError, setEditError] = useState<string | null>(null);
 
-  // Estado para confirmación de eliminación (HM22)
+  // Estado para confirmación de eliminación
   const [commentIdToDelete, setCommentIdToDelete] = useState<string | null>(null);
 
   // Consulta de miembros del proyecto para autocompletar menciones
@@ -93,13 +95,14 @@ export function TaskTimeline({ taskId, projectId, canComment }: TaskTimelineProp
     staleTime: 5 * 60 * 1000,
   });
 
-  // Consulta de la línea de tiempo
-  const { data: timeline, isLoading } = useQuery({
-    queryKey: ['task', taskId, 'timeline'],
-    queryFn: () => api.getTaskTimeline(taskId),
+  // Consulta de la línea de tiempo (paginada)
+  const { data: response, isLoading } = useQuery({
+    queryKey: ['task', taskId, 'timeline', page],
+    queryFn: () => api.getTaskTimeline(taskId, page, 10),
+    placeholderData: keepPreviousData,
   });
 
-  // Mutación para agregar comentario
+  const timeline = response?.data ?? [];
   const addCommentMutation = useMutation({
     mutationFn: () => {
       const { content, mentions } = normalizeContentAndMentions(newComment, newMentions);
@@ -109,6 +112,7 @@ export function TaskTimeline({ taskId, projectId, canComment }: TaskTimelineProp
       setNewComment('');
       setNewMentions([]);
       setAddError(null);
+      setPage(1);
       void qc.invalidateQueries({ queryKey: ['task', taskId, 'timeline'] });
     },
     onError: (err: unknown) => {
@@ -211,10 +215,10 @@ export function TaskTimeline({ taskId, projectId, canComment }: TaskTimelineProp
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
-        {timeline?.length === 0 ? (
+        {timeline.length === 0 ? (
           <p className="text-sm italic text-[#607185]">No hay actividad registrada.</p>
         ) : (
-          timeline?.map((item: TaskTimelineItem) => {
+          timeline.map((item: TaskTimelineItem) => {
             const isAuthor = currentUser?.id === item.actor.id;
             const isEditing = editingCommentId === item.id;
 
@@ -331,6 +335,12 @@ export function TaskTimeline({ taskId, projectId, canComment }: TaskTimelineProp
           })
         )}
       </div>
+
+      <Pagination
+        page={page}
+        totalPages={response?.totalPages ?? 1}
+        onPageChange={setPage}
+      />
 
       {/* Formulario para nuevo comentario con menciones */}
       {canComment && (

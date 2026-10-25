@@ -74,7 +74,7 @@ describe('TaskTimeline', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(api, 'getMe').mockResolvedValue(mockCurrentUser);
-    vi.spyOn(api, 'getTaskTimeline').mockResolvedValue(mockTimelineData);
+    vi.spyOn(api, 'getTaskTimeline').mockResolvedValue({ data: mockTimelineData, total: mockTimelineData.length, page: 1, limit: 10, totalPages: 1 });
     vi.spyOn(api, 'getProjectMembers').mockResolvedValue([]);
   });
 

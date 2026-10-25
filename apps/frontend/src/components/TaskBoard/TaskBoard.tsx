@@ -39,7 +39,7 @@ export function TaskBoard({
 
   const { data: tasks, isLoading, isError } = useQuery({
     queryKey: ['tasks', projectId],
-    queryFn: () => api.listTasks({ projectId }),
+    queryFn: () => api.listAllTasks({ projectId }),
   });
 
   const mutation = useMutation(getMutationOptions(qc, projectId, api.updateTaskStatus, setToast));

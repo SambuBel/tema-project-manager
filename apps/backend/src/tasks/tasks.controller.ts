@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Delete, Get, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/types/authenticated-request-user';
@@ -27,9 +27,9 @@ export class TasksController {
   }
 
   @Get()
-  async findAll(@Query() filters: FilterTasksDto, @CurrentUser() user: RequestUser): Promise<TaskListItemDto[]> {
-    const tasks = await this.tasksService.findAllByProject(filters, user);
-    return tasks.map(toTaskListItem);
+  async findAll(@Query() filters: FilterTasksDto, @CurrentUser() user: RequestUser) {
+    const result = await this.tasksService.findAllByProject(filters, user);
+    return { ...result, data: result.data.map(toTaskListItem) };
   }
 
   @Get(':id')
@@ -90,10 +90,12 @@ export class TasksController {
 
   @Get(':id/timeline')
   getTimeline(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @CurrentUser() user: RequestUser,
   ) {
-    return this.tasksService.getTimeline(id, user);
+    return this.tasksService.getTimeline(id, user, page, limit);
   }
 
   @Patch(':id/archive')

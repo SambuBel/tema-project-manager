@@ -4,7 +4,14 @@ import { CreateBudgetDto } from './create-budget.dto';
 /** Mismo pipe que main.ts: whitelist + transform. */
 const pipe = new ValidationPipe({ whitelist: true, transform: true });
 const parse = (body: Record<string, unknown>) => pipe.transform(body, { type: 'body', metatype: CreateBudgetDto }) as Promise<CreateBudgetDto>;
-const valid = { totalAmount: '1500000.50', currency: 'ARS', approvalDate: '2026-10-12' };
+const CAT_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const CAT_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const valid = {
+  totalAmount: '1500000.50',
+  currency: 'ARS',
+  approvalDate: '2026-10-12',
+  items: [{ costCategoryId: CAT_A, amount: '1500000.50' }],
+};
 const rejectedFields = async (body: Record<string, unknown>): Promise<string[]> => {
   try {
     await parse(body);
@@ -98,6 +105,63 @@ describe('CreateBudgetDto', () => {
       projectId: 'otro-proyecto',
     })) as unknown as Record<string, unknown>;
 
-    expect(Object.keys(result).sort()).toEqual(['approvalDate', 'currency', 'totalAmount']);
+    expect(Object.keys(result).sort()).toEqual(['approvalDate', 'currency', 'items', 'totalAmount']);
+  });
+
+  describe('items (desglose por rubro)', () => {
+    const itemsMessage = async (items: unknown) => (await rejectedFields({ ...valid, items })).join(' | ');
+
+    it('acepta varias partidas y normaliza los importes a 2 decimales', async () => {
+      const parsed = await parse({ ...valid, items: [{ costCategoryId: CAT_A, amount: '1000' }, { costCategoryId: CAT_B, amount: ' 500000.5 ' }] });
+      expect(parsed.items).toEqual([
+        { costCategoryId: CAT_A, amount: '1000.00' },
+        { costCategoryId: CAT_B, amount: '500000.50' },
+      ]);
+    });
+
+    it('es OBLIGATORIO', async () => {
+      const { items: _omit, ...rest } = valid;
+      void _omit;
+      expect((await rejectedFields(rest)).join(' ')).toMatch(/items/);
+    });
+
+    it('un array vacío se rechaza', async () => {
+      expect(await itemsMessage([])).toMatch(/al menos una partida/);
+    });
+
+    it.each([null, 'x', 5, {}])('rechaza items = %j (no es una lista)', async (value) => {
+      expect(await itemsMessage(value)).toMatch(/items/);
+    });
+
+    it('rechaza más de 100 partidas (protección técnica, no un requisito del cliente)', async () => {
+      const many = Array.from({ length: 101 }, () => ({ costCategoryId: CAT_A, amount: '1.00' }));
+      expect(await itemsMessage(many)).toMatch(/100/);
+      await expect(parse({ ...valid, items: many.slice(0, 100) })).resolves.toBeDefined();
+    });
+
+    it.each(['no-es-uuid', '', 123, null])('costCategoryId inválido (%j)', async (value) => {
+      expect(await itemsMessage([{ costCategoryId: value, amount: '1.00' }])).toMatch(/costCategoryId/);
+    });
+
+    it.each([1500, 0, null, true])('amount que NO es texto (%j): evita floating point', async (value) => {
+      expect(await itemsMessage([{ costCategoryId: CAT_A, amount: value }])).toMatch(/partida/);
+    });
+
+    it.each(['-1', '-0.01', '1.234', '1000000000000', '1,5', '1e3', '', 'abc', '.5'])('amount inválido %j (negativo, 3 decimales, 13 enteros...)', async (value) => {
+      expect(await itemsMessage([{ costCategoryId: CAT_A, amount: value }])).toMatch(/partida/);
+    });
+
+    it('amount es obligatorio en cada partida', async () => {
+      expect(await itemsMessage([{ costCategoryId: CAT_A }])).toMatch(/partida/);
+    });
+
+    it('acepta 0.00 y el máximo de la columna', async () => {
+      await expect(parse({ ...valid, items: [{ costCategoryId: CAT_A, amount: '0' }, { costCategoryId: CAT_B, amount: '999999999999.99' }] })).resolves.toBeDefined();
+    });
+
+    it('descarta campos desconocidos de la partida (moneda propia, id, etc.)', async () => {
+      const parsed = await parse({ ...valid, items: [{ costCategoryId: CAT_A, amount: '1.00', currency: 'USD', id: 'x' }] });
+      expect(parsed.items[0]).toEqual({ costCategoryId: CAT_A, amount: '1.00' });
+    });
   });
 });

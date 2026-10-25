@@ -186,22 +186,23 @@ export class AiToolsService {
             priority: optionalEnum(args.priority, TaskPriority, 'priority'),
             search: optionalString(args.search),
             assignedToId: args.onlyMine === true ? ctx.user.id : undefined,
+            limit: 10000,
           },
           ctx.user,
         );
-        return withEmptyNote({ project: project.name, tasks: tasks.map(toTaskSummary) }, 'tasks', 'No se encontraron tareas con esos criterios.');
+        return withEmptyNote({ project: project.name, tasks: tasks.data.map(toTaskSummary) }, 'tasks', 'No se encontraron tareas con esos criterios.');
       }
 
       case TOOL_NAMES.listOverdueTasks: {
         const project = await this.resolveProject(args.projectId, ctx);
         const tasks = await this.tasksService.findAllByProject(
           args.onlyMine === true
-            ? { projectId: project.id, assignedToId: ctx.user.id }
-            : { projectId: project.id },
+            ? { projectId: project.id, assignedToId: ctx.user.id, limit: 10000 }
+            : { projectId: project.id, limit: 10000 },
           ctx.user,
         );
         return withEmptyNote(
-          { project: project.name, tasks: tasks.filter((task) => isOverdue(task)).map(toTaskSummary) },
+          { project: project.name, tasks: tasks.data.filter((task) => isOverdue(task)).map(toTaskSummary) },
           'tasks',
           'No hay tareas vencidas.',
         );
