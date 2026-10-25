@@ -5,7 +5,7 @@ import { RequestUser } from '../auth/types/authenticated-request-user';
 import { BudgetsService } from './budgets.service';
 import { CreateBudgetDto } from './dto/create-budget.dto';
 import { CreateBudgetVersionDto } from './dto/create-budget-version.dto';
-import { BudgetResponseDto } from './dto/budget-response.dto';
+import { BudgetHistoryEntryDto, BudgetResponseDto } from './dto/budget-response.dto';
 
 /** La autorización contextual (canDefineBudget / canViewEconomicData) la resuelve BudgetsService. */
 @UseGuards(JwtAuthGuard)
@@ -31,6 +31,18 @@ export class BudgetsController {
     @CurrentUser() user: RequestUser,
   ): Promise<BudgetResponseDto> {
     return this.budgets.createVersion(projectId, dto, user);
+  }
+
+  /**
+   * Historial completo (todas las versiones, version DESC, cada una con sus partidas). ADMIN, PROGRAM_MANAGER y líder real;
+   * el resto recibe 403. Ruta fija `history`: no choca con `:projectId/budget`.
+   */
+  @Get(':projectId/budget/history')
+  getHistory(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @CurrentUser() user: RequestUser,
+  ): Promise<BudgetHistoryEntryDto[]> {
+    return this.budgets.getHistory(projectId, user);
   }
 
   /** Presupuesto vigente (is_current = true). ADMIN, PROGRAM_MANAGER y líder real; el resto recibe 403. */

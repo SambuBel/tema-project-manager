@@ -90,6 +90,55 @@ export function canCreateTaskUI(
 }
 
 /**
+ * Espeja PermissionsService.canViewEconomicData (RN-25): ADMIN, PROGRAM_MANAGER y el líder REAL del proyecto. Un líder ajeno,
+ * COLLABORATOR y OBSERVER no ven nada económico (ni siquiera la pestaña).
+ */
+export function canViewEconomicDataUI(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
+  return isAdminPmOrLeader(user, project);
+}
+
+/**
+ * Espeja PermissionsService.canDefineBudget: definir y versionar el presupuesto es solo de ADMIN y PROGRAM_MANAGER. El líder
+ * lo ve pero no lo modifica. Global, no depende del proyecto.
+ */
+export function canDefineBudgetUI(user: AuthenticatedUser): boolean {
+  return hasAnyRole(user.roles, [...GLOBAL_ROLES.ADMIN_PM]);
+}
+
+/**
+ * Espeja PermissionsService.canManageCosts: registrar y editar costos es de ADMIN, PROGRAM_MANAGER y el líder REAL del proyecto
+ * (mismo criterio que ver lo económico). COLLABORATOR y OBSERVER nunca.
+ */
+export function canManageCostsUI(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
+  return isAdminPmOrLeader(user, project);
+}
+
+/**
+ * Espeja PermissionsService.canManageResourceAllocation (RES-02): asignar perfil y horas a un miembro es de ADMIN, PROGRAM_MANAGER
+ * y el líder REAL del proyecto. NO es lo mismo que administrar el catálogo global de perfiles (`canManageResourceProfilesUI`,
+ * solo ADMIN).
+ */
+export function canManageResourceAllocationUI(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
+  return isAdminPmOrLeader(user, project);
+}
+
+/**
+ * Espeja PermissionsService.canViewResourceProfiles: el catálogo global de perfiles de recurso (con su costo por hora) lo ven
+ * ADMIN, PROGRAM_MANAGER y PROJECT_LEADER, por rol global (sin proyecto). COLLABORATOR y OBSERVER no ven nada.
+ */
+export function canViewResourceProfilesUI(user: AuthenticatedUser): boolean {
+  return hasAnyRole(user.roles, ['ADMIN', 'PROGRAM_MANAGER', 'PROJECT_LEADER']);
+}
+
+/**
+ * Espeja PermissionsService.canManageResourceProfiles: crear, editar y activar/desactivar perfiles es SOLO de ADMIN
+ * (decisión provisional del backend, pendiente de TEMA). PM y líder ven el catálogo en solo lectura.
+ */
+export function canManageResourceProfilesUI(user: AuthenticatedUser): boolean {
+  return hasAnyRole(user.roles, ['ADMIN']);
+}
+
+/**
  * Espeja PermissionsService.canEditTask: ADMIN/PM/líder editan cualquiera;
  * COLLABORATOR (projectRole local) solo si creó o tiene asignada la tarea;
  * OBSERVER nunca, sin importar ownership.

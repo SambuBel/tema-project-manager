@@ -12,7 +12,8 @@ import { EditTaskPage } from './pages/EditTaskPage';
 import { RolesMatrixPage } from './pages/RolesMatrixPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { RequireRole } from './components/auth/RequireRole';
-import { canViewUsersUI } from './lib/permissions';
+import { ResourceProfilesPage } from './pages/ResourceProfilesPage';
+import { canViewResourceProfilesUI, canViewUsersUI } from './lib/permissions';
 
 export function App() {
   return (
@@ -34,6 +35,9 @@ export function App() {
           {/* "No alcanza con ocultar el link": la ruta queda protegida acá, no solo en el Sidebar. */}
           <Route element={<RequireRole allow={canViewUsersUI} />}>
             <Route path="users" element={<AdminUsersPage />} />
+          </Route>
+          <Route element={<RequireRole allow={canViewResourceProfilesUI} />}>
+            <Route path="resource-profiles" element={<ResourceProfilesPage />} />
           </Route>
           <Route path="notifications" element={<PlaceholderPage title="Notificaciones" />} />
           <Route path="*" element={<PlaceholderPage title="Página no encontrada" />} />

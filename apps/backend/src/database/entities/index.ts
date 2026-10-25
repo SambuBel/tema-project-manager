@@ -7,6 +7,7 @@ import { AuthorizedDomainEntity } from './authorized-domain.entity';
 import { ProjectStatusHistoryEntity } from './project-status-history.entity';
 import { ResourceProfileEntity } from './resource-profile.entity';
 import { ProjectMemberEntity } from './project-member.entity';
+import { ProjectMemberAllocationEntity } from './project-member-allocation.entity';
 import { TaskEntity } from '../../tasks/task.entity';
 import { TaskDependencyEntity } from './task-dependency.entity';
 import { TagEntity } from './tag.entity';
@@ -73,6 +74,7 @@ export const ALL_ENTITIES = [
   ProjectStatusHistoryEntity,
   ResourceProfileEntity,
   ProjectMemberEntity,
+  ProjectMemberAllocationEntity,
   TaskEntity,
   SubtaskEntity,
   TaskDependencyEntity,

@@ -11,8 +11,9 @@ import { TaskBoard } from '../components/TaskBoard/TaskBoard';
 import { ProjectActivityList } from '../components/ProjectActivityList';
 import { ProjectGantt } from '../components/gantt/ProjectGantt';
 import { MilestonesManager } from '../components/milestones/MilestonesManager';
+import { EconomyTab } from '../components/economy/EconomyTab';
 import { useCurrentUser } from '../hooks/useCurrentUser';
-import { canManageProjectUI } from '../lib/permissions';
+import { canManageProjectUI, canViewEconomicDataUI } from '../lib/permissions';
 import type { ProjectStatus } from '@tema/shared-types';
 
 /* Helpers */
@@ -27,7 +28,7 @@ const statusLabels: Record<ProjectStatus, string> = {
 
 /* Tipos de vista */
 
-type ProjectView = 'resumen' | 'tablero' | 'tasks' | 'hitos' | 'gantt' | 'task-detail' | 'actividad' | 'equipo';
+type ProjectView = 'resumen' | 'tablero' | 'tasks' | 'hitos' | 'gantt' | 'task-detail' | 'actividad' | 'equipo' | 'economia';
 
 const TABS = [
   { key: 'RESUMEN', label: 'Resumen', view: 'resumen' as ProjectView },
@@ -36,6 +37,7 @@ const TABS = [
   { key: 'HITOS', label: 'Hitos', view: 'hitos' as ProjectView },
   { key: 'GANTT', label: 'Gantt', view: 'gantt' as ProjectView },
   { key: 'EQUIPO', label: 'Equipo', view: 'equipo' as ProjectView },
+  { key: 'ECONOMIA', label: 'Economía', view: 'economia' as ProjectView, economic: true },
   { key: 'ACTIVIDAD', label: 'Actividad', view: 'actividad' as ProjectView },
 ] as const;
 
@@ -61,11 +63,11 @@ export function ProjectPage() {
   const taskIdParam = searchParams.get('taskId');
   const taskSlugParam = searchParams.get('task');
 
-  const validViews = ['resumen', 'tablero', 'tasks', 'hitos', 'gantt', 'equipo', 'actividad'];
+  const validViews = ['resumen', 'tablero', 'tasks', 'hitos', 'gantt', 'equipo', 'economia', 'actividad'];
   const baseView = (validViews.includes(viewParam as string) ? viewParam : 'resumen') as ProjectView;
 
   const selectedTaskIdentifier = taskSlugParam || taskIdParam;
-  const view = selectedTaskIdentifier ? 'task-detail' : baseView;
+  const rawView: ProjectView = selectedTaskIdentifier ? 'task-detail' : baseView;
   const selectedTaskId = selectedTaskIdentifier;
 
   const setView = (newView: ProjectView) => {
@@ -145,6 +147,11 @@ export function ProjectPage() {
 
   const leaderName = project.leader?.name || 'No disponible';
   const canManage = canManageProjectUI(user, project);
+  // Economía solo se muestra a quien puede verla (ADMIN, PM, líder real). Es solo visibilidad: el backend es la autoridad. Si
+  // alguien abre ?view=economia sin permiso, cae en Resumen en vez de mostrar una pestaña que no tiene.
+  const canSeeEconomy = canViewEconomicDataUI(user, project);
+  const view: ProjectView = rawView === 'economia' && !canSeeEconomy ? 'resumen' : rawView;
+  const visibleTabs = TABS.filter((tab) => !('economic' in tab && tab.economic) || canSeeEconomy);
   // Archivar solo tiene sentido si además el estado lo permite: acción visible
   // (canManage) pero deshabilitada + motivo cuando el CONTEXTO la bloquea.
   const statusAllowsArchive = project.status === 'FINISHED' || project.status === 'CANCELLED';
@@ -162,6 +169,7 @@ export function ProjectPage() {
     : view === 'hitos' ? 'HITOS'
     : view === 'gantt' ? 'GANTT'
     : view === 'equipo' ? 'EQUIPO'
+    : view === 'economia' ? 'ECONOMIA'
     : 'ACTIVIDAD';
 
   /* Layout principal */
@@ -209,7 +217,7 @@ export function ProjectPage() {
       {/* Barra de tabs + acciones */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex gap-2">
-          {TABS.map(({ key, label, view: tabView }) => (
+          {visibleTabs.map(({ key, label, view: tabView }) => (
             <button
               key={key}
               className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
@@ -309,6 +317,21 @@ export function ProjectPage() {
       {view === 'gantt' && <ProjectGantt projectId={project.id} />}
 
       {view === 'equipo' && <ProjectMembers project={project} />}
+
+      {view === 'economia' && (
+        <EconomyTab
+          project={project}
+          section={searchParams.get('section')}
+          onSectionChange={(section) =>
+            setSearchParams((prev) => {
+              const next = new URLSearchParams(prev);
+              next.set('view', 'economia');
+              next.set('section', section);
+              return next;
+            })
+          }
+        />
+      )}
 
       {view === 'actividad' && (
         <ProjectActivityList projectId={project.id} />
