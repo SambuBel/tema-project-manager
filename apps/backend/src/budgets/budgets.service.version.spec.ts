@@ -1,25 +1,68 @@
 import 'reflect-metadata';
-import { ConflictException, ForbiddenException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { BudgetsService } from './budgets.service';
 import { PermissionsService } from '../auth/permissions.service';
 import { AuditLogEntity } from '../database/entities/audit-log.entity';
 import { BudgetEntity } from '../database/entities/budget.entity';
+import { BudgetItemEntity } from '../database/entities/budget-item.entity';
 import { RoleName } from '../database/enums';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { CreateBudgetVersionDto } from './dto/create-budget-version.dto';
 
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
+const CAT_RRHH = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const CAT_LIC = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const CATEGORIES = [
+  { id: CAT_RRHH, name: 'Recursos humanos', active: true },
+  { id: CAT_LIC, name: 'Licencias y software', active: true },
+];
 const user = (id: string, roles: RoleName[]): RequestUser => ({ id, roles }) as RequestUser;
 const admin = user('admin-1', [RoleName.ADMIN]);
 const pm = user('pm-1', [RoleName.PROGRAM_MANAGER]);
 
-const dto: CreateBudgetVersionDto = { expectedVersion: 1, totalAmount: '1200000.00', currency: 'ARS', approvalDate: '2026-11-01' };
+// V1 vigente: 1.000.000 = RRHH 700.000 + Licencias 300.000
 const v1 = {
   id: 'b1', projectId: PROJECT_ID, version: 1, totalAmount: '1000000.00', currency: 'ARS', approvalDate: '2026-10-12',
   isCurrent: true, supersededAt: null, createdBy: 'admin-1', createdAt: new Date('2026-10-12T15:00:00Z'),
 };
+const V1_ITEMS = [
+  { costCategoryId: CAT_LIC, categoryName: 'Licencias y software', amount: '300000.00' },
+  { costCategoryId: CAT_RRHH, categoryName: 'Recursos humanos', amount: '700000.00' },
+];
+// Request que SÍ cambia: 1.200.000 = RRHH 800.000 + Licencias 400.000
+const dto: CreateBudgetVersionDto = {
+  expectedVersion: 1,
+  totalAmount: '1200000.00',
+  currency: 'ARS',
+  approvalDate: '2026-11-01',
+  items: [
+    { costCategoryId: CAT_RRHH, amount: '800000.00' },
+    { costCategoryId: CAT_LIC, amount: '400000.00' },
+  ],
+};
+// Mismo contenido que V1 pero con las partidas en OTRO orden
+const sameAsV1: CreateBudgetVersionDto = {
+  expectedVersion: 1,
+  totalAmount: '1000000.00',
+  currency: 'ARS',
+  approvalDate: '2026-10-12',
+  items: [
+    { costCategoryId: CAT_LIC, amount: '300000.00' },
+    { costCategoryId: CAT_RRHH, amount: '700000.00' },
+  ],
+};
 
-function build(opts: { projectExists?: boolean; current?: typeof v1 | null; maxVersion?: number; total?: number; failOn?: 'audit' | 'budget' | 'update' } = {}) {
+type Opts = {
+  projectCurrency?: string;
+  projectExists?: boolean;
+  current?: typeof v1 | null;
+  maxVersion?: number;
+  total?: number;
+  failOn?: 'audit' | 'budget' | 'update' | 'items';
+  categories?: typeof CATEGORIES;
+};
+
+function build(opts: Opts = {}) {
   const calls: string[] = [];
   const updateSet: Array<Record<string, unknown>> = [];
   const saved: Array<Record<string, unknown>> = [];
@@ -27,9 +70,18 @@ function build(opts: { projectExists?: boolean; current?: typeof v1 | null; maxV
 
   const manager = {
     query: jest.fn(async (sql: string) => {
+      if (sql.includes('FROM cost_categories')) {
+        calls.push('lock-categories');
+        expect(sql).toContain('FOR SHARE');
+        return opts.categories ?? CATEGORIES;
+      }
+      if (sql.includes('FROM budget_items')) {
+        calls.push('load-items');
+        return V1_ITEMS;
+      }
       if (sql.includes('FOR UPDATE')) {
         calls.push('lock');
-        return opts.projectExists === false ? [] : [{ id: PROJECT_ID }];
+        return opts.projectExists === false ? [] : [{ id: PROJECT_ID, economicCurrency: opts.projectCurrency ?? 'ARS' }];
       }
       calls.push('stats');
       return [{ maxVersion: opts.maxVersion ?? (current ? current.version : 0), total: opts.total ?? (current ? 1 : 0) }];
@@ -64,6 +116,11 @@ function build(opts: { projectExists?: boolean; current?: typeof v1 | null; maxV
       saved.push(result);
       return result;
     }),
+    insert: jest.fn(async (entity: unknown, rows: Array<Record<string, unknown>>) => {
+      calls.push('insert-items');
+      if (opts.failOn === 'items') throw new Error('falló una partida');
+      saved.push({ __entity: entity, rows });
+    }),
   };
   const dataSource = { transaction: jest.fn(async (fn: (m: typeof manager) => unknown) => fn(manager)) };
   const projectRepo = { findOneBy: jest.fn() };
@@ -72,19 +129,30 @@ function build(opts: { projectExists?: boolean; current?: typeof v1 | null; maxV
 }
 
 const errorOf = async (p: Promise<unknown>) => p.catch((e: unknown) => e);
+const WRITES = ['update-old', 'save-budget', 'insert-items', 'save-audit'];
 
 describe('BudgetsService.createVersion', () => {
-  it.each([['ADMIN', admin], ['PROGRAM_MANAGER', pm]])('%s crea la versión 2 y devuelve 201 con la nueva', async (_n, actor) => {
+  it.each([['ADMIN', admin], ['PROGRAM_MANAGER', pm]])('%s crea la versión 2 con sus partidas y devuelve la nueva', async (_n, actor) => {
     const { service } = build();
     await expect(service.createVersion(PROJECT_ID, dto, actor)).resolves.toMatchObject({
       id: 'b2', version: 2, isCurrent: true, supersededAt: null, totalAmount: '1200000.00', createdBy: actor.id,
+      items: [
+        { costCategoryId: CAT_LIC, categoryName: 'Licencias y software', amount: '400000.00' },
+        { costCategoryId: CAT_RRHH, categoryName: 'Recursos humanos', amount: '800000.00' },
+      ],
     });
   });
 
-  it('orden: lock → vigente → máx → UPDATE de la anterior → INSERT nueva → auditoría', async () => {
+  it('orden: lock proyecto → vigente → máx → partidas vigentes → lock rubros → UPDATE anterior → INSERT nueva → partidas → auditoría', async () => {
     const { service, calls } = build();
     await service.createVersion(PROJECT_ID, dto, admin);
-    expect(calls).toEqual(['lock', 'find-current', 'stats', 'update-old', 'save-budget', 'save-audit']);
+    expect(calls).toEqual(['lock', 'find-current', 'stats', 'load-items', 'lock-categories', 'update-old', 'save-budget', 'insert-items', 'save-audit']);
+  });
+
+  it('el lock del proyecto SIEMPRE va antes que el de los rubros (orden global anti-deadlock)', async () => {
+    const { service, calls } = build();
+    await service.createVersion(PROJECT_ID, dto, admin);
+    expect(calls.indexOf('lock')).toBeLessThan(calls.indexOf('lock-categories'));
   });
 
   it('el UPDATE de la anterior toca SOLO is_current y superseded_at', async () => {
@@ -96,27 +164,64 @@ describe('BudgetsService.createVersion', () => {
     expect(typeof updateSet[0]!.supersededAt).toBe('function'); // now() de la base
   });
 
+  it('las partidas de la versión anterior no se tocan: solo se inserta (sin UPDATE ni DELETE de budget_items)', async () => {
+    const { service, manager, saved } = build();
+    await service.createVersion(PROJECT_ID, dto, admin);
+    expect(manager.createQueryBuilder).toHaveBeenCalledTimes(1); // el único UPDATE es el de budgets
+    const inserted = saved.find((row) => row.__entity === BudgetItemEntity)!;
+    expect(inserted.rows).toEqual([
+      { budgetId: 'b2', costCategoryId: CAT_LIC, amount: '400000.00' },
+      { budgetId: 'b2', costCategoryId: CAT_RRHH, amount: '800000.00' },
+    ]);
+  });
+
   it('nextVersion = MAX(version) + 1', async () => {
     const v4 = { ...v1, id: 'b4', version: 4 };
     const { service } = build({ current: v4, maxVersion: 4, total: 4 });
     await expect(service.createVersion(PROJECT_ID, { ...dto, expectedVersion: 4 }, admin)).resolves.toMatchObject({ version: 5 });
   });
 
-  it('auditoría BUDGET_VERSION_CREATED: entityId = nueva, old = anterior, new = nueva; sin project_activities', async () => {
+  it('auditoría BUDGET_VERSION_CREATED: old = versión anterior con sus partidas, new = la nueva con las suyas', async () => {
     const { service, saved } = build();
     await service.createVersion(PROJECT_ID, dto, admin);
     const audit = saved.find((r) => r.__entity === AuditLogEntity)!;
     expect(audit).toMatchObject({
       entityType: 'BUDGET', entityId: 'b2', action: 'BUDGET_VERSION_CREATED', userId: 'admin-1', origin: 'UI',
-      oldValues: { budgetId: 'b1', projectId: PROJECT_ID, version: 1, totalAmount: '1000000.00', currency: 'ARS', approvalDate: '2026-10-12' },
-      newValues: { budgetId: 'b2', projectId: PROJECT_ID, version: 2, totalAmount: '1200000.00', currency: 'ARS', approvalDate: '2026-11-01' },
+      oldValues: {
+        budgetId: 'b1', projectId: PROJECT_ID, version: 1, totalAmount: '1000000.00', currency: 'ARS', approvalDate: '2026-10-12',
+        items: V1_ITEMS,
+      },
+      newValues: {
+        budgetId: 'b2', projectId: PROJECT_ID, version: 2, totalAmount: '1200000.00', currency: 'ARS', approvalDate: '2026-11-01',
+        items: [
+          { costCategoryId: CAT_LIC, categoryName: 'Licencias y software', amount: '400000.00' },
+          { costCategoryId: CAT_RRHH, categoryName: 'Recursos humanos', amount: '800000.00' },
+        ],
+      },
     });
-    expect(saved.every((r) => r.__entity === AuditLogEntity || r.__entity === BudgetEntity)).toBe(true);
+    // una sola fila de auditoría por operación y nada fuera de budgets / budget_items / audit_logs
+    expect(saved.filter((r) => r.__entity === AuditLogEntity)).toHaveLength(1);
+    expect(saved.every((r) => [AuditLogEntity, BudgetEntity, BudgetItemEntity].includes(r.__entity as never))).toBe(true);
   });
 
-  it('permite cambiar SOLO la moneda', async () => {
-    const { service } = build();
-    await expect(service.createVersion(PROJECT_ID, { ...dto, totalAmount: v1.totalAmount, approvalDate: v1.approvalDate, currency: 'USD' }, admin)).resolves.toMatchObject({ version: 2, currency: 'USD' });
+  describe('moneda ÚNICA del proyecto', () => {
+    it('una versión nueva NO puede cambiar de moneda: V1 ARS → V2 USD se rechaza con 400 PROJECT_CURRENCY_MISMATCH, sin escrituras', async () => {
+      const { service, calls } = build();
+      const error = (await errorOf(service.createVersion(PROJECT_ID, { ...sameAsV1, currency: 'USD' }, admin))) as BadRequestException;
+      expect(error.getResponse()).toMatchObject({ code: 'PROJECT_CURRENCY_MISMATCH', projectCurrency: 'ARS' });
+      expect(calls).not.toContain('save-budget');
+    });
+    it('sin currency en el request: usa la del proyecto', async () => {
+      const { service } = build({ projectCurrency: 'USD' });
+      const { currency: _omit, ...withoutCurrency } = { ...dto, expectedVersion: 1 };
+      void _omit;
+      await expect(service.createVersion(PROJECT_ID, withoutCurrency, admin)).resolves.toMatchObject({ currency: 'USD' });
+    });
+    it('proyecto USD: una versión en USD se acepta y en ARS se rechaza', async () => {
+      const { service } = build({ projectCurrency: 'USD' });
+      await expect(service.createVersion(PROJECT_ID, { ...dto, currency: 'USD' }, admin)).resolves.toMatchObject({ currency: 'USD' });
+      await expect(errorOf(service.createVersion(PROJECT_ID, { ...dto, currency: 'ARS' }, admin))).resolves.toMatchObject({ response: { code: 'PROJECT_CURRENCY_MISMATCH' } });
+    });
   });
 
   describe('permisos', () => {
@@ -147,27 +252,15 @@ describe('BudgetsService.createVersion', () => {
   it('versiones pero ninguna vigente: 500 BUDGET_NO_CURRENT_VERSION, sin escrituras', async () => {
     const { service, calls } = build({ current: null, total: 2, maxVersion: 2 });
     const error = (await errorOf(service.createVersion(PROJECT_ID, dto, admin))) as InternalServerErrorException;
-    expect(error).toBeInstanceOf(InternalServerErrorException);
     expect(error.getResponse()).toMatchObject({ code: 'BUDGET_NO_CURRENT_VERSION' });
-    expect(calls).not.toContain('update-old');
-    expect(calls).not.toContain('save-budget');
+    for (const write of WRITES) expect(calls).not.toContain(write);
   });
 
   it('vigente distinta de MAX(version): 500 BUDGET_VERSION_STATE_INVALID, sin escrituras', async () => {
     const { service, calls } = build({ current: { ...v1, version: 2 }, maxVersion: 3, total: 3 });
     const error = (await errorOf(service.createVersion(PROJECT_ID, { ...dto, expectedVersion: 2 }, admin))) as InternalServerErrorException;
-    expect(error).toBeInstanceOf(InternalServerErrorException);
     expect(error.getResponse()).toMatchObject({ code: 'BUDGET_VERSION_STATE_INVALID' });
-    expect(calls).not.toContain('update-old');
-    expect(calls).not.toContain('save-budget');
-  });
-
-  it('expectedVersion desactualizado: 409 BUDGET_VERSION_CONFLICT con currentVersion, sin escrituras', async () => {
-    const { service, calls } = build({ current: { ...v1, version: 3 }, maxVersion: 3, total: 3 });
-    const error = (await errorOf(service.createVersion(PROJECT_ID, { ...dto, expectedVersion: 1 }, admin))) as ConflictException;
-    expect(error).toBeInstanceOf(ConflictException);
-    expect(error.getResponse()).toMatchObject({ code: 'BUDGET_VERSION_CONFLICT', currentVersion: 3 });
-    expect(calls).not.toContain('update-old');
+    for (const write of WRITES) expect(calls).not.toContain(write);
   });
 
   it('la integridad se valida ANTES que expectedVersion', async () => {
@@ -176,23 +269,87 @@ describe('BudgetsService.createVersion', () => {
     expect(error.getResponse()).toMatchObject({ code: 'BUDGET_VERSION_STATE_INVALID' });
   });
 
-  it('mismos importe, moneda y fecha: 409 BUDGET_NO_CHANGES, sin escrituras', async () => {
-    const { service, calls } = build();
-    const same = { expectedVersion: 1, totalAmount: v1.totalAmount, currency: v1.currency, approvalDate: v1.approvalDate };
-    const error = (await errorOf(service.createVersion(PROJECT_ID, same, admin))) as ConflictException;
+  it('expectedVersion desactualizado: 409 BUDGET_VERSION_CONFLICT con currentVersion, sin escrituras', async () => {
+    const { service, calls } = build({ current: { ...v1, version: 3 }, maxVersion: 3, total: 3 });
+    const error = (await errorOf(service.createVersion(PROJECT_ID, { ...dto, expectedVersion: 1 }, admin))) as ConflictException;
     expect(error).toBeInstanceOf(ConflictException);
-    expect(error.getResponse()).toMatchObject({ code: 'BUDGET_NO_CHANGES' });
-    expect(calls).not.toContain('update-old');
+    expect(error.getResponse()).toMatchObject({ code: 'BUDGET_VERSION_CONFLICT', currentVersion: 3 });
+    for (const write of WRITES) expect(calls).not.toContain(write);
   });
 
-  it('expectedVersion se valida ANTES de detectar "sin cambios"', async () => {
-    const { service } = build({ current: { ...v1, version: 2 }, maxVersion: 2, total: 2 });
-    const same = { expectedVersion: 1, totalAmount: v1.totalAmount, currency: v1.currency, approvalDate: v1.approvalDate };
-    const error = (await errorOf(service.createVersion(PROJECT_ID, same, admin))) as ConflictException;
-    expect(error.getResponse()).toMatchObject({ code: 'BUDGET_VERSION_CONFLICT', currentVersion: 2 });
+  describe('BUDGET_NO_CHANGES (encabezado + desglose)', () => {
+    it('mismo encabezado y mismas partidas en OTRO orden: 409 sin escrituras', async () => {
+      const { service, calls } = build();
+      const error = (await errorOf(service.createVersion(PROJECT_ID, sameAsV1, admin))) as ConflictException;
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(error.getResponse()).toMatchObject({ code: 'BUDGET_NO_CHANGES' });
+      for (const write of WRITES) expect(calls).not.toContain(write);
+    });
+
+    it('importes equivalentes ("700000" = "700000.00") tampoco cuentan como cambio', async () => {
+      const { service } = build();
+      const error = (await errorOf(
+        service.createVersion(PROJECT_ID, { ...sameAsV1, items: [{ costCategoryId: CAT_RRHH, amount: '700000' }, { costCategoryId: CAT_LIC, amount: '300000.0' }] }, admin),
+      )) as ConflictException;
+      expect(error.getResponse()).toMatchObject({ code: 'BUDGET_NO_CHANGES' });
+    });
+
+    it('mismo encabezado y mismo total pero OTRA distribución (600/400 en vez de 700/300): SÍ crea la versión', async () => {
+      const { service } = build();
+      await expect(
+        service.createVersion(
+          PROJECT_ID,
+          { ...sameAsV1, items: [{ costCategoryId: CAT_RRHH, amount: '600000.00' }, { costCategoryId: CAT_LIC, amount: '400000.00' }] },
+          admin,
+        ),
+      ).resolves.toMatchObject({ version: 2, totalAmount: '1000000.00' });
+    });
+
+    it('solo cambia el encabezado (mismas partidas): SÍ crea la versión', async () => {
+      const { service } = build();
+      await expect(service.createVersion(PROJECT_ID, { ...sameAsV1, approvalDate: '2026-12-01' }, admin)).resolves.toMatchObject({ version: 2 });
+    });
+
+    it('expectedVersion se valida ANTES de detectar "sin cambios"', async () => {
+      const { service } = build({ current: { ...v1, version: 2 }, maxVersion: 2, total: 2 });
+      const error = (await errorOf(service.createVersion(PROJECT_ID, sameAsV1, admin))) as ConflictException;
+      expect(error.getResponse()).toMatchObject({ code: 'BUDGET_VERSION_CONFLICT', currentVersion: 2 });
+    });
   });
 
-  it.each(['audit', 'budget', 'update'] as const)('si falla %s la transacción se aborta (el error se propaga: rollback)', async (failOn) => {
+  describe('desglose', () => {
+    it('suma distinta del total: 400 BUDGET_ITEMS_TOTAL_MISMATCH con totalAmount e itemsTotal, sin tocar la base', async () => {
+      const { service, dataSource } = build();
+      const error = (await errorOf(
+        service.createVersion(PROJECT_ID, { ...dto, items: [{ costCategoryId: CAT_RRHH, amount: '800000.00' }] }, admin),
+      )) as BadRequestException;
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error.getResponse()).toMatchObject({ code: 'BUDGET_ITEMS_TOTAL_MISMATCH', totalAmount: '1200000.00', itemsTotal: '800000.00' });
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rubros repetidos: 400 BUDGET_ITEM_DUPLICATED_CATEGORY', async () => {
+      const { service } = build();
+      const error = (await errorOf(
+        service.createVersion(PROJECT_ID, { ...dto, items: [{ costCategoryId: CAT_RRHH, amount: '800000.00' }, { costCategoryId: CAT_RRHH, amount: '400000.00' }] }, admin),
+      )) as BadRequestException;
+      expect(error.getResponse()).toMatchObject({ code: 'BUDGET_ITEM_DUPLICATED_CATEGORY' });
+    });
+
+    it('rubro inexistente o inactivo: 400 y la versión vigente NO se desactiva', async () => {
+      const missing = build({ categories: [CATEGORIES[0]!] });
+      const notFound = (await errorOf(missing.service.createVersion(PROJECT_ID, dto, admin))) as BadRequestException;
+      expect(notFound.getResponse()).toMatchObject({ code: 'COST_CATEGORY_NOT_FOUND', costCategoryIds: [CAT_LIC] });
+      expect(missing.calls).not.toContain('update-old');
+
+      const inactive = build({ categories: [CATEGORIES[0]!, { ...CATEGORIES[1]!, active: false }] });
+      const inactiveError = (await errorOf(inactive.service.createVersion(PROJECT_ID, dto, admin))) as BadRequestException;
+      expect(inactiveError.getResponse()).toMatchObject({ code: 'COST_CATEGORY_INACTIVE', costCategoryIds: [CAT_LIC] });
+      expect(inactive.calls).not.toContain('update-old');
+    });
+  });
+
+  it.each(['audit', 'budget', 'update', 'items'] as const)('si falla %s la transacción se aborta (el error se propaga: rollback)', async (failOn) => {
     const { service } = build({ failOn });
     await expect(service.createVersion(PROJECT_ID, dto, admin)).rejects.toBeDefined();
   });

@@ -12,10 +12,17 @@ import {
   canManageGlobalRolesUI,
   canManageProjectUI,
   canManageTaskPlanningUI,
+  canManageMilestonesUI,
   canManageTeamUI,
   canManageUserStatusUI,
   canRemoveGlobalRoleUI,
   canViewUsersUI,
+  canViewEconomicDataUI,
+  canDefineBudgetUI,
+  canManageCostsUI,
+  canViewResourceProfilesUI,
+  canManageResourceProfilesUI,
+  canManageResourceAllocationUI,
 } from './permissions';
 
 const PROJECT_ID = 'project-1';
@@ -109,6 +116,28 @@ describe('canManageProjectUI / canManageTeamUI', () => {
 
   it('multi-rol: ADMIN + PROGRAM_MANAGER conserva el permiso', () => {
     expect(canManageProjectUI(makeUser('u1', ['ADMIN', 'PROGRAM_MANAGER']), project)).toBe(true);
+  });
+});
+
+describe('canManageMilestonesUI', () => {
+  const project = makeProject();
+
+  it('ADMIN y PROGRAM_MANAGER pueden gestionar hitos en cualquier proyecto', () => {
+    expect(canManageMilestonesUI(makeUser('admin-1', ['ADMIN']), project)).toBe(true);
+    expect(canManageMilestonesUI(makeUser('pm-1', ['PROGRAM_MANAGER']), project)).toBe(true);
+  });
+
+  it('el líder del proyecto puede gestionar hitos', () => {
+    expect(canManageMilestonesUI(makeUser(LEADER_ID, ['PROJECT_LEADER']), project)).toBe(true);
+  });
+
+  it('PROJECT_LEADER de otro proyecto no puede', () => {
+    expect(canManageMilestonesUI(makeUser('otro-leader', ['PROJECT_LEADER']), project)).toBe(false);
+  });
+
+  it('COLLABORATOR y OBSERVER no pueden gestionar hitos', () => {
+    expect(canManageMilestonesUI(makeUser('u1', ['COLLABORATOR']), project)).toBe(false);
+    expect(canManageMilestonesUI(makeUser('u1', ['OBSERVER']), project)).toBe(false);
   });
 });
 
@@ -439,5 +468,92 @@ describe('líder REAL = PROJECT_LEADER + leaderId (leaderId histórico sin rol n
     expect(canCommentOnTaskUI(stale, project, membership)).toBe(true);
     expect(canEditTaskUI(stale, makeTask({ createdBy: 'otro', assignedToId: 'otro' }), project, membership)).toBe(false);
     expect(canManageProjectUI(stale, project)).toBe(false);
+  });
+});
+
+describe('canViewEconomicDataUI (Economía visible: ADMIN, PM y líder REAL)', () => {
+  const project = makeProject({ leaderId: LEADER_ID });
+  it.each([
+    ['ADMIN', makeUser('a', ['ADMIN']), true],
+    ['PROGRAM_MANAGER', makeUser('p', ['PROGRAM_MANAGER']), true],
+    ['líder real (rol global y leaderId)', makeUser(LEADER_ID, ['PROJECT_LEADER']), true],
+    ['PROJECT_LEADER de OTRO proyecto', makeUser('other-leader', ['PROJECT_LEADER']), false],
+    ['COLLABORATOR', makeUser('c', ['COLLABORATOR']), false],
+    ['OBSERVER', makeUser('o', ['OBSERVER']), false],
+    ['COLLABORATOR con leaderId histórico (sin el rol de líder)', makeUser(LEADER_ID, ['COLLABORATOR']), false],
+    ['OBSERVER con leaderId histórico', makeUser(LEADER_ID, ['OBSERVER']), false],
+  ])('%s → %s', (_label, user, expected) => {
+    expect(canViewEconomicDataUI(user, project)).toBe(expected);
+  });
+});
+
+describe('canDefineBudgetUI (crear / nueva versión: solo ADMIN y PM, nunca el líder)', () => {
+  it.each([
+    ['ADMIN', ['ADMIN'], true],
+    ['PROGRAM_MANAGER', ['PROGRAM_MANAGER'], true],
+    ['PROJECT_LEADER (aunque sea líder del proyecto)', ['PROJECT_LEADER'], false],
+    ['COLLABORATOR', ['COLLABORATOR'], false],
+    ['OBSERVER', ['OBSERVER'], false],
+  ] as Array<[string, RoleName[], boolean]>)('%s → %s', (_label, roles, expected) => {
+    expect(canDefineBudgetUI(makeUser('u', roles))).toBe(expected);
+  });
+});
+
+describe('canManageCostsUI (registrar / editar costos: ADMIN, PM y líder REAL)', () => {
+  const project = { leaderId: LEADER_ID };
+  it.each([
+    ['ADMIN', makeUser('a', ['ADMIN']), true],
+    ['PROGRAM_MANAGER', makeUser('p', ['PROGRAM_MANAGER']), true],
+    ['líder real', makeUser(LEADER_ID, ['PROJECT_LEADER']), true],
+    ['líder de otro proyecto', makeUser('otro', ['PROJECT_LEADER']), false],
+    ['COLLABORATOR', makeUser('c', ['COLLABORATOR']), false],
+    ['OBSERVER', makeUser('o', ['OBSERVER']), false],
+    ['COLLABORATOR con leaderId histórico', makeUser(LEADER_ID, ['COLLABORATOR']), false],
+    ['OBSERVER con leaderId histórico', makeUser(LEADER_ID, ['OBSERVER']), false],
+  ])('%s → %s', (_n, user, expected) => {
+    expect(canManageCostsUI(user, project)).toBe(expected);
+  });
+  it('coincide con canViewEconomicDataUI para todos los roles', () => {
+    for (const roles of [['ADMIN'], ['PROGRAM_MANAGER'], ['PROJECT_LEADER'], ['COLLABORATOR'], ['OBSERVER'], []] as RoleName[][]) {
+      for (const id of [LEADER_ID, 'otro']) {
+        const user = makeUser(id, roles);
+        expect(canManageCostsUI(user, project)).toBe(canViewEconomicDataUI(user, project));
+      }
+    }
+  });
+});
+
+describe('perfiles de recurso (catálogo global, por rol global)', () => {
+  it.each([
+    ['ADMIN', ['ADMIN'], true, true],
+    ['PROGRAM_MANAGER', ['PROGRAM_MANAGER'], true, false],
+    ['PROJECT_LEADER', ['PROJECT_LEADER'], true, false],
+    ['COLLABORATOR', ['COLLABORATOR'], false, false],
+    ['OBSERVER', ['OBSERVER'], false, false],
+    ['sin roles', [], false, false],
+  ] as Array<[string, RoleName[], boolean, boolean]>)('%s → ver %s / administrar %s', (_n, roles, canView, canManage) => {
+    const user = makeUser('u', roles);
+    expect(canViewResourceProfilesUI(user)).toBe(canView);
+    expect(canManageResourceProfilesUI(user)).toBe(canManage);
+  });
+});
+
+describe('canManageResourceAllocationUI (asignaciones del proyecto: ADMIN, PM y líder REAL; distinto del catálogo)', () => {
+  const project = { leaderId: LEADER_ID };
+  it.each([
+    ['ADMIN', makeUser('a', ['ADMIN']), true],
+    ['PROGRAM_MANAGER', makeUser('p', ['PROGRAM_MANAGER']), true],
+    ['líder real', makeUser(LEADER_ID, ['PROJECT_LEADER']), true],
+    ['líder de otro proyecto', makeUser('otro', ['PROJECT_LEADER']), false],
+    ['COLLABORATOR', makeUser('c', ['COLLABORATOR']), false],
+    ['OBSERVER', makeUser('o', ['OBSERVER']), false],
+    ['COLLABORATOR con leaderId histórico', makeUser(LEADER_ID, ['COLLABORATOR']), false],
+  ])('%s → %s', (_n, user, expected) => {
+    expect(canManageResourceAllocationUI(user, project)).toBe(expected);
+  });
+  it('un PM escribe asignaciones pero NO el catálogo de perfiles (son permisos distintos)', () => {
+    const pm = makeUser('p', ['PROGRAM_MANAGER']);
+    expect(canManageResourceAllocationUI(pm, project)).toBe(true);
+    expect(canManageResourceProfilesUI(pm)).toBe(false);
   });
 });

@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { ProjectEntity } from '../projects/project.entity';
 import { UserEntity } from '../database/entities/user.entity';
+import { MilestoneEntity } from '../milestones/milestone.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 
 /**
@@ -25,6 +26,8 @@ import { TaskPriority, TaskStatus } from '../database/enums';
  * solo se oculta), mismo criterio que ya usa ProjectEntity.archivedAt.
  * 
  * Subtareas: entidad separada, cada subtarea tiene título, responsable y estado binario
+ *
+ * Milestones (KAN-242): asociación opcional a MilestoneEntity (0 o 1 Milestone por tarea, D2).
  */
 @Entity('tasks')
 @Index('ix_tasks_project_id', ['projectId'])
@@ -46,6 +49,14 @@ export class TaskEntity {
   @ManyToOne(() => TaskEntity, { nullable: true, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'parent_task_id' })
   parentTask!: TaskEntity | null;
+
+  @Index('ix_tasks_milestone_id')
+  @Column({ name: 'milestone_id', type: 'uuid', nullable: true })
+  milestoneId!: string | null;
+
+  @ManyToOne(() => MilestoneEntity, (milestone) => milestone.tasks, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'milestone_id', foreignKeyConstraintName: 'fk_tasks_milestone' })
+  milestone!: MilestoneEntity | null;
 
   @Column({ name: 'title', type: 'varchar', length: 200 })
   title!: string;

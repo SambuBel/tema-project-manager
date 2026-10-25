@@ -12,6 +12,7 @@ export interface Task {
   slug?: string;
   projectId: string;
   parentTaskId: string | null;
+  milestoneId?: string | null;
   title: string;
   description: string | null;
   status: TaskStatus;
@@ -46,6 +47,7 @@ export interface TaskFilters {
   limit?: number;
   myTasks?: boolean;
   atRisk?: boolean;
+  includeSubtasks?: boolean;
 }
 
 export interface TaskListResponse extends PaginatedResponse<Task> {
