@@ -3,7 +3,8 @@ import { CreateBudgetVersionDto } from './create-budget-version.dto';
 
 const pipe = new ValidationPipe({ whitelist: true, transform: true });
 const parse = (body: Record<string, unknown>) => pipe.transform(body, { type: 'body', metatype: CreateBudgetVersionDto }) as Promise<CreateBudgetVersionDto>;
-const valid = { expectedVersion: 1, totalAmount: '1200000.5', currency: ' usd ', approvalDate: '2026-11-01' };
+const CAT_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const valid = { expectedVersion: 1, totalAmount: '1200000.5', currency: ' usd ', approvalDate: '2026-11-01', items: [{ costCategoryId: CAT_A, amount: '1200000.5' }] };
 const messages = async (body: Record<string, unknown>): Promise<string> => {
   try {
     await parse(body);
@@ -33,6 +34,18 @@ describe('CreateBudgetVersionDto', () => {
     expect(await messages({ ...valid, totalAmount: 10 })).toMatch(/importe/i);
     expect(await messages({ ...valid, currency: 'US' })).toMatch(/moneda/i);
     expect(await messages({ ...valid, approvalDate: '2026-02-31' })).toMatch(/fecha/i);
+  });
+
+  it('items también es obligatorio y no admite lista vacía (snapshot completo: nada se hereda de la versión anterior)', async () => {
+    const { items: _omit, ...rest } = valid;
+    void _omit;
+    expect(await messages(rest)).toMatch(/items/);
+    expect(await messages({ ...valid, items: [] })).toMatch(/al menos una partida/);
+  });
+
+  it('valida y normaliza cada partida', async () => {
+    expect((await parse(valid)).items).toEqual([{ costCategoryId: CAT_A, amount: '1200000.50' }]);
+    expect(await messages({ ...valid, items: [{ costCategoryId: 'x', amount: 5 }] })).toMatch(/costCategoryId/);
   });
 
   it('descarta campos que decide el servidor', async () => {

@@ -127,6 +127,39 @@ describe('PermissionsService', () => {
       expect(service.canDefineBudget(makeUser([RoleName.PROJECT_LEADER]))).toBe(false);
     });
 
+    it('canViewCostCategories: ADMIN, PROGRAM_MANAGER y PROJECT_LEADER (rol global); COLLABORATOR y OBSERVER no', () => {
+      expect(service.canViewCostCategories(makeUser([RoleName.ADMIN]))).toBe(true);
+      expect(service.canViewCostCategories(makeUser([RoleName.PROGRAM_MANAGER]))).toBe(true);
+      expect(service.canViewCostCategories(makeUser([RoleName.PROJECT_LEADER]))).toBe(true);
+      expect(service.canViewCostCategories(makeUser([RoleName.COLLABORATOR]))).toBe(false);
+      expect(service.canViewCostCategories(makeUser([RoleName.OBSERVER]))).toBe(false);
+    });
+
+    it('canManageResourceAllocation: ADMIN, PROGRAM_MANAGER y líder REAL; líder ajeno, COLLABORATOR y OBSERVER no', () => {
+      const project = makeProject('leader-1');
+      expect(service.canManageResourceAllocation(makeUser([RoleName.ADMIN]), project)).toBe(true);
+      expect(service.canManageResourceAllocation(makeUser([RoleName.PROGRAM_MANAGER]), project)).toBe(true);
+      expect(service.canManageResourceAllocation(makeUser([RoleName.PROJECT_LEADER], 'leader-1'), project)).toBe(true);
+      expect(service.canManageResourceAllocation(makeUser([RoleName.PROJECT_LEADER], 'otro'), project)).toBe(false);
+      expect(service.canManageResourceAllocation(makeUser([RoleName.COLLABORATOR], 'leader-1'), project)).toBe(false); // leaderId solo no alcanza
+      expect(service.canManageResourceAllocation(makeUser([RoleName.OBSERVER]), project)).toBe(false);
+    });
+
+    it('canViewResourceProfiles: ADMIN, PROGRAM_MANAGER y PROJECT_LEADER; COLLABORATOR y OBSERVER no', () => {
+      expect(service.canViewResourceProfiles(makeUser([RoleName.ADMIN]))).toBe(true);
+      expect(service.canViewResourceProfiles(makeUser([RoleName.PROGRAM_MANAGER]))).toBe(true);
+      expect(service.canViewResourceProfiles(makeUser([RoleName.PROJECT_LEADER]))).toBe(true);
+      expect(service.canViewResourceProfiles(makeUser([RoleName.COLLABORATOR]))).toBe(false);
+      expect(service.canViewResourceProfiles(makeUser([RoleName.OBSERVER]))).toBe(false);
+    });
+
+    it('canManageResourceProfiles: SOLO ADMIN (provisional, pendiente de TEMA)', () => {
+      expect(service.canManageResourceProfiles(makeUser([RoleName.ADMIN]))).toBe(true);
+      for (const role of [RoleName.PROGRAM_MANAGER, RoleName.PROJECT_LEADER, RoleName.COLLABORATOR, RoleName.OBSERVER]) {
+        expect(service.canManageResourceProfiles(makeUser([role]))).toBe(false);
+      }
+    });
+
     it('canManageCosts: PROJECT_LEADER solo en el proyecto que lidera', () => {
       const leader = makeUser([RoleName.PROJECT_LEADER], 'leader-1');
       expect(service.canManageCosts(leader, makeProject('leader-1'))).toBe(true);

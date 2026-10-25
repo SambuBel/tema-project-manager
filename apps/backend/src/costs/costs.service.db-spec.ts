@@ -1,0 +1,962 @@
+import 'reflect-metadata';
+import { BadRequestException, ConflictException, ForbiddenException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import dataSource from '../database/data-source';
+import { CostsService } from './costs.service';
+import { BudgetsService } from '../budgets/budgets.service';
+import { PermissionsService } from '../auth/permissions.service';
+import { AuditLogEntity } from '../database/entities/audit-log.entity';
+import { BudgetEntity } from '../database/entities/budget.entity';
+import { ProjectEntity } from '../projects/project.entity';
+import { ProjectMemberEntity } from '../database/entities/project-member.entity';
+import { RoleName } from '../database/enums';
+import { RequestUser } from '../auth/types/authenticated-request-user';
+import { CreateCostDto } from './dto/create-cost.dto';
+
+/**
+ * CostsService contra PostgreSQL REAL: RN-20, RN-21, auditoría atómica, listado y concurrencia con el versionado de presupuesto.
+ *   pnpm --filter @tema/backend test:db
+ * El servicio abre SUS PROPIAS transacciones (se confirman): los datos de prueba se crean y se BORRAN explícitamente (sufijo único).
+ */
+const SUFFIX = `cost01-${Date.now()}`;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const cats = { rrhh: '', lic: '' };
+let tempIn = ''; // rubro temporal ACTIVO que el presupuesto de prueba incluye
+let tempOut = ''; // rubro temporal ACTIVO fuera de todo presupuesto
+let tempInactive = '';
+const tempCategoryIds: string[] = [];
+const userIds: string[] = [];
+const projectIds: string[] = [];
+let admin: RequestUser;
+let pm: RequestUser;
+let leader: RequestUser;
+let foreignLeader: RequestUser;
+let collaborator: RequestUser;
+let observer: RequestUser;
+let projectId: string;
+let costs: CostsService;
+const permissions = () => new PermissionsService(dataSource.getRepository(ProjectMemberEntity));
+
+const buildCosts = (ds: object = dataSource) => new CostsService(dataSource.getRepository(ProjectEntity), permissions(), ds as DataSource);
+const buildBudgets = () => new BudgetsService(dataSource.getRepository(BudgetEntity), dataSource.getRepository(ProjectEntity), permissions(), dataSource);
+
+async function createUser(label: string, roles: RoleName[]): Promise<RequestUser> {
+  const [{ id }] = await dataSource.query(`INSERT INTO users (email, name, active) VALUES ($1, $2, true) RETURNING id`, [`${label}-${SUFFIX}@tema-test.com`, label]);
+  userIds.push(id);
+  return { id, name: label, roles } as RequestUser;
+}
+
+async function createProject(leaderId: string, startDate: string | null = null): Promise<string> {
+  const n = `${SUFFIX}-${projectIds.length}`;
+  const [{ id }] = await dataSource.query(
+    `INSERT INTO projects (name, slug, status, leader_id, created_by, start_date) VALUES ($1, $2, 'PLANNED', $3, $3, $4) RETURNING id`,
+    [`Test ${n}`, `test-${n}`, leaderId, startDate],
+  );
+  projectIds.push(id);
+  return id as string;
+}
+
+/** Presupuesto vigente de 1000.00 ARS con RRHH 600 + Licencias 400 (+ rubro temporal si se indica). */
+async function withBudget(project: string, items?: Array<[string, string]>): Promise<void> {
+  const parts = items ?? [[cats.rrhh, '600.00'], [cats.lic, '400.00']];
+  const total = parts.reduce((sum, [, amount]) => sum + Number(amount) * 100, 0) / 100;
+  await buildBudgets().create(
+    project,
+    { totalAmount: total.toFixed(2), currency: 'ARS', approvalDate: '2026-10-01', items: parts.map(([costCategoryId, amount]) => ({ costCategoryId, amount })) },
+    admin,
+  );
+}
+
+const cost = (extra: Partial<CreateCostDto> = {}): CreateCostDto => ({
+  costDate: '2026-10-25',
+  amount: '150000.50',
+  currency: 'USD',
+  costCategoryId: cats.rrhh,
+  description: 'Licencias de software',
+  ...extra,
+});
+
+const count = async (sql: string, params: unknown[]): Promise<number> => (await dataSource.query(sql, params))[0].n as number;
+const costsOf = (id: string) => count(`SELECT count(*)::int AS n FROM costs WHERE project_id = $1`, [id]);
+const auditsOf = (id: string) => count(`SELECT count(*)::int AS n FROM audit_logs WHERE action = 'COST_CREATED' AND new_values->>'projectId' = $1`, [id]);
+
+/** Servicio de costos cuya transacción ejecuta `afterQuery` apenas termina una consulta que contiene `marker`. */
+function hookedCosts(marker: string, afterQuery: () => Promise<void>): CostsService {
+  return buildCosts({
+    transaction: (run: (manager: unknown) => Promise<unknown>) =>
+      dataSource.transaction(async (manager) =>
+        run(
+          new Proxy(manager, {
+            get(target, prop, receiver) {
+              if (prop !== 'query') return Reflect.get(target, prop, receiver);
+              return async (sql: string, params?: unknown[]) => {
+                const result = await target.query(sql, params);
+                if (sql.includes(marker)) await afterQuery();
+                return result;
+              };
+            },
+          }),
+        ),
+      ),
+    manager: dataSource.manager,
+  });
+}
+
+beforeAll(async () => {
+  if (!dataSource.isInitialized) await dataSource.initialize();
+  admin = await createUser('admin', [RoleName.ADMIN]);
+  pm = await createUser('pm', [RoleName.PROGRAM_MANAGER]);
+  leader = await createUser('leader', [RoleName.PROJECT_LEADER]);
+  foreignLeader = await createUser('ajeno', [RoleName.PROJECT_LEADER]);
+  collaborator = await createUser('collab', [RoleName.COLLABORATOR]);
+  observer = await createUser('obs', [RoleName.OBSERVER]);
+  costs = buildCosts();
+
+  const rows: Array<{ id: string; name: string }> = await dataSource.query(`SELECT id, name FROM cost_categories WHERE active`);
+  cats.rrhh = rows.find((r) => r.name === 'Recursos humanos')!.id;
+  cats.lic = rows.find((r) => r.name === 'Licencias y software')!.id;
+  const created: Array<{ id: string }> = await dataSource.query(
+    `INSERT INTO cost_categories (name, active) VALUES ($1, true), ($2, true), ($3, false) RETURNING id`,
+    [`zz-cost-dentro-${SUFFIX}`, `zz-cost-fuera-${SUFFIX}`, `zz-cost-inactivo-${SUFFIX}`],
+  );
+  [tempIn, tempOut, tempInactive] = created.map((r) => r.id) as [string, string, string];
+  tempCategoryIds.push(tempIn, tempOut, tempInactive);
+});
+
+beforeEach(async () => {
+  projectId = await createProject(leader.id, '2026-10-01');
+  await withBudget(projectId);
+});
+
+afterAll(async () => {
+  await dataSource.query(
+    `DELETE FROM audit_logs WHERE (entity_type = 'COST' AND new_values->>'projectId' = ANY($1::text[]))
+        OR (entity_type = 'BUDGET' AND entity_id IN (SELECT id FROM budgets WHERE project_id = ANY($1::uuid[])))`,
+    [projectIds],
+  );
+  await dataSource.query(`DELETE FROM projects WHERE id = ANY($1::uuid[])`, [projectIds]);
+  await dataSource.query(`DELETE FROM cost_categories WHERE id = ANY($1::uuid[])`, [tempCategoryIds]);
+  await dataSource.query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [userIds]);
+  if (dataSource.isInitialized) await dataSource.destroy();
+});
+
+describe('alta de costos', () => {
+  it('sin tarea: se guarda exacto, en su moneda original (USD sobre un presupuesto en ARS), con el creador y sin baja', async () => {
+    const created = await costs.create(projectId, cost({ amount: '123456789012.34' }), admin);
+    const [row] = await dataSource.query(
+      `SELECT task_id, amount::text AS amount, currency, cost_date::text AS cost_date, description, created_by, deleted_at FROM costs WHERE id = $1`,
+      [created.id],
+    );
+    expect(row).toEqual({ task_id: null, amount: '123456789012.34', currency: 'USD', cost_date: '2026-10-25', description: 'Licencias de software', created_by: admin.id, deleted_at: null });
+    expect(created).toMatchObject({ taskId: null, taskTitle: null, categoryName: 'Recursos humanos', amount: '123456789012.34', currency: 'USD', createdByUser: { id: admin.id, name: 'admin' } });
+  });
+
+  it('con tarea del mismo proyecto: se asocia y devuelve el título', async () => {
+    const [{ id: taskId }] = await dataSource.query(
+      `INSERT INTO tasks (project_id, title, created_by, slug) VALUES ($1, 'Comprar licencias', $2, $3) RETURNING id`,
+      [projectId, admin.id, `t-${SUFFIX}`],
+    );
+    const created = await costs.create(projectId, cost({ taskId }), admin);
+    expect(created).toMatchObject({ taskId, taskTitle: 'Comprar licencias' });
+  });
+
+  it('tarea de OTRO proyecto o inexistente: mismo error 400 TASK_NOT_AVAILABLE_FOR_PROJECT y no se guarda nada', async () => {
+    const other = await createProject(leader.id);
+    const [{ id: foreignTask }] = await dataSource.query(
+      `INSERT INTO tasks (project_id, title, created_by, slug) VALUES ($1, 'Ajena', $2, $3) RETURNING id`,
+      [other, admin.id, `ajena-${SUFFIX}`],
+    );
+    for (const taskId of [foreignTask, '00000000-0000-4000-8000-000000000000']) {
+      const error = (await costs.create(projectId, cost({ taskId }), admin).catch((e: unknown) => e)) as BadRequestException;
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error.getResponse()).toMatchObject({ code: 'TASK_NOT_AVAILABLE_FOR_PROJECT' });
+    }
+    expect(await costsOf(projectId)).toBe(0);
+  });
+
+  it('una tarea archivada o completada igual puede recibir costos (TEMA no define restricción)', async () => {
+    const [{ id: taskId }] = await dataSource.query(
+      `INSERT INTO tasks (project_id, title, created_by, slug, status, archived_at) VALUES ($1, 'Vieja', $2, $3, 'COMPLETED', now()) RETURNING id`,
+      [projectId, admin.id, `vieja-${SUFFIX}`],
+    );
+    await expect(costs.create(projectId, cost({ taskId }), admin)).resolves.toMatchObject({ taskId });
+  });
+
+  it('un costo que SUPERA la partida y el total igual se registra (RN-19: no se bloquea)', async () => {
+    await expect(costs.create(projectId, cost({ amount: '999999999.00', currency: 'ARS' }), admin)).resolves.toMatchObject({ amount: '999999999.00' });
+  });
+
+  it('no escribe nada en project_activities', async () => {
+    await costs.create(projectId, cost(), admin);
+    expect(await count(`SELECT count(*)::int AS n FROM project_activities WHERE project_id = $1`, [projectId])).toBe(0);
+  });
+});
+
+describe('permisos', () => {
+  it.each([['ADMIN', () => admin], ['PROGRAM_MANAGER', () => pm], ['líder real', () => leader]])('%s puede registrar y listar', async (_n, actor) => {
+    await expect(costs.create(projectId, cost(), actor())).resolves.toBeDefined();
+    await expect(costs.list(projectId, {}, actor())).resolves.toMatchObject({ total: 1 });
+  });
+  it.each([['líder ajeno', () => foreignLeader], ['COLLABORATOR', () => collaborator], ['OBSERVER', () => observer]])('%s: 403 al registrar y al listar, sin efectos', async (_n, actor) => {
+    await expect(costs.create(projectId, cost(), actor())).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(costs.list(projectId, {}, actor())).rejects.toBeInstanceOf(ForbiddenException);
+    expect(await costsOf(projectId)).toBe(0);
+  });
+  it('proyecto inexistente: 404', async () => {
+    await expect(costs.create('00000000-0000-4000-8000-000000000000', cost(), admin)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(costs.list('00000000-0000-4000-8000-000000000000', {}, admin)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('RN-20: el rubro debe estar en el presupuesto vigente', () => {
+  it('rubro incluido en el presupuesto: OK', async () => {
+    await expect(costs.create(projectId, cost({ costCategoryId: cats.lic }), admin)).resolves.toMatchObject({ categoryName: 'Licencias y software' });
+  });
+  it('rubro del catálogo global (activo) FUERA del presupuesto vigente: 400 COST_CATEGORY_NOT_IN_CURRENT_BUDGET', async () => {
+    const error = (await costs.create(projectId, cost({ costCategoryId: tempOut }), admin).catch((e: unknown) => e)) as BadRequestException;
+    expect(error.getResponse()).toMatchObject({ code: 'COST_CATEGORY_NOT_IN_CURRENT_BUDGET' });
+    expect(await costsOf(projectId)).toBe(0);
+  });
+  it('rubro inexistente: 400 COST_CATEGORY_NOT_FOUND', async () => {
+    await expect(costs.create(projectId, cost({ costCategoryId: '00000000-0000-4000-8000-000000000000' }), admin)).rejects.toMatchObject({ response: { code: 'COST_CATEGORY_NOT_FOUND' } });
+  });
+  it('rubro inactivo: 400 COST_CATEGORY_INACTIVE', async () => {
+    await expect(costs.create(projectId, cost({ costCategoryId: tempInactive }), admin)).rejects.toMatchObject({ response: { code: 'COST_CATEGORY_INACTIVE' } });
+  });
+  it('un rubro que SOLO está en una versión histórica del presupuesto no vale', async () => {
+    await withVersionWithoutRrhh(projectId);
+    await expect(costs.create(projectId, cost({ costCategoryId: cats.rrhh }), admin)).rejects.toMatchObject({ response: { code: 'COST_CATEGORY_NOT_IN_CURRENT_BUDGET' } });
+    await expect(costs.create(projectId, cost({ costCategoryId: cats.lic }), admin)).resolves.toBeDefined();
+  });
+  it('proyecto que nunca tuvo presupuesto: 409 PROJECT_HAS_NO_CURRENT_BUDGET', async () => {
+    const empty = await createProject(leader.id);
+    const error = (await costs.create(empty, cost(), admin).catch((e: unknown) => e)) as ConflictException;
+    expect(error).toBeInstanceOf(ConflictException);
+    expect(error.getResponse()).toMatchObject({ code: 'PROJECT_HAS_NO_CURRENT_BUDGET' });
+    expect(await costsOf(empty)).toBe(0);
+  });
+  it('versiones pero ninguna vigente: 500 BUDGET_NO_CURRENT_VERSION y no se registra nada', async () => {
+    await dataSource.query(`UPDATE budgets SET is_current = false, superseded_at = now() WHERE project_id = $1`, [projectId]);
+    const error = (await costs.create(projectId, cost(), admin).catch((e: unknown) => e)) as InternalServerErrorException;
+    expect(error).toBeInstanceOf(InternalServerErrorException);
+    expect(error.getResponse()).toMatchObject({ code: 'BUDGET_NO_CURRENT_VERSION' });
+    expect(await costsOf(projectId)).toBe(0);
+  });
+});
+
+/** V2 del presupuesto de `project` sin el rubro RRHH (solo Licencias 1000.00). */
+async function withVersionWithoutRrhh(project: string, expectedVersion = 1): Promise<void> {
+  await buildBudgets().createVersion(
+    project,
+    { expectedVersion, totalAmount: '1000.00', currency: 'ARS', approvalDate: '2026-10-02', items: [{ costCategoryId: cats.lic, amount: '1000.00' }] },
+    admin,
+  );
+}
+
+describe('RN-21: fecha anterior al inicio del proyecto (inicio = 2026-10-01)', () => {
+  it('anterior sin confirmar: 409 con costDate y projectStartDate, sin importes, y no se guarda', async () => {
+    const error = (await costs.create(projectId, cost({ costDate: '2026-09-30' }), admin).catch((e: unknown) => e)) as ConflictException;
+    expect(error.getResponse()).toEqual({
+      code: 'COST_BEFORE_PROJECT_START_CONFIRMATION_REQUIRED',
+      message: expect.any(String),
+      costDate: '2026-09-30',
+      projectStartDate: '2026-10-01',
+    });
+    expect(await costsOf(projectId)).toBe(0);
+  });
+  it('anterior CON confirmación: se registra y la auditoría deja confirmedBeforeProjectStart = true', async () => {
+    const created = await costs.create(projectId, cost({ costDate: '2026-09-30', confirmBeforeProjectStart: true }), admin);
+    const [audit] = await dataSource.query(`SELECT new_values FROM audit_logs WHERE entity_id = $1`, [created.id]);
+    expect(audit.new_values.confirmedBeforeProjectStart).toBe(true);
+  });
+  it.each(['2026-10-01', '2026-10-02', '2099-01-01'])('fecha %s (igual, posterior o futura): sin confirmación y flag en false', async (costDate) => {
+    const created = await costs.create(projectId, cost({ costDate }), admin);
+    const [audit] = await dataSource.query(`SELECT new_values FROM audit_logs WHERE entity_id = $1`, [created.id]);
+    expect(audit.new_values.confirmedBeforeProjectStart).toBe(false);
+  });
+  it('proyecto SIN fecha de inicio: no se compara ni se pide confirmación', async () => {
+    const noStart = await createProject(leader.id, null);
+    await withBudget(noStart);
+    await expect(costs.create(noStart, cost({ costDate: '1990-01-01' }), admin)).resolves.toMatchObject({ costDate: '1990-01-01' });
+  });
+});
+
+describe('auditoría y atomicidad', () => {
+  it('COST_CREATED con el snapshot completo (incluye budgetVersion) en la MISMA transacción que el costo', async () => {
+    const created = await costs.create(projectId, cost(), leader);
+    const [audit] = await dataSource.query(
+      `SELECT entity_type, entity_id, action, user_id, origin, old_values, new_values FROM audit_logs WHERE entity_id = $1`,
+      [created.id],
+    );
+    expect(audit).toEqual({
+      entity_type: 'COST',
+      entity_id: created.id,
+      action: 'COST_CREATED',
+      user_id: leader.id,
+      origin: 'UI',
+      old_values: null,
+      new_values: {
+        projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '150000.50', currency: 'USD',
+        costDate: '2026-10-25', description: 'Licencias de software', budgetVersion: 1, confirmedBeforeProjectStart: false,
+      },
+    });
+    const [{ same }] = await dataSource.query(
+      `SELECT (SELECT xmin::text FROM costs WHERE id = $1) = (SELECT xmin::text FROM audit_logs WHERE entity_id = $1) AS same`,
+      [created.id],
+    );
+    expect(same).toBe(true);
+  });
+
+  it('budgetVersion refleja la versión VIGENTE al registrar (V2, no V1)', async () => {
+    await buildBudgets().createVersion(
+      projectId,
+      { expectedVersion: 1, totalAmount: '2000.00', currency: 'ARS', approvalDate: '2026-10-02', items: [{ costCategoryId: cats.rrhh, amount: '1500.00' }, { costCategoryId: cats.lic, amount: '500.00' }] },
+      admin,
+    );
+    const created = await costs.create(projectId, cost(), admin);
+    const [audit] = await dataSource.query(`SELECT new_values FROM audit_logs WHERE entity_id = $1`, [created.id]);
+    expect(audit.new_values.budgetVersion).toBe(2);
+  });
+
+  it('si falla la auditoría (con el costo ya insertado) no queda nada y un reintento funciona', async () => {
+    const failing = buildCosts({
+      transaction: (run: (manager: unknown) => Promise<unknown>) =>
+        dataSource.transaction(async (manager) =>
+          run(
+            new Proxy(manager, {
+              get(target, prop, receiver) {
+                if (prop !== 'save') return Reflect.get(target, prop, receiver);
+                return async (row: object) => {
+                  if (row instanceof AuditLogEntity) throw new Error('fallo simulado en la auditoría');
+                  return target.save(row);
+                };
+              },
+            }),
+          ),
+        ),
+      manager: dataSource.manager,
+    });
+    await expect(failing.create(projectId, cost(), admin)).rejects.toThrow('fallo simulado');
+    expect(await costsOf(projectId)).toBe(0);
+    expect(await auditsOf(projectId)).toBe(0);
+    await expect(costs.create(projectId, cost(), admin)).resolves.toBeDefined(); // los locks se liberaron
+  });
+
+  it('las validaciones fallidas no dejan costo ni auditoría', async () => {
+    await costs.create(projectId, cost({ costCategoryId: tempOut }), admin).catch(() => undefined);
+    await costs.create(projectId, cost({ costDate: '2020-01-01' }), admin).catch(() => undefined);
+    expect(await costsOf(projectId)).toBe(0);
+    expect(await auditsOf(projectId)).toBe(0);
+  });
+});
+
+describe('listado', () => {
+  async function seed(project: string, rows: Array<[string, string, string]>) {
+    for (const [costDate, amount, description] of rows) {
+      await dataSource.query(
+        `INSERT INTO costs (project_id, cost_category_id, amount, currency, cost_date, description, created_by) VALUES ($1, $2, $3, 'ARS', $4, $5, $6)`,
+        [project, cats.rrhh, amount, costDate, description, admin.id],
+      );
+    }
+  }
+
+  it('ordena por costDate DESC, createdAt DESC e id DESC; importes exactos como texto', async () => {
+    await seed(projectId, [['2026-10-01', '0.10', 'a'], ['2026-10-03', '0.20', 'b'], ['2026-10-02', '123456789012.34', 'c']]);
+    await seed(projectId, [['2026-10-03', '5.00', 'd']]); // misma fecha que "b" pero creado después
+    const { data } = await costs.list(projectId, {}, admin);
+    expect(data.map((c) => c.description)).toEqual(['d', 'b', 'c', 'a']);
+    expect(data.map((c) => c.amount)).toEqual(['5.00', '0.20', '123456789012.34', '0.10']);
+    expect(data.every((c) => typeof c.amount === 'string')).toBe(true);
+  });
+
+  it('pagina con page y limit y calcula total y totalPages', async () => {
+    await seed(projectId, Array.from({ length: 25 }, (_, i): [string, string, string] => [`2026-10-${String(i + 1).padStart(2, '0')}`, '1.00', `c${i + 1}`]));
+    const page1 = await costs.list(projectId, { page: 1, limit: 10 }, admin);
+    const page3 = await costs.list(projectId, { page: 3, limit: 10 }, admin);
+    expect([page1.total, page1.totalPages, page1.data.length]).toEqual([25, 3, 10]);
+    expect(page1.data[0]!.description).toBe('c25');
+    expect(page3.data.map((c) => c.description)).toEqual(['c5', 'c4', 'c3', 'c2', 'c1']);
+  });
+
+  it('EXCLUYE los costos dados de baja (deleted_at) y la auditoría no desaparece', async () => {
+    const kept = await costs.create(projectId, cost({ description: 'queda' }), admin);
+    const removed = await costs.create(projectId, cost({ description: 'se da de baja' }), admin);
+    await dataSource.query(`UPDATE costs SET deleted_at = now() WHERE id = $1`, [removed.id]);
+    const { data, total } = await costs.list(projectId, {}, admin);
+    expect(data.map((c) => c.id)).toEqual([kept.id]);
+    expect(total).toBe(1);
+    expect(await count(`SELECT count(*)::int AS n FROM audit_logs WHERE entity_id = $1`, [removed.id])).toBe(1);
+  });
+
+  it('solo trae los costos del proyecto pedido', async () => {
+    const other = await createProject(leader.id);
+    await seed(other, [['2026-10-01', '9.00', 'ajeno']]);
+    await costs.create(projectId, cost(), admin);
+    expect((await costs.list(projectId, {}, admin)).data.map((c) => c.description)).toEqual(['Licencias de software']);
+  });
+
+  it('muestra al creador y el título de la tarea, también si el usuario está dado de baja', async () => {
+    const ghost = await createUser('ghost', [RoleName.PROGRAM_MANAGER]);
+    await costs.create(projectId, cost(), ghost);
+    await dataSource.query(`UPDATE users SET active = false, deleted_at = now() WHERE id = $1`, [ghost.id]);
+    const [row] = (await costs.list(projectId, {}, admin)).data;
+    expect(row).toMatchObject({ createdBy: ghost.id, createdByUser: { id: ghost.id, name: 'ghost' } });
+    expect(typeof row!.createdAt).toBe('string');
+    expect(typeof row!.updatedAt).toBe('string');
+  });
+
+  it('proyecto sin costos: lista vacía para quien puede verla (no es un error)', async () => {
+    await expect(costs.list(projectId, {}, admin)).resolves.toMatchObject({ data: [], total: 0, totalPages: 0 });
+  });
+});
+
+describe('concurrencia', () => {
+  it('Cost gana el lock: se valida contra V1, se registra, y la V2 que quita el rubro ESPERA al commit del costo', async () => {
+    let v2Done = false;
+    let v2: Promise<void> | undefined;
+    let v2WaitedForCost = false;
+    const holding = hookedCosts('FROM cost_categories', async () => {
+      v2 = withVersionWithoutRrhh(projectId).then(() => {
+        v2Done = true;
+      });
+      await sleep(500);
+      v2WaitedForCost = !v2Done;
+    });
+
+    const created = await holding.create(projectId, cost({ costCategoryId: cats.rrhh }), admin);
+    await v2;
+
+    expect(v2WaitedForCost).toBe(true); // FOR SHARE del costo vs FOR UPDATE del versionado
+    expect(created.categoryName).toBe('Recursos humanos');
+    const [audit] = await dataSource.query(`SELECT new_values FROM audit_logs WHERE entity_id = $1`, [created.id]);
+    expect(audit.new_values.budgetVersion).toBe(1);
+    expect(await count(`SELECT version::int AS n FROM budgets WHERE project_id = $1 AND is_current`, [projectId])).toBe(2);
+  });
+
+  it('V2 gana el lock: el costo ve el presupuesto nuevo y, sin el rubro, se rechaza', async () => {
+    await withVersionWithoutRrhh(projectId);
+    await expect(costs.create(projectId, cost({ costCategoryId: cats.rrhh }), admin)).rejects.toMatchObject({ response: { code: 'COST_CATEGORY_NOT_IN_CURRENT_BUDGET' } });
+    expect(await costsOf(projectId)).toBe(0);
+  });
+
+  it('carrera real (sin ayudas): el resultado siempre es coherente con UNA de las dos versiones', async () => {
+    const [costResult, versionResult] = await Promise.allSettled([costs.create(projectId, cost({ costCategoryId: cats.rrhh }), admin), withVersionWithoutRrhh(projectId)]);
+    expect(versionResult.status).toBe('fulfilled');
+    if (costResult.status === 'fulfilled') {
+      const [audit] = await dataSource.query(`SELECT new_values FROM audit_logs WHERE entity_id = $1`, [costResult.value.id]);
+      expect(audit.new_values.budgetVersion).toBe(1); // jamás "validado contra V2" sin el rubro
+    } else {
+      expect(costResult.reason).toMatchObject({ response: { code: 'COST_CATEGORY_NOT_IN_CURRENT_BUDGET' } });
+      expect(await costsOf(projectId)).toBe(0);
+    }
+  });
+
+  it('dos costos del MISMO proyecto no se serializan: el segundo termina mientras el primero aún retiene su lock', async () => {
+    let secondFinishedWhileFirstHeld = false;
+    let second: Promise<unknown> | undefined;
+    const first = hookedCosts('FROM cost_categories', async () => {
+      second = costs.create(projectId, cost({ description: 'segundo' }), admin);
+      const winner = await Promise.race([second.then(() => 'second'), sleep(4000).then(() => 'timeout')]);
+      secondFinishedWhileFirstHeld = winner === 'second';
+    });
+
+    await first.create(projectId, cost({ description: 'primero' }), admin);
+    await second;
+
+    expect(secondFinishedWhileFirstHeld).toBe(true); // con FOR UPDATE esto sería un bloqueo mutuo (timeout)
+    expect(await costsOf(projectId)).toBe(2);
+    expect(await auditsOf(projectId)).toBe(2);
+  });
+
+  it('muchos costos simultáneos en el mismo proyecto: todos se registran', async () => {
+    await Promise.all(Array.from({ length: 8 }, (_, i) => costs.create(projectId, cost({ description: `c${i}` }), admin)));
+    expect(await costsOf(projectId)).toBe(8);
+    expect(await auditsOf(projectId)).toBe(8);
+  });
+
+  it('proyectos distintos son independientes', async () => {
+    const other = await createProject(leader.id, '2026-10-01');
+    await withBudget(other);
+    const results = await Promise.all([costs.create(projectId, cost(), admin), costs.create(other, cost(), pm)]);
+    expect(results.map((r) => r.projectId).sort()).toEqual([projectId, other].sort());
+  });
+
+  it('un rubro desactivado mientras se registra: el FOR SHARE hace esperar al UPDATE hasta el commit del costo', async () => {
+    const proj = await createProject(leader.id, '2026-10-01');
+    await withBudget(proj, [[tempIn, '100.00']]);
+    let deactivated = false;
+    let deactivation: Promise<unknown> | undefined;
+    let blockedDuringTransaction = false;
+    const holding = hookedCosts('FROM cost_categories', async () => {
+      deactivation = dataSource.query(`UPDATE cost_categories SET active = false WHERE id = $1`, [tempIn]).then(() => {
+        deactivated = true;
+      });
+      await sleep(400);
+      blockedDuringTransaction = !deactivated;
+    });
+    try {
+      await expect(holding.create(proj, cost({ costCategoryId: tempIn }), admin)).resolves.toBeDefined();
+      await deactivation;
+      expect(blockedDuringTransaction).toBe(true);
+      expect(deactivated).toBe(true);
+      // y a partir de ahí el rubro inactivo se rechaza
+      await expect(costs.create(proj, cost({ costCategoryId: tempIn }), admin)).rejects.toMatchObject({ response: { code: 'COST_CATEGORY_INACTIVE' } });
+    } finally {
+      await dataSource.query(`UPDATE cost_categories SET active = true WHERE id = $1`, [tempIn]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// COST-02: detalle y edición con revision
+// ---------------------------------------------------------------------------------------------------------------------
+describe('COST-02: detalle y edición', () => {
+  type RawCost = {
+    task_id: string | null; cost_category_id: string; amount: string; currency: string; cost_date: string; description: string;
+    revision: number; deleted_at: Date | null; updated_micro: string; created_by: string;
+  };
+  type Json = Record<string, unknown>;
+  type AuditRow = { old_values: Json; new_values: Json & { change: { changedFields: string[]; categoryValidatedAgainstBudgetVersion: number | null; confirmedBeforeProjectStart: boolean } }; user_id: string; origin: string };
+  const raw = async (id: string) =>
+    (
+      await dataSource.query(
+        `SELECT task_id, cost_category_id, amount::text AS amount, currency, cost_date::text AS cost_date, description, revision, deleted_at,
+                to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS.US') AS updated_micro, created_by
+           FROM costs WHERE id = $1`,
+        [id],
+      )
+    )[0] as RawCost;
+  const auditsFor = (id: string, action: string) => count(`SELECT count(*)::int AS n FROM audit_logs WHERE entity_id = $1 AND action = $2`, [id, action]);
+  const lastAudit = async (id: string, action: string) =>
+    (await dataSource.query(`SELECT old_values, new_values, user_id, origin FROM audit_logs WHERE entity_id = $1 AND action = $2 ORDER BY created_at DESC LIMIT 1`, [id, action]))[0] as AuditRow;
+  const newTask = async (project: string, title = 'Tarea') => {
+    const [{ id }] = await dataSource.query(`INSERT INTO tasks (project_id, title, created_by, slug) VALUES ($1, $2, $3, $4) RETURNING id`, [project, title, admin.id, `t-${SUFFIX}-${Math.random().toString(36).slice(2)}`]);
+    return id as string;
+  };
+  /** Costo en RRHH con fecha 2026-10-25 (el proyecto empieza el 2026-10-01). */
+  const seedCost = (extra: Partial<CreateCostDto> = {}) => costs.create(projectId, cost(extra), admin);
+
+  describe('revision y detalle', () => {
+    it('el alta (COST-01) devuelve revision = 1 y la base también', async () => {
+      const created = await seedCost();
+      expect(created.revision).toBe(1);
+      expect((await raw(created.id)).revision).toBe(1);
+    });
+    it('el detalle y el listado exponen revision y el contrato completo', async () => {
+      const created = await seedCost();
+      expect(await costs.getOne(projectId, created.id, admin)).toEqual(created);
+      expect((await costs.list(projectId, {}, admin)).data[0]).toMatchObject({ id: created.id, revision: 1 });
+    });
+    it.each([['PROGRAM_MANAGER', () => pm], ['líder real', () => leader]])('%s ve el detalle', async (_n, actor) => {
+      const created = await seedCost();
+      await expect(costs.getOne(projectId, created.id, actor())).resolves.toMatchObject({ id: created.id });
+    });
+    it.each([['líder ajeno', () => foreignLeader], ['COLLABORATOR', () => collaborator], ['OBSERVER', () => observer]])('%s: 403 en detalle y en edición', async (_n, actor) => {
+      const created = await seedCost();
+      await expect(costs.getOne(projectId, created.id, actor())).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, description: 'x' }, actor())).rejects.toBeInstanceOf(ForbiddenException);
+      expect((await raw(created.id)).revision).toBe(1);
+    });
+    it('un costo de OTRO proyecto es indistinguible de uno inexistente: 404 COST_NOT_FOUND (detalle y edición)', async () => {
+      const other = await createProject(leader.id, '2026-10-01');
+      await withBudget(other);
+      const foreign = await costs.create(other, cost(), admin);
+      for (const id of [foreign.id, '00000000-0000-4000-8000-000000000000']) {
+        await expect(costs.getOne(projectId, id, admin)).rejects.toMatchObject({ response: { code: 'COST_NOT_FOUND' } });
+        await expect(costs.update(projectId, id, { expectedRevision: 1, description: 'x' }, admin)).rejects.toMatchObject({ response: { code: 'COST_NOT_FOUND' } });
+      }
+      expect((await raw(foreign.id)).revision).toBe(1); // el costo ajeno no se tocó
+    });
+    it('un costo dado de baja: 404 en detalle y edición, no aparece en el listado, la fila y la auditoría siguen y NO se revive', async () => {
+      const created = await seedCost();
+      await dataSource.query(`UPDATE costs SET deleted_at = now() WHERE id = $1`, [created.id]);
+      await expect(costs.getOne(projectId, created.id, admin)).rejects.toMatchObject({ response: { code: 'COST_NOT_FOUND' } });
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, description: 'x' }, admin)).rejects.toMatchObject({ response: { code: 'COST_NOT_FOUND' } });
+      expect((await costs.list(projectId, {}, admin)).total).toBe(0);
+      const row = await raw(created.id);
+      expect(row.deleted_at).not.toBeNull();
+      expect(row.revision).toBe(1);
+      expect(row.description).toBe('Licencias de software');
+      expect(await auditsFor(created.id, 'COST_CREATED')).toBe(1);
+    });
+    it('proyecto inexistente: 404', async () => {
+      await expect(costs.getOne('00000000-0000-4000-8000-000000000000', '00000000-0000-4000-8000-000000000000', admin)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('edición: cada campo', () => {
+    it('description: revision 2, updated_at avanza, el resto intacto, y un segundo PATCH deja revision 3', async () => {
+      const created = await seedCost();
+      const before = await raw(created.id);
+      await sleep(5);
+      const edited = await costs.update(projectId, created.id, { expectedRevision: 1, description: '  Corregida  ' }, leader);
+      const after = await raw(created.id);
+      expect(edited).toMatchObject({ revision: 2, description: 'Corregida' });
+      expect(after.updated_micro > before.updated_micro).toBe(true);
+      expect({ ...after, revision: 0, description: '', updated_micro: '' }).toEqual({ ...before, revision: 0, description: '', updated_micro: '' });
+
+      const second = await costs.update(projectId, created.id, { expectedRevision: 2, description: 'Otra' }, admin);
+      expect(second.revision).toBe(3);
+      expect((await raw(created.id)).revision).toBe(3);
+    });
+    it('amount: exacto como texto; currency: normalizada y distinta de la del presupuesto', async () => {
+      const created = await seedCost({ currency: 'ARS' });
+      const a = await costs.update(projectId, created.id, { expectedRevision: 1, amount: '123456789012.34' }, admin);
+      expect(a.amount).toBe('123456789012.34');
+      const b = await costs.update(projectId, created.id, { expectedRevision: 2, currency: 'EUR' }, admin);
+      expect(b).toMatchObject({ currency: 'EUR', amount: '123456789012.34', revision: 3 });
+      expect((await raw(created.id)).amount).toBe('123456789012.34');
+    });
+    it('un importe que supera el presupuesto igual se acepta (RN-19)', async () => {
+      const created = await seedCost();
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, amount: '999999999999.99' }, admin)).resolves.toMatchObject({ amount: '999999999999.99' });
+    });
+    it('costDate: la base lo guarda como DATE', async () => {
+      const created = await seedCost();
+      await costs.update(projectId, created.id, { expectedRevision: 1, costDate: '2026-11-30' }, admin);
+      expect((await raw(created.id)).cost_date).toBe('2026-11-30');
+    });
+    it('varios campos a la vez en un solo UPDATE: revision sube UNA vez', async () => {
+      const created = await seedCost();
+      const edited = await costs.update(projectId, created.id, { expectedRevision: 1, amount: '5.00', description: 'Dos cambios', currency: 'USD' }, admin);
+      expect(edited.revision).toBe(2);
+      expect(await auditsFor(created.id, 'COST_UPDATED')).toBe(1);
+    });
+    it('tarea: asignar, cambiar y quitar (null)', async () => {
+      const created = await seedCost();
+      const taskA = await newTask(projectId, 'Tarea A');
+      const taskB = await newTask(projectId, 'Tarea B');
+      expect(await costs.update(projectId, created.id, { expectedRevision: 1, taskId: taskA }, admin)).toMatchObject({ taskId: taskA, taskTitle: 'Tarea A' });
+      expect(await costs.update(projectId, created.id, { expectedRevision: 2, taskId: taskB }, admin)).toMatchObject({ taskId: taskB, taskTitle: 'Tarea B' });
+      expect(await costs.update(projectId, created.id, { expectedRevision: 3, taskId: null }, admin)).toMatchObject({ taskId: null, taskTitle: null, revision: 4 });
+      expect((await raw(created.id)).task_id).toBeNull();
+    });
+    it('tarea de otro proyecto o inexistente: 400 TASK_NOT_AVAILABLE_FOR_PROJECT y nada cambia', async () => {
+      const created = await seedCost();
+      const other = await createProject(leader.id);
+      const foreignTask = await newTask(other, 'Ajena');
+      for (const taskId of [foreignTask, '00000000-0000-4000-8000-000000000000']) {
+        await expect(costs.update(projectId, created.id, { expectedRevision: 1, taskId }, admin)).rejects.toMatchObject({ response: { code: 'TASK_NOT_AVAILABLE_FOR_PROJECT' } });
+      }
+      expect((await raw(created.id)).revision).toBe(1);
+    });
+  });
+
+  describe('RN-20 al editar el rubro', () => {
+    it('rubro CAMBIADO a otro del presupuesto vigente: OK y se audita la versión usada', async () => {
+      const created = await seedCost({ costCategoryId: cats.rrhh });
+      const edited = await costs.update(projectId, created.id, { expectedRevision: 1, costCategoryId: cats.lic }, admin);
+      expect(edited).toMatchObject({ costCategoryId: cats.lic, categoryName: 'Licencias y software' });
+      expect((await lastAudit(created.id, 'COST_UPDATED')).new_values.change.categoryValidatedAgainstBudgetVersion).toBe(1);
+    });
+    it('rubro CAMBIADO fuera del presupuesto / inactivo / inexistente: 400 y nada cambia', async () => {
+      const created = await seedCost();
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, costCategoryId: tempOut }, admin)).rejects.toMatchObject({ response: { code: 'COST_CATEGORY_NOT_IN_CURRENT_BUDGET' } });
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, costCategoryId: tempInactive }, admin)).rejects.toMatchObject({ response: { code: 'COST_CATEGORY_INACTIVE' } });
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, costCategoryId: '00000000-0000-4000-8000-000000000000' }, admin)).rejects.toMatchObject({ response: { code: 'COST_CATEGORY_NOT_FOUND' } });
+      const row = await raw(created.id);
+      expect([row.revision, row.cost_category_id]).toEqual([1, cats.rrhh]);
+    });
+    it('rubro SIN cambio: corregir la descripción se permite aunque la V2 del presupuesto ya no incluya ese rubro', async () => {
+      const created = await seedCost({ costCategoryId: cats.rrhh });
+      await withVersionWithoutRrhh(projectId);
+      await expect(seedCost({ costCategoryId: cats.rrhh })).rejects.toMatchObject({ response: { code: 'COST_CATEGORY_NOT_IN_CURRENT_BUDGET' } }); // un alta nuevo sí se rechaza
+      const edited = await costs.update(projectId, created.id, { expectedRevision: 1, costCategoryId: cats.rrhh, description: 'Corrección histórica' }, admin);
+      expect(edited).toMatchObject({ costCategoryId: cats.rrhh, description: 'Corrección histórica', revision: 2 });
+      expect((await lastAudit(created.id, 'COST_UPDATED')).new_values.change.categoryValidatedAgainstBudgetVersion).toBeNull();
+    });
+    it('rubro SIN cambio: tampoco importa que el rubro haya sido desactivado', async () => {
+      const proj = await createProject(leader.id, '2026-10-01');
+      await withBudget(proj, [[tempIn, '100.00']]);
+      const created = await costs.create(proj, cost({ costCategoryId: tempIn }), admin);
+      await dataSource.query(`UPDATE cost_categories SET active = false WHERE id = $1`, [tempIn]);
+      try {
+        await expect(costs.update(proj, created.id, { expectedRevision: 1, amount: '1.00' }, admin)).resolves.toMatchObject({ amount: '1.00' });
+      } finally {
+        await dataSource.query(`UPDATE cost_categories SET active = true WHERE id = $1`, [tempIn]);
+      }
+    });
+    it('versiones de presupuesto pero ninguna vigente y el rubro CAMBIA: 500; si NO cambia el rubro, se puede editar igual', async () => {
+      const created = await seedCost();
+      await dataSource.query(`UPDATE budgets SET is_current = false, superseded_at = now() WHERE project_id = $1`, [projectId]);
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, costCategoryId: cats.lic }, admin)).rejects.toBeInstanceOf(InternalServerErrorException);
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, description: 'ok' }, admin)).resolves.toMatchObject({ revision: 2 });
+    });
+  });
+
+  describe('RN-21 al editar (inicio del proyecto = 2026-10-01)', () => {
+    it('mover la fecha a una anterior sin confirmar: 409 y nada cambia; con confirmación se guarda y se audita', async () => {
+      const created = await seedCost();
+      const error = (await costs.update(projectId, created.id, { expectedRevision: 1, costDate: '2026-09-20' }, admin).catch((e: unknown) => e)) as ConflictException;
+      expect(error.getResponse()).toEqual({ code: 'COST_BEFORE_PROJECT_START_CONFIRMATION_REQUIRED', message: expect.any(String), costDate: '2026-09-20', projectStartDate: '2026-10-01' });
+      expect((await raw(created.id)).revision).toBe(1);
+      await costs.update(projectId, created.id, { expectedRevision: 1, costDate: '2026-09-20', confirmBeforeProjectStart: true }, admin);
+      expect((await lastAudit(created.id, 'COST_UPDATED')).new_values.change.confirmedBeforeProjectStart).toBe(true);
+    });
+    it('un costo histórico anterior al inicio se puede corregir (descripción, monto) SIN volver a confirmar', async () => {
+      const created = await seedCost({ costDate: '2026-09-10', confirmBeforeProjectStart: true });
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, description: 'Sin reconfirmar' }, admin)).resolves.toMatchObject({ revision: 2 });
+      await expect(costs.update(projectId, created.id, { expectedRevision: 2, amount: '7.00', costDate: '2026-09-10' }, admin)).resolves.toMatchObject({ revision: 3 });
+      expect((await lastAudit(created.id, 'COST_UPDATED')).new_values.change.confirmedBeforeProjectStart).toBe(false); // no hereda la confirmación vieja
+    });
+    it.each(['2026-10-01', '2026-10-02'])('fecha %s (igual o posterior al inicio): sin confirmación', async (costDate) => {
+      const created = await seedCost();
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, costDate }, admin)).resolves.toMatchObject({ costDate });
+    });
+    it('proyecto sin fecha de inicio: no se compara', async () => {
+      const noStart = await createProject(leader.id, null);
+      await withBudget(noStart);
+      const created = await costs.create(noStart, cost(), admin);
+      await expect(costs.update(noStart, created.id, { expectedRevision: 1, costDate: '1990-01-01' }, admin)).resolves.toMatchObject({ costDate: '1990-01-01' });
+    });
+  });
+
+  describe('expectedRevision y sin cambios', () => {
+    it('desactualizado: 409 COST_VERSION_CONFLICT con currentRevision; no escribe nada', async () => {
+      const created = await seedCost();
+      await costs.update(projectId, created.id, { expectedRevision: 1, description: 'A' }, admin); // → revision 2
+      const before = await raw(created.id);
+      const error = (await costs.update(projectId, created.id, { expectedRevision: 1, description: 'B' }, admin).catch((e: unknown) => e)) as ConflictException;
+      expect(error.getResponse()).toMatchObject({ code: 'COST_VERSION_CONFLICT', currentRevision: 2 });
+      expect(await raw(created.id)).toEqual(before);
+      expect(await auditsFor(created.id, 'COST_UPDATED')).toBe(1);
+    });
+    it('un escritor viejo recibe el conflicto AUNQUE su contenido sea idéntico (no COST_NO_CHANGES)', async () => {
+      const created = await seedCost();
+      await costs.update(projectId, created.id, { expectedRevision: 1, amount: '9.00' }, admin);
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, description: created.description }, admin)).rejects.toMatchObject({ response: { code: 'COST_VERSION_CONFLICT' } });
+    });
+    it('sin cambios (revisión correcta): 409 COST_NO_CHANGES; no suma revision, no toca updated_at, no audita', async () => {
+      const created = await seedCost({ amount: '10.00' });
+      await sleep(5);
+      const before = await raw(created.id);
+      const auditBefore = await auditsFor(created.id, 'COST_UPDATED');
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, amount: '10', description: '  Licencias de software ', currency: 'usd' }, admin)).rejects.toMatchObject({
+        response: { code: 'COST_NO_CHANGES' },
+      });
+      expect(await raw(created.id)).toEqual(before);
+      expect(await auditsFor(created.id, 'COST_UPDATED')).toBe(auditBefore);
+    });
+  });
+
+  describe('auditoría COST_UPDATED y atomicidad', () => {
+    it('snapshots completos antes/después con revision N y N+1, en la misma transacción (xmin), sin project_activities', async () => {
+      const created = await seedCost({ amount: '100.00' });
+      const edited = await costs.update(projectId, created.id, { expectedRevision: 1, amount: '200.50', description: 'Nueva' }, leader);
+      const audit = await lastAudit(created.id, 'COST_UPDATED');
+      expect(audit.user_id).toBe(leader.id);
+      expect(audit.origin).toBe('UI');
+      expect(audit.old_values).toEqual({
+        projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '100.00', currency: 'USD',
+        costDate: '2026-10-25', description: 'Licencias de software', revision: 1,
+      });
+      expect(audit.new_values).toEqual({
+        projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '200.50', currency: 'USD',
+        costDate: '2026-10-25', description: 'Nueva', revision: 2,
+        change: { changedFields: ['amount', 'description'], categoryValidatedAgainstBudgetVersion: null, confirmedBeforeProjectStart: false },
+      });
+      const [{ same }] = await dataSource.query(
+        `SELECT (SELECT xmin::text FROM costs WHERE id = $1) = (SELECT xmin::text FROM audit_logs WHERE entity_id = $1 AND action = 'COST_UPDATED') AS same`,
+        [edited.id],
+      );
+      expect(same).toBe(true);
+      expect(await count(`SELECT count(*)::int AS n FROM project_activities WHERE project_id = $1`, [projectId])).toBe(0);
+    });
+    it('si falla la auditoría con el UPDATE ya ejecutado: el costo conserva valores, revision y updated_at, y un reintento funciona', async () => {
+      const created = await seedCost();
+      const before = await raw(created.id);
+      const failing = buildCosts({
+        transaction: (run: (manager: unknown) => Promise<unknown>) =>
+          dataSource.transaction(async (manager) =>
+            run(
+              new Proxy(manager, {
+                get(target, prop, receiver) {
+                  if (prop !== 'save') return Reflect.get(target, prop, receiver);
+                  return async (row: object) => {
+                    if (row instanceof AuditLogEntity) throw new Error('fallo simulado en la auditoría');
+                    return target.save(row);
+                  };
+                },
+              }),
+            ),
+          ),
+        manager: dataSource.manager,
+      });
+      await expect(failing.update(projectId, created.id, { expectedRevision: 1, amount: '77.00', description: 'No debe quedar' }, admin)).rejects.toThrow('fallo simulado');
+      expect(await raw(created.id)).toEqual(before);
+      expect(await auditsFor(created.id, 'COST_UPDATED')).toBe(0);
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, amount: '77.00' }, admin)).resolves.toMatchObject({ revision: 2 });
+    });
+    it('las validaciones fallidas no dejan rastro (ni revision ni auditoría)', async () => {
+      const created = await seedCost();
+      await costs.update(projectId, created.id, { expectedRevision: 1, costCategoryId: tempOut }, admin).catch(() => undefined);
+      await costs.update(projectId, created.id, { expectedRevision: 1, costDate: '2020-01-01' }, admin).catch(() => undefined);
+      expect((await raw(created.id)).revision).toBe(1);
+      expect(await auditsFor(created.id, 'COST_UPDATED')).toBe(0);
+    });
+  });
+
+  describe('concurrencia', () => {
+    it.each([2, 5])('%s editores con expectedRevision = 1 al mismo tiempo: UNO gana (revision 2), el resto 409 con currentRevision 2; una sola auditoría', async (editors) => {
+      const created = await seedCost();
+      const results = await Promise.allSettled(
+        Array.from({ length: editors }, (_, i) => costs.update(projectId, created.id, { expectedRevision: 1, description: `editor ${i}` }, i % 2 ? pm : admin)),
+      );
+      const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      expect(rejected).toHaveLength(editors - 1);
+      for (const r of rejected) {
+        expect(r.reason).toBeInstanceOf(ConflictException);
+        expect((r.reason as ConflictException).getResponse()).toMatchObject({ code: 'COST_VERSION_CONFLICT', currentRevision: 2 });
+      }
+      const winner = (results.find((r) => r.status === 'fulfilled') as PromiseFulfilledResult<{ description: string }>).value;
+      const row = await raw(created.id);
+      expect(row.revision).toBe(2);
+      expect(row.description).toBe(winner.description); // nunca last-write-wins silencioso
+      expect(await auditsFor(created.id, 'COST_UPDATED')).toBe(1);
+    });
+
+    it('caso A: A cambia el monto; B (que leyó la misma revisión) cambia la descripción → 409, y el cambio de A no se pisa', async () => {
+      const created = await seedCost({ amount: '100.00' });
+      await costs.update(projectId, created.id, { expectedRevision: 1, amount: '200.00' }, admin);
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, description: 'pisaría a A' }, pm)).rejects.toMatchObject({ response: { code: 'COST_VERSION_CONFLICT' } });
+      expect(await raw(created.id)).toMatchObject({ amount: '200.00', description: 'Licencias de software', revision: 2 });
+    });
+
+    it('ediciones consecutivas muy rápidas (sin pausa, mismos milisegundos): cada token viejo se rechaza y revision sube de a 1', async () => {
+      const created = await seedCost();
+      for (let revision = 1; revision <= 15; revision++) {
+        await costs.update(projectId, created.id, { expectedRevision: revision, description: `v${revision}` }, admin);
+        await expect(costs.update(projectId, created.id, { expectedRevision: revision, description: `viejo ${revision}` }, admin)).rejects.toMatchObject({
+          response: { code: 'COST_VERSION_CONFLICT', currentRevision: revision + 1 },
+        });
+      }
+      const row = await raw(created.id);
+      expect([row.revision, row.description]).toEqual([16, 'v15']);
+      expect(await auditsFor(created.id, 'COST_UPDATED')).toBe(15);
+    });
+
+    it('dos ediciones encadenadas con el token correcto (1 y luego 2) conviven sin conflicto', async () => {
+      const created = await seedCost();
+      const first = await costs.update(projectId, created.id, { expectedRevision: 1, description: 'uno' }, admin);
+      const second = await costs.update(projectId, created.id, { expectedRevision: first.revision, amount: '3.00' }, pm);
+      expect(second.revision).toBe(3);
+    });
+
+    it('PATCH contra baja: si la baja llega primero el PATCH da 404 y la fila sigue eliminada; si el PATCH tiene el lock, la baja espera y ocurre después', async () => {
+      // baja primero
+      const a = await seedCost();
+      await dataSource.query(`UPDATE costs SET deleted_at = now() WHERE id = $1`, [a.id]);
+      await expect(costs.update(projectId, a.id, { expectedRevision: 1, description: 'revivir' }, admin)).rejects.toMatchObject({ response: { code: 'COST_NOT_FOUND' } });
+      expect((await raw(a.id)).deleted_at).not.toBeNull();
+
+      // PATCH primero (retiene el lock de la fila); la baja, desde otra conexión, espera a su commit
+      const b = await seedCost();
+      let deleted = false;
+      let deletion: Promise<unknown> | undefined;
+      let waited = false;
+      const holding = hookedCosts('FOR UPDATE OF c', async () => {
+        deletion = dataSource.query(`UPDATE costs SET deleted_at = now() WHERE id = $1`, [b.id]).then(() => {
+          deleted = true;
+        });
+        await sleep(400);
+        waited = !deleted;
+      });
+      await expect(holding.update(projectId, b.id, { expectedRevision: 1, description: 'editado' }, admin)).resolves.toMatchObject({ revision: 2 });
+      await deletion;
+      expect(waited).toBe(true);
+      const row = await raw(b.id);
+      expect([row.description, row.revision]).toEqual(['editado', 2]);
+      expect(row.deleted_at).not.toBeNull(); // quedó eliminado, nunca "revivido"
+    });
+
+    it('PATCH de rubro gana el lock: valida contra V1, confirma, y la V2 que quita ese rubro ESPERA', async () => {
+      const created = await seedCost({ costCategoryId: cats.lic });
+      let v2Done = false;
+      let v2: Promise<void> | undefined;
+      let v2Waited = false;
+      const holding = hookedCosts('FROM cost_categories', async () => {
+        v2 = withVersionWithoutRrhh(projectId).then(() => {
+          v2Done = true;
+        });
+        await sleep(500);
+        v2Waited = !v2Done;
+      });
+      await expect(holding.update(projectId, created.id, { expectedRevision: 1, costCategoryId: cats.rrhh }, admin)).resolves.toMatchObject({ costCategoryId: cats.rrhh });
+      await v2;
+      expect(v2Waited).toBe(true);
+      expect((await lastAudit(created.id, 'COST_UPDATED')).new_values.change.categoryValidatedAgainstBudgetVersion).toBe(1);
+      expect(await count(`SELECT version::int AS n FROM budgets WHERE project_id = $1 AND is_current`, [projectId])).toBe(2);
+    });
+
+    it('V2 gana el lock: el PATCH que cambia al rubro quitado se rechaza con COST_CATEGORY_NOT_IN_CURRENT_BUDGET', async () => {
+      const created = await seedCost({ costCategoryId: cats.lic });
+      await withVersionWithoutRrhh(projectId);
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, costCategoryId: cats.rrhh }, admin)).rejects.toMatchObject({ response: { code: 'COST_CATEGORY_NOT_IN_CURRENT_BUDGET' } });
+      expect((await raw(created.id)).cost_category_id).toBe(cats.lic);
+    });
+
+    it('carrera real PATCH de rubro contra V2 (sin ayudas): resultado coherente con UNA de las dos versiones', async () => {
+      const created = await seedCost({ costCategoryId: cats.lic });
+      const [patchResult, versionResult] = await Promise.allSettled([
+        costs.update(projectId, created.id, { expectedRevision: 1, costCategoryId: cats.rrhh }, admin),
+        withVersionWithoutRrhh(projectId),
+      ]);
+      expect(versionResult.status).toBe('fulfilled');
+      if (patchResult.status === 'fulfilled') {
+        expect((await lastAudit(created.id, 'COST_UPDATED')).new_values.change.categoryValidatedAgainstBudgetVersion).toBe(1);
+      } else {
+        expect(patchResult.reason).toMatchObject({ response: { code: 'COST_CATEGORY_NOT_IN_CURRENT_BUDGET' } });
+        expect((await raw(created.id)).cost_category_id).toBe(cats.lic);
+      }
+    });
+
+    it('PATCH de descripción mientras el presupuesto cambia: ambos terminan, y el rubro no se revalida', async () => {
+      const created = await seedCost({ costCategoryId: cats.rrhh });
+      const [patchResult, versionResult] = await Promise.allSettled([
+        costs.update(projectId, created.id, { expectedRevision: 1, description: 'mientras cambia el presupuesto' }, admin),
+        withVersionWithoutRrhh(projectId),
+      ]);
+      expect(patchResult.status).toBe('fulfilled');
+      expect(versionResult.status).toBe('fulfilled');
+      expect((await lastAudit(created.id, 'COST_UPDATED')).new_values.change.categoryValidatedAgainstBudgetVersion).toBeNull();
+    });
+
+    it('un rubro desactivado mientras se cambia el rubro del costo: el FOR SHARE hace esperar al UPDATE hasta el commit', async () => {
+      const proj = await createProject(leader.id, '2026-10-01');
+      await withBudget(proj, [[cats.rrhh, '50.00'], [tempIn, '50.00']]);
+      const created = await costs.create(proj, cost({ costCategoryId: cats.rrhh }), admin);
+      let deactivated = false;
+      let deactivation: Promise<unknown> | undefined;
+      let blocked = false;
+      const holding = hookedCosts('FROM cost_categories', async () => {
+        deactivation = dataSource.query(`UPDATE cost_categories SET active = false WHERE id = $1`, [tempIn]).then(() => {
+          deactivated = true;
+        });
+        await sleep(400);
+        blocked = !deactivated;
+      });
+      try {
+        await expect(holding.update(proj, created.id, { expectedRevision: 1, costCategoryId: tempIn }, admin)).resolves.toMatchObject({ costCategoryId: tempIn });
+        await deactivation;
+        expect(blocked).toBe(true);
+      } finally {
+        await dataSource.query(`UPDATE cost_categories SET active = true WHERE id = $1`, [tempIn]);
+      }
+    });
+
+    it('edición y alta de otro costo en el mismo proyecto no se bloquean entre sí (ambos FOR SHARE sobre el proyecto)', async () => {
+      const created = await seedCost();
+      let otherFinishedWhileHeld = false;
+      let other: Promise<unknown> | undefined;
+      const holding = hookedCosts('FOR UPDATE OF c', async () => {
+        other = costs.create(projectId, cost({ description: 'concurrente' }), admin);
+        otherFinishedWhileHeld = (await Promise.race([other.then(() => 'done'), sleep(4000).then(() => 'timeout')])) === 'done';
+      });
+      await holding.update(projectId, created.id, { expectedRevision: 1, description: 'editado' }, admin);
+      await other;
+      expect(otherFinishedWhileHeld).toBe(true);
+    });
+  });
+});

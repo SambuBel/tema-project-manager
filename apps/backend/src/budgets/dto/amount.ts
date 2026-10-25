@@ -18,3 +18,27 @@ export function normalizeAmount(value: string): string {
   const cleanInteger = integer.replace(/^0+(?=\d)/, '');
   return `${cleanInteger}.${decimals.padEnd(2, '0')}`;
 }
+
+/**
+ * Aritmética exacta sobre importes: se trabaja en CENTAVOS con BigInt (RNF-19: nunca Number/parseFloat). Un importe
+ * válido ya cabe en 12 enteros + 2 decimales, y la suma de hasta 100 partidas tampoco desborda un BigInt.
+ */
+export function toCents(amount: string): bigint {
+  if (!AMOUNT_PATTERN.test(amount)) {
+    throw new Error(`Importe inválido: ${amount}`);
+  }
+  const normalized = normalizeAmount(amount);
+  const [integer = '0', decimals = '00'] = normalized.split('.');
+  return BigInt(integer) * 100n + BigInt(decimals);
+}
+
+/** 123456n → "1234.56". */
+export function formatCents(cents: bigint): string {
+  const integer = cents / 100n;
+  const decimals = (cents % 100n).toString().padStart(2, '0');
+  return `${integer}.${decimals}`;
+}
+
+export function sumAmounts(amounts: string[]): string {
+  return formatCents(amounts.reduce((total, amount) => total + toCents(amount), 0n));
+}
