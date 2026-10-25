@@ -7,6 +7,7 @@ import { BoardColumn } from './BoardColumn';
 import { taskStatusLabels } from '../../types/task';
 import { handleDragEndLogic } from './dragDropLogic';
 import { getMutationOptions } from './mutationLogic';
+import { useBlockedTasks } from '../../hooks/useBlockedTasks';
 import { applyBoardFilters } from './TaskBoardFilters';
 
 interface TaskBoardProps {
@@ -41,6 +42,8 @@ export function TaskBoard({
     queryKey: ['tasks', projectId],
     queryFn: () => api.listAllTasks({ projectId }),
   });
+
+  const { blockedIds } = useBlockedTasks(projectId);
 
   const mutation = useMutation(getMutationOptions(qc, projectId, api.updateTaskStatus, setToast));
 
@@ -90,6 +93,7 @@ export function TaskBoard({
               tasks={tasksByStatus[status]}
               project={project}
               onSelectTask={onSelectTask}
+              blockedIds={blockedIds}
             />
           ))}
         </div>

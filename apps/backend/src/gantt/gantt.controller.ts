@@ -18,4 +18,12 @@ export class GanttController {
   ): Promise<GanttResponseDto> {
     return this.gantt.getGantt(projectId, user);
   }
+
+  @Get(':projectId/blocked-task-ids')
+  getBlockedTaskIds(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @CurrentUser() user: RequestUser,
+  ): Promise<string[]> {
+    return this.gantt.getBlockedTaskIds(projectId, user);
+  }
 }

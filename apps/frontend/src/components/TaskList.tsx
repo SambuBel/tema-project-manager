@@ -1,3 +1,4 @@
+import { useBlockedTasks } from '../hooks/useBlockedTasks';
 import { useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -110,6 +111,7 @@ interface TaskRowProps {
   canCreateSubtask: boolean;
   onAddSubtask: (task: Task) => void;
   projectEstimatedEndDate?: string | null;
+  blockedByDependency?: boolean;
 }
 
 function TaskRow({
@@ -120,6 +122,7 @@ function TaskRow({
   canCreateSubtask,
   onAddSubtask,
   projectEstimatedEndDate,
+  blockedByDependency,
 }: TaskRowProps) {
   const backendSubtaskCount = task.subtaskCount ?? 0;
   const backendCompletedCount = task.completedSubtaskCount ?? 0;
@@ -210,6 +213,16 @@ function TaskRow({
                 </span>
               )}
             </div>
+            
+            {blockedByDependency && (
+                <span
+                  className="shrink-0 rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700"
+                  title="Bloqueada por dependencia: tiene predecesoras sin completar"
+                >
+                  🔒 Bloqueada
+                </span>
+              )}
+
             {task.description && (
               <p className="mt-0.5 truncate text-xs text-[#607185]">{task.description}</p>
             )}
@@ -562,6 +575,7 @@ export function TaskList({
   });
 
   const { membership } = useMyMembership(projectId);
+  const { blockedIds } = useBlockedTasks(projectId);
   const canCreateSubtask = !!currentUser && !!project.data && canCreateTaskUI(currentUser, project.data, membership);
 
   /* Búsqueda por texto: se aplica sola 300 ms después de dejar de escribir (sin botón "Buscar"). */
@@ -830,6 +844,7 @@ export function TaskList({
                   canCreateSubtask={canCreateSubtask}
                   onAddSubtask={setSubtaskParent}
                   projectEstimatedEndDate={project.data?.estimatedEndDate}
+                  blockedByDependency={blockedIds.has(task.id)}
                 />
               ))}
             </div>
