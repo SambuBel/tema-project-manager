@@ -63,3 +63,12 @@
 .wx-chart {
   overflow-y: visible !important;
 }
+
+.wx-scale {
+  position: relative !important;
+  z-index: 10 !important;
+}
+
+.wx-scale > .wx-row {
+  background-color: #FFFFFF !important;
+}
