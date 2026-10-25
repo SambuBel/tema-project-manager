@@ -5,14 +5,16 @@ import { api } from '../lib/api';
 import { ProjectDetail } from '../components/ProjectDetail';
 import { ProjectMembers } from '../components/ProjectMembers';
 import { TaskList } from '../components/TaskList';
-import type { TaskListPersistedState } from '../components/TaskList';
 import { TaskDetail } from '../components/TaskDetail';
 import { TaskBoard } from '../components/TaskBoard/TaskBoard';
+import { TaskBoardFilters } from '../components/TaskBoard/TaskBoardFilters';
 import { ProjectActivityList } from '../components/ProjectActivityList';
 import { ProjectGantt } from '../components/gantt/ProjectGantt';
 import { MilestonesManager } from '../components/milestones/MilestonesManager';
 import { EconomyTab } from '../components/economy/EconomyTab';
 import { useCurrentUser } from '../hooks/useCurrentUser';
+import { canManageProjectUI } from '../lib/permissions';
+import type { ProjectStatus, TaskPriority } from '@tema/shared-types';
 import { canManageProjectUI, canViewEconomicDataUI } from '../lib/permissions';
 import type { ProjectStatus } from '@tema/shared-types';
 
@@ -57,15 +59,17 @@ export function ProjectPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const { user } = useCurrentUser();
-  const [taskListState, setTaskListState] = useState<TaskListPersistedState | null>(null);
+  const [boardAssignee, setBoardAssignee] = useState('');
+  const [boardPriority, setBoardPriority] = useState<TaskPriority | ''>('');
 
   const viewParam = searchParams.get('view');
   const taskIdParam = searchParams.get('taskId');
-  const taskSlugParam = searchParams.get('task');
 
   const validViews = ['resumen', 'tablero', 'tasks', 'hitos', 'gantt', 'equipo', 'economia', 'actividad'];
   const baseView = (validViews.includes(viewParam as string) ? viewParam : 'resumen') as ProjectView;
 
+  const view = taskIdParam ? 'task-detail' : baseView;
+  const selectedTaskId = taskIdParam;
   const selectedTaskIdentifier = taskSlugParam || taskIdParam;
   const rawView: ProjectView = selectedTaskIdentifier ? 'task-detail' : baseView;
   const selectedTaskId = selectedTaskIdentifier;
@@ -76,17 +80,15 @@ export function ProjectPage() {
       const next = new URLSearchParams(prev);
       next.set('view', newView);
       next.delete('taskId');
-      next.delete('task');
       return next;
     });
   };
 
-  const openTask = (taskIdentifier: string) => {
+  const openTask = (taskId: string) => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       next.set('view', baseView);
-      next.delete('taskId');
-      next.set('task', taskIdentifier);
+      next.set('taskId', taskId);
       return next;
     });
   };
@@ -95,7 +97,6 @@ export function ProjectPage() {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       next.delete('taskId');
-      next.delete('task');
       return next;
     });
   };
@@ -107,14 +108,8 @@ export function ProjectPage() {
   });
 
   useEffect(() => {
-    if (project?.id && taskListState && taskListState.projectId !== project.id) {
-      setTaskListState(null);
-    }
-  }, [project?.id, taskListState]);
-
-  useEffect(() => {
     if (project?.slug && projectId !== project.slug) {
-      navigate(`/projects/${project.slug}${location.search}`, { replace: true });
+      navigate('/projects/' + project.slug + location.search, { replace: true });
     }
   }, [project?.slug, projectId, navigate, location.search]);
 
@@ -220,11 +215,12 @@ export function ProjectPage() {
           {visibleTabs.map(({ key, label, view: tabView }) => (
             <button
               key={key}
-              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                activeTabKey === key
+              className={
+                'rounded-lg px-4 py-2 text-sm font-medium transition-colors ' +
+                (activeTabKey === key
                   ? 'bg-[#245B78] text-white'
-                  : 'border border-[#DEE5EC] bg-white text-[#172B42] hover:bg-[#EAF2F7]'
-              }`}
+                  : 'border border-[#DEE5EC] bg-white text-[#172B42] hover:bg-[#EAF2F7]')
+              }
               onClick={() => setView(tabView)}
             >
               {label}
@@ -246,17 +242,18 @@ export function ProjectPage() {
           <div className="flex gap-2">
             <button
               className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
-              onClick={() => navigate(`/projects/${project.slug || project.id}/edit`)}
+              onClick={() => navigate('/projects/' + (project.slug || project.id) + '/edit')}
             >
               Editar proyecto
             </button>
             <div className="flex flex-col items-end">
               <button
-                className={`rounded-lg border border-[#DEE5EC] px-4 py-2 text-sm font-medium ${
-                  statusAllowsArchive && !project.archivedAt
+                className={
+                  'rounded-lg border border-[#DEE5EC] px-4 py-2 text-sm font-medium ' +
+                  (statusAllowsArchive && !project.archivedAt
                     ? 'bg-white text-[#172B42] hover:bg-gray-50'
-                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                }`}
+                    : 'bg-gray-100 text-gray-400 cursor-not-allowed')
+                }
                 onClick={handleArchive}
                 disabled={!statusAllowsArchive || !!project.archivedAt || archive.isPending}
                 title={
@@ -273,6 +270,16 @@ export function ProjectPage() {
             </div>
           </div>
         )}
+
+        {view === 'tablero' && (
+          <TaskBoardFilters
+            projectId={project.id}
+            assignee={boardAssignee}
+            priority={boardPriority}
+            onAssigneeChange={setBoardAssignee}
+            onPriorityChange={setBoardPriority}
+          />
+        )}
       </div>
 
       {/* Contenido de la vista activa */}
@@ -287,6 +294,8 @@ export function ProjectPage() {
             projectId={project.id}
             project={project}
             onSelectTask={openTask}
+            assigneeFilter={boardAssignee}
+            priorityFilter={boardPriority}
           />
         </div>
       )}
@@ -295,19 +304,12 @@ export function ProjectPage() {
         <TaskList
           projectId={project.id}
           onSelectTask={openTask}
-          persistedState={
-            taskListState && taskListState.projectId === project.id
-              ? taskListState
-              : null
-          }
-          onPersistedStateChange={setTaskListState}
         />
       )}
 
       {view === 'task-detail' && selectedTaskId && (
         <TaskDetail
           taskId={selectedTaskId}
-          projectId={project.id}
           onBack={closeTask}
         />
       )}
