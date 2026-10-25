@@ -12,6 +12,7 @@ import { ProjectMemberEntity } from '../database/entities/project-member.entity'
 import { RoleName } from '../database/enums';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { CreateCostDto } from './dto/create-cost.dto';
+import { ProjectsService } from '../projects/projects.service';
 
 /**
  * CostsService contra PostgreSQL REAL: RN-20, RN-21, auditoría atómica, listado y concurrencia con el versionado de presupuesto.
@@ -57,13 +58,13 @@ async function createProject(leaderId: string, startDate: string | null = null):
   return id as string;
 }
 
-/** Presupuesto vigente de 1000.00 ARS con RRHH 600 + Licencias 400 (+ rubro temporal si se indica). */
+/** Presupuesto vigente de 1000.00 (en la moneda del proyecto) con RRHH 600 + Licencias 400 (+ rubro temporal si se indica). */
 async function withBudget(project: string, items?: Array<[string, string]>): Promise<void> {
   const parts = items ?? [[cats.rrhh, '600.00'], [cats.lic, '400.00']];
   const total = parts.reduce((sum, [, amount]) => sum + Number(amount) * 100, 0) / 100;
   await buildBudgets().create(
     project,
-    { totalAmount: total.toFixed(2), currency: 'ARS', approvalDate: '2026-10-01', items: parts.map(([costCategoryId, amount]) => ({ costCategoryId, amount })) },
+    { totalAmount: total.toFixed(2), approvalDate: '2026-10-01', items: parts.map(([costCategoryId, amount]) => ({ costCategoryId, amount })) },
     admin,
   );
 }
@@ -71,7 +72,7 @@ async function withBudget(project: string, items?: Array<[string, string]>): Pro
 const cost = (extra: Partial<CreateCostDto> = {}): CreateCostDto => ({
   costDate: '2026-10-25',
   amount: '150000.50',
-  currency: 'USD',
+  currency: 'ARS',
   costCategoryId: cats.rrhh,
   description: 'Licencias de software',
   ...extra,
@@ -142,14 +143,14 @@ afterAll(async () => {
 });
 
 describe('alta de costos', () => {
-  it('sin tarea: se guarda exacto, en su moneda original (USD sobre un presupuesto en ARS), con el creador y sin baja', async () => {
+  it('sin tarea: se guarda exacto, en la moneda del proyecto, con el creador y sin baja', async () => {
     const created = await costs.create(projectId, cost({ amount: '123456789012.34' }), admin);
     const [row] = await dataSource.query(
       `SELECT task_id, amount::text AS amount, currency, cost_date::text AS cost_date, description, created_by, deleted_at FROM costs WHERE id = $1`,
       [created.id],
     );
-    expect(row).toEqual({ task_id: null, amount: '123456789012.34', currency: 'USD', cost_date: '2026-10-25', description: 'Licencias de software', created_by: admin.id, deleted_at: null });
-    expect(created).toMatchObject({ taskId: null, taskTitle: null, categoryName: 'Recursos humanos', amount: '123456789012.34', currency: 'USD', createdByUser: { id: admin.id, name: 'admin' } });
+    expect(row).toEqual({ task_id: null, amount: '123456789012.34', currency: 'ARS', cost_date: '2026-10-25', description: 'Licencias de software', created_by: admin.id, deleted_at: null });
+    expect(created).toMatchObject({ taskId: null, taskTitle: null, categoryName: 'Recursos humanos', amount: '123456789012.34', currency: 'ARS', createdByUser: { id: admin.id, name: 'admin' } });
   });
 
   it('con tarea del mismo proyecto: se asocia y devuelve el título', async () => {
@@ -297,7 +298,7 @@ describe('auditoría y atomicidad', () => {
       origin: 'UI',
       old_values: null,
       new_values: {
-        projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '150000.50', currency: 'USD',
+        projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '150000.50', currency: 'ARS',
         costDate: '2026-10-25', description: 'Licencias de software', budgetVersion: 1, confirmedBeforeProjectStart: false,
       },
     });
@@ -600,13 +601,14 @@ describe('COST-02: detalle y edición', () => {
       expect(second.revision).toBe(3);
       expect((await raw(created.id)).revision).toBe(3);
     });
-    it('amount: exacto como texto; currency: normalizada y distinta de la del presupuesto', async () => {
+    it('amount: exacto como texto; la moneda NO se edita (es la del proyecto)', async () => {
       const created = await seedCost({ currency: 'ARS' });
       const a = await costs.update(projectId, created.id, { expectedRevision: 1, amount: '123456789012.34' }, admin);
       expect(a.amount).toBe('123456789012.34');
-      const b = await costs.update(projectId, created.id, { expectedRevision: 2, currency: 'EUR' }, admin);
-      expect(b).toMatchObject({ currency: 'EUR', amount: '123456789012.34', revision: 3 });
-      expect((await raw(created.id)).amount).toBe('123456789012.34');
+      await expect(costs.update(projectId, created.id, { expectedRevision: 2, currency: 'EUR' }, admin)).rejects.toMatchObject({ response: { code: 'PROJECT_CURRENCY_MISMATCH' } });
+      const after = await raw(created.id);
+      expect(after).toMatchObject({ currency: 'ARS', amount: '123456789012.34' });
+      expect(after.revision).toBe(2); // el rechazo no suma revisión
     });
     it('un importe que supera el presupuesto igual se acepta (RN-19)', async () => {
       const created = await seedCost();
@@ -619,7 +621,7 @@ describe('COST-02: detalle y edición', () => {
     });
     it('varios campos a la vez en un solo UPDATE: revision sube UNA vez', async () => {
       const created = await seedCost();
-      const edited = await costs.update(projectId, created.id, { expectedRevision: 1, amount: '5.00', description: 'Dos cambios', currency: 'USD' }, admin);
+      const edited = await costs.update(projectId, created.id, { expectedRevision: 1, amount: '5.00', description: 'Dos cambios', currency: 'ARS' }, admin);
       expect(edited.revision).toBe(2);
       expect(await auditsFor(created.id, 'COST_UPDATED')).toBe(1);
     });
@@ -732,7 +734,7 @@ describe('COST-02: detalle y edición', () => {
       await sleep(5);
       const before = await raw(created.id);
       const auditBefore = await auditsFor(created.id, 'COST_UPDATED');
-      await expect(costs.update(projectId, created.id, { expectedRevision: 1, amount: '10', description: '  Licencias de software ', currency: 'usd' }, admin)).rejects.toMatchObject({
+      await expect(costs.update(projectId, created.id, { expectedRevision: 1, amount: '10', description: '  Licencias de software ', currency: 'ars' }, admin)).rejects.toMatchObject({
         response: { code: 'COST_NO_CHANGES' },
       });
       expect(await raw(created.id)).toEqual(before);
@@ -748,11 +750,11 @@ describe('COST-02: detalle y edición', () => {
       expect(audit.user_id).toBe(leader.id);
       expect(audit.origin).toBe('UI');
       expect(audit.old_values).toEqual({
-        projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '100.00', currency: 'USD',
+        projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '100.00', currency: 'ARS',
         costDate: '2026-10-25', description: 'Licencias de software', revision: 1,
       });
       expect(audit.new_values).toEqual({
-        projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '200.50', currency: 'USD',
+        projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '200.50', currency: 'ARS',
         costDate: '2026-10-25', description: 'Nueva', revision: 2,
         change: { changedFields: ['amount', 'description'], categoryValidatedAgainstBudgetVersion: null, confirmedBeforeProjectStart: false },
       });
@@ -958,5 +960,100 @@ describe('COST-02: detalle y edición', () => {
       await other;
       expect(otherFinishedWhileHeld).toBe(true);
     });
+  });
+});
+
+
+describe('moneda ÚNICA del proyecto (Postgres real)', () => {
+  const buildProjects = () => new ProjectsService(dataSource.getRepository(ProjectEntity), {} as never, {} as never, {} as never, permissions(), dataSource, { logEvent: async () => undefined } as never);
+  const currencyOf = async (id: string) => (await dataSource.query(`SELECT economic_currency AS c FROM projects WHERE id = $1`, [id]))[0].c as string;
+  async function usdProject(): Promise<string> {
+    const id = await createProject(leader.id, '2026-10-01');
+    await buildProjects().update(id, { economicCurrency: 'USD' }, admin);
+    await withBudget(id);
+    return id;
+  }
+
+  it('un proyecto nuevo nace en ARS (default) y el presupuesto hereda esa moneda', async () => {
+    expect(await currencyOf(projectId)).toBe('ARS');
+    const [row] = await dataSource.query(`SELECT currency FROM budgets WHERE project_id = $1`, [projectId]);
+    expect(row.currency).toBe('ARS');
+  });
+
+  it('proyecto ARS: costo ARS ✅ y costo USD ❌ (400 PROJECT_CURRENCY_MISMATCH, nada se escribe)', async () => {
+    await expect(costs.create(projectId, cost({ currency: 'ARS' }), admin)).resolves.toMatchObject({ currency: 'ARS' });
+    const before = (await dataSource.query(`SELECT count(*)::int AS n FROM costs WHERE project_id = $1`, [projectId]))[0].n;
+    await expect(costs.create(projectId, cost({ currency: 'USD' }), admin)).rejects.toMatchObject({ response: { code: 'PROJECT_CURRENCY_MISMATCH', projectCurrency: 'ARS' } });
+    expect((await dataSource.query(`SELECT count(*)::int AS n FROM costs WHERE project_id = $1`, [projectId]))[0].n).toBe(before);
+  });
+
+  it('proyecto USD: costo USD ✅ y costo ARS ❌; sin currency en el request usa la del proyecto', async () => {
+    const usd = await usdProject();
+    await expect(costs.create(usd, cost({ currency: 'USD' }), admin)).resolves.toMatchObject({ currency: 'USD' });
+    await expect(costs.create(usd, cost({ currency: 'ARS' }), admin)).rejects.toMatchObject({ response: { code: 'PROJECT_CURRENCY_MISMATCH', projectCurrency: 'USD' } });
+    const { currency: _omit, ...withoutCurrency } = cost();
+    void _omit;
+    await expect(costs.create(usd, withoutCurrency, admin)).resolves.toMatchObject({ currency: 'USD' });
+  });
+
+  it('presupuesto: ARS ✅ / USD ❌ en un proyecto ARS, y una versión nueva no puede cambiar de moneda', async () => {
+    const budgets = buildBudgets();
+    const items = [{ costCategoryId: cats.lic, amount: '1000.00' }];
+    await expect(budgets.createVersion(projectId, { expectedVersion: 1, totalAmount: '1000.00', currency: 'USD', approvalDate: '2026-10-02', items }, admin)).rejects.toMatchObject({
+      response: { code: 'PROJECT_CURRENCY_MISMATCH', projectCurrency: 'ARS' },
+    });
+    await expect(budgets.createVersion(projectId, { expectedVersion: 1, totalAmount: '1000.00', currency: 'ARS', approvalDate: '2026-10-02', items }, admin)).resolves.toMatchObject({ version: 2, currency: 'ARS' });
+    const usd = await usdProject();
+    const [{ currency }] = await dataSource.query(`SELECT currency FROM budgets WHERE project_id = $1 AND is_current`, [usd]);
+    expect(currency).toBe('USD');
+    await expect(budgets.createVersion(usd, { expectedVersion: 1, totalAmount: '1000.00', currency: 'ARS', approvalDate: '2026-10-02', items }, admin)).rejects.toMatchObject({ response: { code: 'PROJECT_CURRENCY_MISMATCH' } });
+  });
+
+  it('bloqueo: con presupuesto la moneda del proyecto no se puede cambiar (409 PROJECT_CURRENCY_IN_USE) y queda igual', async () => {
+    await expect(buildProjects().update(projectId, { economicCurrency: 'USD' }, admin)).rejects.toMatchObject({ response: { code: 'PROJECT_CURRENCY_IN_USE' } });
+    expect(await currencyOf(projectId)).toBe('ARS');
+  });
+
+  it('bloqueo: también con solo un costo dado de baja (soft delete) o solo una asignación', async () => {
+    const fresh = await createProject(leader.id);
+    await dataSource.query(
+      `INSERT INTO costs (project_id, cost_category_id, amount, currency, cost_date, description, created_by, deleted_at) VALUES ($1, $2, 1, 'ARS', '2026-10-01', 'baja', $3, now())`,
+      [fresh, cats.rrhh, admin.id],
+    );
+    await expect(buildProjects().update(fresh, { economicCurrency: 'USD' }, admin)).rejects.toMatchObject({ response: { code: 'PROJECT_CURRENCY_IN_USE' } });
+    const fresh2 = await createProject(leader.id);
+    const [{ id: memberId }] = await dataSource.query(`INSERT INTO project_members (project_id, user_id, project_role) VALUES ($1, $2, 'COLLABORATOR') RETURNING id`, [fresh2, collaborator.id]);
+    await dataSource.query(
+      `INSERT INTO project_member_allocations (project_member_id, revision, is_current, estimated_hours, changed_by, created_at) VALUES ($1, 1, true, 10, $2, now())`,
+      [memberId, admin.id],
+    );
+    await expect(buildProjects().update(fresh2, { economicCurrency: 'USD' }, admin)).rejects.toMatchObject({ response: { code: 'PROJECT_CURRENCY_IN_USE' } });
+  });
+
+  it('sin datos económicos la moneda se puede cambiar, y el siguiente presupuesto nace en la moneda nueva', async () => {
+    const fresh = await createProject(leader.id);
+    const updated = await buildProjects().update(fresh, { economicCurrency: 'USD' }, admin);
+    expect(updated.economicCurrency).toBe('USD');
+    expect(await currencyOf(fresh)).toBe('USD');
+    await withBudget(fresh);
+    expect((await dataSource.query(`SELECT currency FROM budgets WHERE project_id = $1`, [fresh]))[0].currency).toBe('USD');
+  });
+
+  it('carrera: primer presupuesto vs cambio de moneda al mismo tiempo → SIEMPRE consistentes (budgets.currency = economic_currency)', async () => {
+    for (let i = 0; i < 8; i += 1) {
+      const fresh = await createProject(leader.id, '2026-10-01');
+      const items = [{ costCategoryId: cats.rrhh, amount: '100.00' }];
+      await Promise.allSettled([
+        buildBudgets().create(fresh, { totalAmount: '100.00', approvalDate: '2026-10-01', items }, admin),
+        buildProjects().update(fresh, { economicCurrency: 'USD' }, admin),
+      ]);
+      const budgetRows = await dataSource.query(`SELECT currency FROM budgets WHERE project_id = $1`, [fresh]);
+      const projectCurrency = await currencyOf(fresh);
+      for (const row of budgetRows) expect(row.currency).toBe(projectCurrency);
+    }
+  });
+
+  it('las bases de datos rechazan una moneda de proyecto mal formada (CHECK)', async () => {
+    await expect(dataSource.query(`UPDATE projects SET economic_currency = 'usd' WHERE id = $1`, [projectId])).rejects.toThrow(/ck_projects_economic_currency_format/);
   });
 });

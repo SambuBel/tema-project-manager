@@ -50,11 +50,12 @@ async function createUser(label: string, roles: RoleName[]): Promise<RequestUser
   userIds.push(id);
   return { id, name: label, roles } as RequestUser;
 }
-async function createProject(leaderId: string, slug?: string): Promise<string> {
+/** Moneda ÚNICA del proyecto: USD por defecto en este spec (los perfiles de prueba son USD); `currency` la cambia. */
+async function createProject(leaderId: string, slug?: string, currency = 'USD'): Promise<string> {
   const n = `${SUFFIX}-${projectIds.length}`;
   const [{ id }] = await dataSource.query(
-    `INSERT INTO projects (name, slug, status, leader_id, created_by) VALUES ($1, $2, 'PLANNED', $3, $3) RETURNING id`,
-    [`Test ${n}`, slug ?? `test-${n}`, leaderId],
+    `INSERT INTO projects (name, slug, status, leader_id, created_by, economic_currency) VALUES ($1, $2, 'PLANNED', $3, $3, $4) RETURNING id`,
+    [`Test ${n}`, slug ?? `test-${n}`, leaderId, currency],
   );
   projectIds.push(id);
   return id as string;
@@ -72,7 +73,7 @@ async function createProfile(label: string, hourly: string, currency: string, ac
 async function withBudget(project: string) {
   await buildBudgets().create(
     project,
-    { totalAmount: '1000.00', currency: 'ARS', approvalDate: '2026-10-01', items: [{ costCategoryId: cats.rrhh, amount: '600.00' }, { costCategoryId: cats.lic, amount: '400.00' }] },
+    { totalAmount: '1000.00', approvalDate: '2026-10-01', items: [{ costCategoryId: cats.rrhh, amount: '600.00' }, { costCategoryId: cats.lic, amount: '400.00' }] },
     admin,
   );
 }
@@ -212,11 +213,32 @@ describe('asignación, snapshot y versionado', () => {
     expect(await countCurrent(memberId)).toBe(1);
   });
 
-  it('cambio de perfil a otra MONEDA: toma la moneda actual del perfil nuevo; la anterior conserva USD', async () => {
+  it('MONEDA ÚNICA: un perfil de otra moneda que la del proyecto se rechaza (400 RESOURCE_PROFILE_CURRENCY_MISMATCH) y no deja ninguna revisión nueva', async () => {
     await service.update(projectId, memberId, { expectedRevision: 0, resourceProfileId: senior, estimatedHours: '10' }, admin);
-    const result = await service.update(projectId, memberId, { expectedRevision: 1, resourceProfileId: pesos }, admin);
-    expect(result.allocation!.estimatedResourceCost).toEqual({ amount: '600000.00', currency: 'ARS' });
-    expect((await revisions(memberId)).map((r) => r.currency_snapshot)).toEqual(['USD', 'ARS']);
+    await expect(service.update(projectId, memberId, { expectedRevision: 1, resourceProfileId: pesos }, admin)).rejects.toMatchObject({
+      response: { code: 'RESOURCE_PROFILE_CURRENCY_MISMATCH', profileCurrency: 'ARS', projectCurrency: 'USD' },
+    });
+    expect((await revisions(memberId)).map((r) => [r.revision, r.currency_snapshot, r.is_current])).toEqual([[1, 'USD', true]]);
+    expect(await countCurrent(memberId)).toBe(1);
+  });
+
+  it('proyecto ARS: un perfil ARS se asigna (✅) y uno USD se rechaza (❌); sin conversión', async () => {
+    const arsProject = await createProject(leader.id, undefined, 'ARS');
+    const arsMember = await createMember(arsProject, 'ars');
+    const ok = await service.update(arsProject, arsMember.memberId, { expectedRevision: 0, resourceProfileId: pesos, estimatedHours: '10' }, admin);
+    expect(ok.allocation!.estimatedResourceCost).toEqual({ amount: '600000.00', currency: 'ARS' });
+    await expect(service.update(arsProject, arsMember.memberId, { expectedRevision: 1, resourceProfileId: senior }, admin)).rejects.toMatchObject({
+      response: { code: 'RESOURCE_PROFILE_CURRENCY_MISMATCH', profileCurrency: 'USD', projectCurrency: 'ARS' },
+    });
+    expect((await service.getCurrent(arsProject, admin)).totalsByCurrency).toEqual([{ currency: 'ARS', amount: '600000.00' }]);
+  });
+
+  it('conservar el perfil actual cuando el catálogo ya cambió de moneda NO se vuelve a validar: cambiar solo las horas mantiene el snapshot', async () => {
+    const own = await createProfile('Propio cambia de moneda', '50.00', 'USD'); // perfil propio: no tocar los compartidos
+    await service.update(projectId, memberId, { expectedRevision: 0, resourceProfileId: own, estimatedHours: '100' }, admin);
+    await dataSource.query(`UPDATE resource_profiles SET currency = 'ARS', hourly_cost = 70 WHERE id = $1`, [own]);
+    const result = await service.update(projectId, memberId, { expectedRevision: 1, estimatedHours: '120' }, admin);
+    expect(result.allocation).toMatchObject({ resourceProfile: { hourlyCost: '50.00', currency: 'USD' }, estimatedResourceCost: { amount: '6000.00', currency: 'USD' } });
   });
 
   it('reenviar el mismo perfil NO refresca la tarifa del catálogo (y sin otro cambio es NO_CHANGES)', async () => {
@@ -297,7 +319,7 @@ describe('presupuesto vigente al crear cada revisión', () => {
     expect(first.allocation).toMatchObject({ budgetVersion: 1 });
     await buildBudgets().createVersion(
       projectId,
-      { expectedVersion: 1, totalAmount: '2000.00', currency: 'ARS', approvalDate: '2026-10-02', items: [{ costCategoryId: cats.rrhh, amount: '1500.00' }, { costCategoryId: cats.lic, amount: '500.00' }] },
+      { expectedVersion: 1, totalAmount: '2000.00', approvalDate: '2026-10-02', items: [{ costCategoryId: cats.rrhh, amount: '1500.00' }, { costCategoryId: cats.lic, amount: '500.00' }] },
       admin,
     );
     const second = await service.update(projectId, memberId, { expectedRevision: 1, estimatedHours: '20' }, admin);
@@ -318,7 +340,7 @@ describe('presupuesto vigente al crear cada revisión', () => {
   it('vigente distinta de MAX(version): 500 BUDGET_VERSION_STATE_INVALID', async () => {
     await withBudget(projectId);
     await dataSource.query(
-      `INSERT INTO budgets (project_id, version, total_amount, currency, approval_date, is_current, superseded_at, created_by) VALUES ($1, 5, 1.00, 'ARS', '2026-01-01', false, now(), $2)`,
+      `INSERT INTO budgets (project_id, version, total_amount, currency, approval_date, is_current, superseded_at, created_by) VALUES ($1, 5, 1.00, 'USD', '2026-01-01', false, now(), $2)`,
       [projectId, admin.id],
     );
     await expect(service.update(projectId, memberId, { expectedRevision: 0, resourceProfileId: senior }, admin)).rejects.toMatchObject({ response: { code: 'BUDGET_VERSION_STATE_INVALID' } });
@@ -366,17 +388,15 @@ describe('lectura vigente, totales por moneda e historial', () => {
     expect(current.members.find((m) => m.projectMemberId === m2.memberId)!.allocation).toBeNull();
     expect(current.totalsByCurrency).toEqual([{ currency: 'USD', amount: '5000.00' }]); // el removido no suma
   });
-  it('totalsByCurrency: suma por moneda de importes ya redondeados, sin convertir; ignora los miembros sin costo', async () => {
+  it('totalsByCurrency (moneda única: UNA sola línea): suma de importes ya redondeados, sin convertir; ignora los miembros sin costo', async () => {
     const odd = await createProfile('Tarifa 50.25 b', '50.25', 'USD');
     const members = [memberId, (await createMember(projectId, 'm-b')).memberId, (await createMember(projectId, 'm-c')).memberId, (await createMember(projectId, 'm-d')).memberId, (await createMember(projectId, 'm-e')).memberId];
     for (const id of members.slice(0, 3)) await service.update(projectId, id, { expectedRevision: 0, resourceProfileId: odd, estimatedHours: '125.50' }, admin);
-    await service.update(projectId, members[3]!, { expectedRevision: 0, resourceProfileId: pesos, estimatedHours: '1.50' }, admin);
+    await service.update(projectId, members[3]!, { expectedRevision: 0, estimatedHours: '1.50' }, admin); // sin perfil: no suma
     await service.update(projectId, members[4]!, { expectedRevision: 0, resourceProfileId: senior }, admin); // sin horas: no suma
     const { totalsByCurrency } = await service.getCurrent(projectId, admin);
-    expect(totalsByCurrency).toEqual([
-      { currency: 'ARS', amount: '90000.00' },
-      { currency: 'USD', amount: '18919.14' }, // 3 × 6306.38 (redondeado por miembro)
-    ]);
+    expect(totalsByCurrency).toEqual([{ currency: 'USD', amount: '18919.14' }]); // 3 × 6306.38 (redondeado por miembro)
+    expect(totalsByCurrency.length).toBeLessThanOrEqual(1);
     const [{ total }] = await dataSource.query(
       `SELECT sum(a.estimated_cost_snapshot)::text AS total FROM project_member_allocations a JOIN project_members pm ON pm.id = a.project_member_id
         WHERE pm.project_id = $1 AND a.is_current AND a.currency_snapshot = 'USD'`,
@@ -526,7 +546,7 @@ describe('carreras con el catálogo y con el presupuesto', () => {
     let v2Waited = false;
     const holding = hooked('FROM projects', async () => {
       v2 = buildBudgets()
-        .createVersion(projectId, { expectedVersion: 1, totalAmount: '500.00', currency: 'ARS', approvalDate: '2026-10-03', items: [{ costCategoryId: cats.rrhh, amount: '500.00' }] }, admin)
+        .createVersion(projectId, { expectedVersion: 1, totalAmount: '500.00', approvalDate: '2026-10-03', items: [{ costCategoryId: cats.rrhh, amount: '500.00' }] }, admin)
         .then(() => {
           v2Done = true;
         });
@@ -542,7 +562,7 @@ describe('carreras con el catálogo y con el presupuesto', () => {
   });
   it('presupuesto V2 gana: la asignación captura la V2', async () => {
     await withBudget(projectId);
-    await buildBudgets().createVersion(projectId, { expectedVersion: 1, totalAmount: '500.00', currency: 'ARS', approvalDate: '2026-10-03', items: [{ costCategoryId: cats.rrhh, amount: '500.00' }] }, admin);
+    await buildBudgets().createVersion(projectId, { expectedVersion: 1, totalAmount: '500.00', approvalDate: '2026-10-03', items: [{ costCategoryId: cats.rrhh, amount: '500.00' }] }, admin);
     const result = await service.update(projectId, memberId, { expectedRevision: 0, resourceProfileId: senior, estimatedHours: '1' }, admin);
     expect(result.allocation!.budgetVersion).toBe(2);
   });
@@ -550,7 +570,7 @@ describe('carreras con el catálogo y con el presupuesto', () => {
     await withBudget(projectId);
     const [allocation, version] = await Promise.allSettled([
       service.update(projectId, memberId, { expectedRevision: 0, resourceProfileId: senior, estimatedHours: '1' }, admin),
-      buildBudgets().createVersion(projectId, { expectedVersion: 1, totalAmount: '500.00', currency: 'ARS', approvalDate: '2026-10-03', items: [{ costCategoryId: cats.rrhh, amount: '500.00' }] }, admin),
+      buildBudgets().createVersion(projectId, { expectedVersion: 1, totalAmount: '500.00', approvalDate: '2026-10-03', items: [{ costCategoryId: cats.rrhh, amount: '500.00' }] }, admin),
     ]);
     expect(allocation.status).toBe('fulfilled');
     expect(version.status).toBe('fulfilled');

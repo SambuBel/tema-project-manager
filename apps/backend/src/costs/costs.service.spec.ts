@@ -26,6 +26,7 @@ const project = { id: PROJECT_ID, leaderId: LEADER_ID } as ProjectEntity;
 const dto: CreateCostDto = { costDate: '2026-10-25', amount: '150000.50', currency: 'ARS', costCategoryId: CAT, description: 'Licencias de software' };
 
 type Opts = {
+  projectCurrency?: string;
   projectExists?: boolean;
   lockedProjectExists?: boolean;
   startDate?: string | null;
@@ -50,7 +51,7 @@ function build(opts: Opts = {}) {
         calls.push('lock-project');
         expect(sql).toContain('FOR SHARE');
         expect(sql).not.toContain('FOR UPDATE');
-        return opts.lockedProjectExists === false ? [] : [{ startDate: opts.startDate === undefined ? '2026-10-01' : opts.startDate }];
+        return opts.lockedProjectExists === false ? [] : [{ startDate: opts.startDate === undefined ? '2026-10-01' : opts.startDate, economicCurrency: opts.projectCurrency ?? 'ARS' }];
       }
       if (sql.includes('FROM cost_categories')) {
         calls.push('lock-category');
@@ -270,16 +271,31 @@ describe('CostsService.create', () => {
     });
   });
 
-  describe('multimoneda (sin conversión)', () => {
-    it('acepta una moneda distinta de la del presupuesto y la guarda tal cual', async () => {
-      const { service, saved } = build();
-      await service.create(PROJECT_ID, { ...dto, currency: 'USD' }, admin);
+  describe('moneda ÚNICA del proyecto (sin multimoneda ni conversión)', () => {
+    it('sin currency en el request: guarda la moneda del proyecto', async () => {
+      const { service, saved } = build({ projectCurrency: 'USD' });
+      const { currency: _omit, ...withoutCurrency } = dto;
+      void _omit;
+      await service.create(PROJECT_ID, withoutCurrency, admin);
       expect(saved[0]).toMatchObject({ currency: 'USD', amount: '150000.50' });
     });
-    it('no consulta la moneda del presupuesto, ni tipos de cambio ni ninguna conversión', async () => {
+    it.each([['ARS', 'ARS'], ['USD', 'USD']])('proyecto %s: un costo en %s se acepta', async (projectCurrency, currency) => {
+      const { service, saved } = build({ projectCurrency });
+      await service.create(PROJECT_ID, { ...dto, currency }, admin);
+      expect(saved[0]).toMatchObject({ currency });
+    });
+    it.each([['ARS', 'USD'], ['USD', 'ARS']])('proyecto %s: un costo en %s se rechaza con 400 PROJECT_CURRENCY_MISMATCH y no escribe nada', async (projectCurrency, currency) => {
+      const { service, saved, calls } = build({ projectCurrency });
+      const error = (await service.create(PROJECT_ID, { ...dto, currency }, admin).catch((e: unknown) => e)) as BadRequestException;
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error.getResponse()).toMatchObject({ code: 'PROJECT_CURRENCY_MISMATCH', projectCurrency });
+      expect(saved).toEqual([]);
+      expect(calls).not.toContain('lock-category');
+    });
+    it('no convierte ni consulta tipos de cambio ni importes de presupuesto', async () => {
       const { service, manager } = build();
-      await service.create(PROJECT_ID, { ...dto, currency: 'USD' }, admin);
-      const consulted = manager.query.mock.calls.map((c) => String(c[0])).filter((sql) => !sql.includes('FROM costs c')); // la lectura final del costo sí selecciona SU moneda
+      await service.create(PROJECT_ID, dto, admin);
+      const consulted = manager.query.mock.calls.map((c) => String(c[0])).filter((sql) => !sql.includes('FROM costs c') && !sql.includes('FROM projects'));
       for (const sql of consulted) expect(sql).not.toMatch(/exchange_rates|currency|total_amount|SUM\(/i);
     });
   });

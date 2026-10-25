@@ -27,6 +27,21 @@ import type {
   UpdateMilestoneDto,
   MilestoneSummaryDto,
   MilestoneDetailDto,
+  Budget,
+  BudgetHistoryEntry,
+  CreateBudgetDto,
+  CreateBudgetVersionDto,
+  CostCategory,
+  Cost,
+  CreateCostDto,
+  UpdateCostDto,
+  ResourceProfile,
+  CreateResourceProfileDto,
+  UpdateResourceProfileDto,
+  ProjectResourceAllocationSummary,
+  MemberResourceAllocation,
+  MemberResourceAllocationHistoryEntry,
+  UpdateMemberResourceAllocationDto,
 } from '@tema/shared-types';
 import type { Task, TaskFilters, TaskStatus, TaskTimelineItem, TaskListResponse, CommentMention } from '../types/task'
 
@@ -165,6 +180,43 @@ export const api = {
     request<UserWithRoles>(`/users/${id}/roles`, { method: 'POST', body: JSON.stringify({ role }) }),
   removeUserRole: (id: string, role: RoleName) =>
     request<UserWithRoles>(`/users/${id}/roles/${role}`, { method: 'DELETE' }),
+
+  // --- Economía: presupuesto (RN-25: solo ADMIN, PROGRAM_MANAGER y líder real lo ven; el backend es la autoridad) ---
+  // Estos endpoints reciben el UUID del proyecto (no el slug): usar siempre `project.id`.
+  /** 404 con code BUDGET_NOT_FOUND = todavía no hay presupuesto (no es un error: ver hooks/useProjectBudget). */
+  getProjectBudget: (projectId: string) => request<Budget>(`/projects/${projectId}/budget`),
+  createProjectBudget: (projectId: string, dto: CreateBudgetDto) =>
+    request<Budget>(`/projects/${projectId}/budget`, { method: 'POST', body: JSON.stringify(dto) }),
+  createProjectBudgetVersion: (projectId: string, dto: CreateBudgetVersionDto) =>
+    request<Budget>(`/projects/${projectId}/budget/versions`, { method: 'POST', body: JSON.stringify(dto) }),
+  getProjectBudgetHistory: (projectId: string) => request<BudgetHistoryEntry[]>(`/projects/${projectId}/budget/history`),
+  /** Rubros ACTIVOS del catálogo (los inactivos no aparecen: sirven solo para operaciones nuevas). */
+  listCostCategories: () => request<CostCategory[]>('/cost-categories'),
+
+  // --- Perfiles de recurso (catálogo global; sin DELETE ni detalle: no existen esos endpoints) ---
+  /** Sin `includeInactive` (o en false) el backend devuelve solo los activos; el filtro lo hace el servidor, no el cliente. */
+  listResourceProfiles: (includeInactive = false) =>
+    request<ResourceProfile[]>(`/resource-profiles${includeInactive ? '?includeInactive=true' : ''}`),
+  createResourceProfile: (dto: CreateResourceProfileDto) =>
+    request<ResourceProfile>('/resource-profiles', { method: 'POST', body: JSON.stringify(dto) }),
+  updateResourceProfile: (profileId: string, dto: UpdateResourceProfileDto) =>
+    request<ResourceProfile>(`/resource-profiles/${profileId}`, { method: 'PATCH', body: JSON.stringify(dto) }),
+
+  // --- Asignación económica de recursos (RES-02). Información económica: NO sale de GET members ---
+  getProjectResourceAllocation: (projectId: string) => request<ProjectResourceAllocationSummary>(`/projects/${projectId}/resource-allocation`),
+  updateMemberResourceAllocation: (projectId: string, memberId: string, dto: UpdateMemberResourceAllocationDto) =>
+    request<MemberResourceAllocation>(`/projects/${projectId}/members/${memberId}/resource-allocation`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  getMemberResourceAllocationHistory: (projectId: string, memberId: string) =>
+    request<MemberResourceAllocationHistoryEntry[]>(`/projects/${projectId}/members/${memberId}/resource-allocation/history`),
+
+  // --- Costos incurridos (sin DELETE: no hay endpoint aprobado) ---
+  listProjectCosts: (projectId: string, query: { page: number; limit: number }) =>
+    request<PaginatedResponse<Cost>>(`/projects/${projectId}/costs?page=${query.page}&limit=${query.limit}`),
+  getProjectCost: (projectId: string, costId: string) => request<Cost>(`/projects/${projectId}/costs/${costId}`),
+  createProjectCost: (projectId: string, dto: CreateCostDto) =>
+    request<Cost>(`/projects/${projectId}/costs`, { method: 'POST', body: JSON.stringify(dto) }),
+  updateProjectCost: (projectId: string, costId: string, dto: UpdateCostDto) =>
+    request<Cost>(`/projects/${projectId}/costs/${costId}`, { method: 'PATCH', body: JSON.stringify(dto) }),
 
   // --- Milestones ---
   listMilestones: (projectId: string, query?: { upcoming?: boolean; limit?: number }) => {

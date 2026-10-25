@@ -13,6 +13,7 @@ import { BudgetEntity } from '../database/entities/budget.entity';
 import { BudgetItemEntity } from '../database/entities/budget-item.entity';
 import { AuditLogEntity } from '../database/entities/audit-log.entity';
 import { ProjectEntity } from '../projects/project.entity';
+import { resolveProjectCurrency } from '../economy/project-currency';
 import { AuditEntityType, AuditOrigin } from '../database/enums';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
@@ -52,9 +53,9 @@ const POSTGRES_UNIQUE_VIOLATION = '23505';
  *  - si un proyecto archivado / finalizado / cancelado puede recibir presupuesto (hoy: sí, mientras exista);
  *  - si la fecha de aprobación puede ser futura (hoy: sí);
  *  - qué monedas se habilitan en el MVP (hoy: cualquier código de 3 letras mayúsculas, formato exigido por la base);
- *  - CAMBIO DE MONEDA entre versiones: hoy se permite (V1 en ARS → V2 en USD). La versión nueva debe reenviar TODAS sus
- *    partidas en la moneda nueva; no se convierte nada ni se usa exchange_rates, y la versión anterior queda íntegra en su
- *    moneda. Antes de permitirlo cuando existan COSTOS cargados (COST-01) hay que definir su interacción con FX-01.
+ *  - MONEDA ÚNICA POR PROYECTO (decisión definitiva): el presupuesto SIEMPRE usa `projects.economic_currency`; una versión
+ *    nueva no puede cambiarla. No hay multimoneda ni conversión (FX descartado); `currency` en el DTO es opcional y, si viene
+ *    distinta, 400 PROJECT_CURRENCY_MISMATCH.
  */
 @Injectable()
 export class BudgetsService {
@@ -82,13 +83,15 @@ export class BudgetsService {
 
     try {
       return await this.dataSource.transaction(async (manager) => {
-        const locked: Array<{ id: string }> = await manager.query(
-          'SELECT id FROM projects WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        const locked: Array<{ id: string; economicCurrency: string }> = await manager.query(
+          'SELECT id, economic_currency AS "economicCurrency" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
           [projectId],
         );
         if (locked.length === 0) {
           throw new NotFoundException(`Project ${projectId} no encontrado`);
         }
+        // Moneda ÚNICA del proyecto, leída BAJO el lock: nadie la cambia mientras se valida y se inserta.
+        const currency = resolveProjectCurrency(dto.currency, locked[0]!.economicCurrency, 'El presupuesto');
 
         const existing = await manager.count(BudgetEntity, { where: { projectId } });
         if (existing > 0) {
@@ -103,7 +106,7 @@ export class BudgetsService {
             projectId,
             version: 1,
             totalAmount: dto.totalAmount,
-            currency: dto.currency,
+            currency,
             approvalDate: dto.approvalDate,
             isCurrent: true,
             supersededAt: null,
@@ -150,13 +153,15 @@ export class BudgetsService {
     const items = this.prepareItems(dto);
 
     return this.dataSource.transaction(async (manager) => {
-      const locked: Array<{ id: string }> = await manager.query(
-        'SELECT id FROM projects WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      const locked: Array<{ id: string; economicCurrency: string }> = await manager.query(
+        'SELECT id, economic_currency AS "economicCurrency" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
         [projectId],
       );
       if (locked.length === 0) {
         throw new NotFoundException(`Project ${projectId} no encontrado`);
       }
+      // Una versión nueva NO puede cambiar de moneda: siempre es la del proyecto.
+      const currency = resolveProjectCurrency(dto.currency, locked[0]!.economicCurrency, 'El presupuesto');
 
       const current = await manager.findOne(BudgetEntity, { where: { projectId, isCurrent: true } });
       const [stats]: Array<{ maxVersion: number; total: number }> = await manager.query(
@@ -201,7 +206,7 @@ export class BudgetsService {
 
       // Sin cambios = mismo encabezado Y mismo desglose (conjunto rubro → importe, sin importar el orden del request).
       const currentItems = await this.loadItems(manager, current.id);
-      if (isSameSnapshot({ ...current, items: currentItems }, { ...dto, items })) {
+      if (isSameSnapshot({ ...current, items: currentItems }, { ...dto, currency, items })) {
         throw new ConflictException({
           code: 'BUDGET_NO_CHANGES',
           message: 'Los datos son idénticos a los del presupuesto vigente; no se creó una versión nueva.',
@@ -227,7 +232,7 @@ export class BudgetsService {
           projectId,
           version: maxVersion + 1,
           totalAmount: dto.totalAmount,
-          currency: dto.currency,
+          currency,
           approvalDate: dto.approvalDate,
           isCurrent: true,
           supersededAt: null,

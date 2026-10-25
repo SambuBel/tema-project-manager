@@ -17,7 +17,7 @@ import { UserEntity } from './user.entity';
 
 /**
  * Costo incurrido (RF-CT-03). Los importes no dependen del frontend: siempre NUMERIC, calculados/validados en backend.
- *  - Conserva SIEMPRE su moneda original: no se convierte nada hasta FX-01 (tipos de cambio, moneda base, consolidación).
+ *  - Su moneda es SIEMPRE la del proyecto (`projects.economic_currency`): una sola moneda por proyecto, sin conversión ni FX.
  *  - NO referencia a `budgets`: es un hecho del proyecto independiente de las versiones del presupuesto. Contra qué versión
  *    se validó queda en el snapshot de auditoría (`budgetVersion`).
  *  - `description` es obligatoria (RF-CT-03): NOT NULL y no vacía en la base.

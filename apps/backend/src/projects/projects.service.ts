@@ -29,6 +29,7 @@ import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { ProjectActivityService } from './project-activity.service';
 import { slugify } from './utils/slug.util';
+import { DEFAULT_PROJECT_CURRENCY } from '../economy/project-currency';
 
 @Injectable()
 export class ProjectsService {
@@ -74,7 +75,70 @@ export class ProjectsService {
     qb.orderBy('project.createdAt', 'DESC');
     const projects = await qb.getMany();
     await this.attachLeaders(projects);
-    return (await this.enrichProjectsStats(projects)) as any;
+    const enriched = await this.enrichProjectsStats(projects);
+    await this.attachEconomicCurrency(enriched as ProjectEntity[], user);
+    return enriched as any;
+  }
+
+  /**
+   * Agrega `economicCurrency` SOLO a los proyectos donde el usuario puede ver lo económico (ADMIN, PM y líder real; RN-25). La
+   * columna es `select: false`, así que para el resto el campo no sale por ningún camino. Una sola consulta por ids.
+   */
+  private async attachEconomicCurrency(projects: ProjectEntity[], user: RequestUser): Promise<void> {
+    // Los tests unitarios arman un DataSource parcial: sin `query` no hay nada que agregar.
+    if (typeof this.dataSource?.query !== 'function') return;
+    const visible = projects.filter((p) => this.permissions.canViewEconomicData(user, p));
+    if (visible.length === 0) return;
+    const rows: Array<{ id: string; economicCurrency: string; locked: boolean }> = await this.dataSource.query(
+      `SELECT p.id, p.economic_currency AS "economicCurrency",
+              (EXISTS (SELECT 1 FROM budgets b WHERE b.project_id = p.id)
+               OR EXISTS (SELECT 1 FROM costs c WHERE c.project_id = p.id)
+               OR EXISTS (SELECT 1 FROM project_member_allocations a JOIN project_members pm ON pm.id = a.project_member_id WHERE pm.project_id = p.id)) AS locked
+         FROM projects p WHERE p.id = ANY($1::uuid[])`,
+      [visible.map((p) => p.id)],
+    );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    for (const project of visible) {
+      const row = byId.get(project.id);
+      if (!row) continue;
+      project.economicCurrency = row.economicCurrency;
+      project.economicCurrencyLocked = row.locked;
+    }
+  }
+
+  /**
+   * Cambia la moneda única del proyecto. Toma el proyecto FOR UPDATE (el mismo lock que el versionado de presupuesto; costos y
+   * asignaciones lo toman FOR SHARE y esperan), así que nadie puede crear datos económicos entre la verificación y el UPDATE.
+   * Solo se permite mientras el proyecto NO tenga presupuesto, costos ni asignaciones (incluidos los dados de baja o históricos);
+   * si no, 409 PROJECT_CURRENCY_IN_USE. NUNCA convierte nada. Misma moneda = sin cambio.
+   */
+  private async changeEconomicCurrency(manager: EntityManager, project: ProjectEntity, requested: string): Promise<void> {
+    const [locked]: Array<{ economicCurrency: string }> = await manager.query(
+      'SELECT economic_currency AS "economicCurrency" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      [project.id],
+    );
+    if (!locked) throw new NotFoundException(`Project ${project.id} no encontrado`);
+    if (locked.economicCurrency === requested) {
+      project.economicCurrency = requested;
+      return;
+    }
+    const [usage]: Array<{ used: boolean }> = await manager.query(
+      `SELECT (
+         EXISTS (SELECT 1 FROM budgets WHERE project_id = $1)
+         OR EXISTS (SELECT 1 FROM costs WHERE project_id = $1)
+         OR EXISTS (SELECT 1 FROM project_member_allocations a JOIN project_members pm ON pm.id = a.project_member_id WHERE pm.project_id = $1)
+       ) AS used`,
+      [project.id],
+    );
+    if (usage?.used) {
+      throw new ConflictException({
+        code: 'PROJECT_CURRENCY_IN_USE',
+        message: 'La moneda del proyecto no puede modificarse porque el proyecto ya tiene información económica.',
+        projectCurrency: locked.economicCurrency,
+      });
+    }
+    await manager.query('UPDATE projects SET economic_currency = $2 WHERE id = $1', [project.id, requested]);
+    project.economicCurrency = requested;
   }
 
   /**
@@ -263,6 +327,7 @@ export class ProjectsService {
     }
     await this.attachLeaders([project]);
     const enriched = await this.enrichProjectsStats([project]);
+    await this.attachEconomicCurrency(enriched as ProjectEntity[], user);
     return enriched[0] as any;
   }
 
@@ -335,6 +400,7 @@ export class ProjectsService {
         ...projectData,
         slug,
         description: projectData.description ?? null,
+        economicCurrency: projectData.economicCurrency ?? DEFAULT_PROJECT_CURRENCY,
         leaderId: leader.id,
         createdBy: user.id,
       });
@@ -355,11 +421,17 @@ export class ProjectsService {
   }
 
   async update(idOrSlug: string, dto: UpdateProjectDtoImpl, user: RequestUser): Promise<ProjectEntity> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const project = await this.findProjectInTransaction(manager, idOrSlug);
 
       if (!this.permissions.canManageProject(user, project)) {
         throw new ForbiddenException('No podés modificar este proyecto.');
+      }
+
+      // La moneda única del proyecto se cambia por su propio camino (lock + verificación de uso). NO entra en `changes`: nada
+      // económico va a project_activities.
+      if (dto.economicCurrency !== undefined) {
+        await this.changeEconomicCurrency(manager, project, dto.economicCurrency);
       }
 
       const finalStartDate = dto.startDate !== undefined ? dto.startDate : project.startDate;
@@ -434,6 +506,9 @@ export class ProjectsService {
 
       return updatedProject;
     });
+    // Quien puede modificar el proyecto (ADMIN, PM, líder real) puede ver lo económico: el resultado lleva la moneda vigente.
+    await this.attachEconomicCurrency([result], user);
+    return result;
   }
 
   async changeStatus(idOrSlug: string, dto: UpdateProjectStatusDto, user: RequestUser): Promise<ProjectEntity> {

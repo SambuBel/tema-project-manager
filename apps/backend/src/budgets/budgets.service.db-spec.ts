@@ -361,10 +361,10 @@ describe('createVersion: nuevas versiones del presupuesto', () => {
 
   it('V1 queda histórica, V2 vigente, supersededAt = createdAt de V2 y V1 intacta salvo is_current/superseded_at', async () => {
     const before = (await rowsOf(projectId))[0];
-    const created = await service.createVersion(projectId, { ...next, currency: 'USD' }, adminActor);
+    const created = await service.createVersion(projectId, { ...next, currency: 'ARS' }, adminActor);
     const [v1, v2] = await rowsOf(projectId);
 
-    expect(created).toMatchObject({ version: 2, isCurrent: true, supersededAt: null, currency: 'USD', totalAmount: '1200000.00' });
+    expect(created).toMatchObject({ version: 2, isCurrent: true, supersededAt: null, currency: 'ARS', totalAmount: '1200000.00' });
     expect(v1).toEqual({ ...before, is_current: false, superseded_at: expect.any(Date) });
     expect(v1.superseded_at.getTime()).toBe(v2.created_at.getTime());
     expect(v2).toMatchObject({ version: 2, is_current: true, superseded_at: null, created_by: adminActor.id });
@@ -384,11 +384,11 @@ describe('createVersion: nuevas versiones del presupuesto', () => {
     await expect(service.getCurrent(projectId, adminActor)).resolves.toMatchObject({ version: 3, totalAmount: '900000.00' });
   });
 
-  it('el cambio de moneda entre versiones está permitido', async () => {
-    await expect(service.createVersion(projectId, withTotal('1000000.00', { currency: 'USD' }), adminActor)).resolves.toMatchObject({
-      version: 2,
-      currency: 'USD',
+  it('MONEDA ÚNICA: el cambio de moneda entre versiones NO está permitido (400 PROJECT_CURRENCY_MISMATCH) y no deja una versión nueva', async () => {
+    await expect(service.createVersion(projectId, withTotal('1000000.00', { currency: 'USD' }), adminActor)).rejects.toMatchObject({
+      response: { code: 'PROJECT_CURRENCY_MISMATCH', projectCurrency: 'ARS' },
     });
+    expect((await rowsOf(projectId)).map((r: { version: number; is_current: boolean }) => [r.version, r.is_current])).toEqual([[1, true]]);
   });
 
   it('precisión decimal intacta en V1 y V2', async () => {
@@ -730,13 +730,16 @@ describe('partidas por rubro (budget_items)', () => {
       expect(created.items.map((i) => i.amount).sort()).toEqual(['400000.00', '600000.00']);
     });
 
-    it('cambio de moneda: V1 queda en ARS con sus partidas y V2 en USD con las suyas, sin conversión', async () => {
-      const created = await service.createVersion(projectId, split('700000.00', '300000.00', '1000000.00', { currency: 'USD' }), adminActor);
+    it('moneda única: V1 y V2 quedan en la moneda del proyecto con sus partidas, y pedir otra moneda se rechaza sin convertir nada', async () => {
+      await expect(service.createVersion(projectId, split('700000.00', '300000.00', '1000000.00', { currency: 'USD' }), adminActor)).rejects.toMatchObject({
+        response: { code: 'PROJECT_CURRENCY_MISMATCH' },
+      });
+      const created = await service.createVersion(projectId, split('600000.00', '400000.00', '1000000.00', { currency: 'ARS' }), adminActor);
       const [v1, v2] = await dataSource.query(`SELECT currency, total_amount::text AS total FROM budgets WHERE project_id = $1 ORDER BY version`, [projectId]);
       expect(v1).toEqual({ currency: 'ARS', total: '1000000.00' });
-      expect(v2).toEqual({ currency: 'USD', total: '1000000.00' });
+      expect(v2).toEqual({ currency: 'ARS', total: '1000000.00' });
       expect((await itemsRows(await budgetId(projectId, 1))).map((r) => r.amount).sort()).toEqual(['300000.00', '700000.00']);
-      expect(created.items.map((i) => i.amount).sort()).toEqual(['300000.00', '700000.00']);
+      expect(created.items.map((i) => i.amount).sort()).toEqual(['400000.00', '600000.00']);
     });
 
     it('un rubro que luego se desactiva sigue apareciendo con su nombre en la versión histórica (GET no filtra por active)', async () => {
@@ -817,7 +820,7 @@ describe('partidas por rubro (budget_items)', () => {
 
     it('secuencia V1 → V2 → V3: cada versión conserva exactamente sus partidas', async () => {
       await service.createVersion(projectId, split('800000.00', '400000.00', '1200000.00'), adminActor);
-      await service.createVersion(projectId, split('500000.00', '100000.00', '600000.00', { expectedVersion: 2, currency: 'USD' }), secondAdminActor);
+      await service.createVersion(projectId, split('500000.00', '100000.00', '600000.00', { expectedVersion: 2 }), secondAdminActor);
       const rows: Array<{ version: number; amounts: string[] }> = [];
       for (const version of [1, 2, 3]) rows.push({ version, amounts: (await itemsRows(await budgetId(projectId, version))).map((r) => r.amount).sort() });
       expect(rows).toEqual([
@@ -918,13 +921,13 @@ describe('getHistory: historial completo', () => {
     ...extra,
   });
 
-  /** V1 (ARS: RRHH 700k + Licencias 300k) → V2 (ARS: RRHH 800k + Licencias 400k) → V3 (USD: RRHH 9.000,10 + temporal 0,90). */
+  /** V1 (ARS: RRHH 700k + Licencias 300k) → V2 (ARS: RRHH 800k + Licencias 400k) → V3 (ARS: RRHH 9.000,10 + temporal 0,90): la moneda es la del proyecto en todas. */
   async function threeVersions(creator: RequestUser = adminActor) {
     await service.create(projectId, body('1000000.00', [[cats.rrhh, '700000.00'], [cats.lic, '300000.00']]), creator);
     await service.createVersion(projectId, body('1200000.00', [[cats.rrhh, '800000.00'], [cats.lic, '400000.00']], { expectedVersion: 1 }), creator);
     await service.createVersion(
       projectId,
-      body('9001.00', [[cats.rrhh, '9000.10'], [tempActive, '0.90']], { expectedVersion: 2, currency: 'USD', approvalDate: '2026-12-01' }),
+      body('9001.00', [[cats.rrhh, '9000.10'], [tempActive, '0.90']], { expectedVersion: 2, approvalDate: '2026-12-01' }),
       secondAdminActor,
     );
   }
@@ -935,7 +938,7 @@ describe('getHistory: historial completo', () => {
     const history = await service.getHistory(projectId, adminActor);
 
     expect(history.map((h) => [h.version, h.isCurrent, h.currency, h.totalAmount])).toEqual([
-      [3, true, 'USD', '9001.00'],
+      [3, true, 'ARS', '9001.00'],
       [2, false, 'ARS', '1200000.00'],
       [1, false, 'ARS', '1000000.00'],
     ]);
@@ -1002,10 +1005,10 @@ describe('getHistory: historial completo', () => {
 
   it('refleja una versión nueva apenas se crea (V4 pasa a ser la primera)', async () => {
     await threeVersions();
-    await service.createVersion(projectId, body('5.00', [[cats.rrhh, '5.00']], { expectedVersion: 3, currency: 'EUR' }), adminActor);
+    await service.createVersion(projectId, body('5.00', [[cats.rrhh, '5.00']], { expectedVersion: 3 }), adminActor);
     const history = await service.getHistory(projectId, adminActor);
     expect(history.map((h) => h.version)).toEqual([4, 3, 2, 1]);
-    expect(history[0]).toMatchObject({ isCurrent: true, currency: 'EUR' });
+    expect(history[0]).toMatchObject({ isCurrent: true, currency: 'ARS' });
     expect(history[1]!.isCurrent).toBe(false);
   });
 

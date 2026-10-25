@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsDateString, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
+import { IsBoolean, IsDateString, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateIf } from 'class-validator';
 import type { CreateCostDto as ICreateCostDto } from '@tema/shared-types';
 import { AMOUNT_PATTERN, normalizeAmount } from '../../budgets/dto/amount';
 
@@ -29,11 +29,15 @@ export class CreateCostDto implements ICreateCostDto {
   @Matches(AMOUNT_PATTERN, { message: 'El importe debe ser un monto sin signo, con hasta 12 enteros y 2 decimales' })
   amount!: string;
 
-  /** trim + mayúsculas, luego exactamente 3 letras. Sin catálogo ISO todavía. Puede diferir de la moneda del presupuesto. */
+  /**
+   * OPCIONAL (compatibilidad): el costo SIEMPRE se registra en la moneda del proyecto (`projects.economic_currency`). Si se envía y
+   * es distinta, 400 PROJECT_CURRENCY_MISMATCH. trim + mayúsculas, luego exactamente 3 letras.
+   */
+  @ValidateIf((_object, value) => value !== undefined)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
   @IsString({ message: 'La moneda debe ser texto' })
   @Matches(/^[A-Z]{3}$/, { message: 'La moneda debe ser un código de 3 letras (ej. ARS, USD)' })
-  currency!: string;
+  currency?: string;
 
   @IsUUID('all', { message: 'costCategoryId debe ser un UUID válido' })
   costCategoryId!: string;

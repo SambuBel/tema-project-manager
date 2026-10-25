@@ -21,6 +21,7 @@ import { ListCostsQueryDto } from './dto/list-costs-query.dto';
 import { UpdateCostDto } from './dto/update-cost.dto';
 import { normalizeAmount } from '../budgets/dto/amount';
 import { CostResponseDto, CostRow, toCostResponse } from './dto/cost-response.dto';
+import { resolveProjectCurrency } from '../economy/project-currency';
 
 /** `audit_logs.action` es texto libre; misma convención <ENTIDAD>_<VERBO> que BUDGET_CREATED. */
 export const COST_CREATED_ACTION = 'COST_CREATED';
@@ -79,9 +80,9 @@ interface CurrentCost {
  * RN-19 (costo que supera el presupuesto) queda PARCIALMENTE implementada: se cumple "no bloquear" (ningún costo se
  * rechaza por exceder una partida o el total). Señalar y notificar el exceso queda para ECON-01 / ALERT-ECON.
  *
- * MULTIMONEDA: el costo conserva SIEMPRE su moneda original, aunque difiera de la del presupuesto. No hay conversión,
- * ni disponible, ni ejecución, ni alertas entre monedas: FX-01 definirá tipo de cambio, fecha efectiva, moneda base y
- * consolidación.
+ * MONEDA ÚNICA POR PROYECTO: el costo SIEMPRE se registra en `projects.economic_currency` (la moneda del presupuesto y de las
+ * asignaciones de ese proyecto). No hay multimoneda ni conversión: `currency` en el DTO es opcional y, si viene distinta,
+ * 400 PROJECT_CURRENCY_MISMATCH; tampoco se puede editar la moneda de un costo.
  *
  * RN-20 (rubro en el presupuesto, interpretación provisional): el rubro debe existir, estar activo y tener una partida en el
  * presupuesto VIGENTE. El flujo "crear rubro" (visible desde Líder, contradice la matriz de presupuesto) lo resuelve CAT-01.
@@ -122,14 +123,17 @@ export class CostsService {
 
     return this.dataSource.transaction(async (manager) => {
       // 1) Proyecto FOR SHARE. La fecha de inicio se lee BAJO el lock: nadie puede cambiarla mientras se valida.
-      const locked: Array<{ startDate: string | null }> = await manager.query(
-        'SELECT start_date::text AS "startDate" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE',
+      const locked: Array<{ startDate: string | null; economicCurrency: string }> = await manager.query(
+        'SELECT start_date::text AS "startDate", economic_currency AS "economicCurrency" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE',
         [projectId],
       );
       if (locked.length === 0) {
         throw new NotFoundException(`Project ${projectId} no encontrado`);
       }
       const projectStartDate = locked[0]!.startDate;
+      // Moneda ÚNICA del proyecto (leída bajo el lock FOR SHARE: el cambio de moneda toma FOR UPDATE y espera). El costo siempre
+      // se registra en ella; si el cliente mandó otra, 400 PROJECT_CURRENCY_MISMATCH. Nunca se convierte.
+      const currency = resolveProjectCurrency(dto.currency, locked[0]!.economicCurrency, 'El costo');
 
       // 2) Rubro FOR SHARE (nadie lo desactiva entre la validación y el insert).
       const categories: Array<{ id: string; name: string; active: boolean }> = await manager.query(
@@ -215,7 +219,7 @@ export class CostsService {
           taskId: dto.taskId ?? null,
           costCategoryId: category.id,
           amount: dto.amount,
-          currency: dto.currency,
+          currency,
           costDate: dto.costDate,
           description: dto.description,
           createdBy: user.id,
@@ -236,7 +240,7 @@ export class CostsService {
             costCategoryId: category.id,
             categoryName: category.name,
             amount: dto.amount,
-            currency: dto.currency,
+            currency,
             costDate: dto.costDate,
             description: dto.description,
             // Versión del presupuesto vigente contra la que se validó el rubro (el costo NO referencia a budgets).
@@ -323,14 +327,17 @@ export class CostsService {
 
     return this.dataSource.transaction(async (manager) => {
       // 1) Proyecto FOR SHARE (coordina con el FOR UPDATE del versionado de presupuesto; la fecha de inicio se lee bajo el lock).
-      const locked: Array<{ startDate: string | null }> = await manager.query(
-        'SELECT start_date::text AS "startDate" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE',
+      const locked: Array<{ startDate: string | null; economicCurrency: string }> = await manager.query(
+        'SELECT start_date::text AS "startDate", economic_currency AS "economicCurrency" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE',
         [projectId],
       );
       if (locked.length === 0) {
         throw new NotFoundException(`Project ${projectId} no encontrado`);
       }
       const projectStartDate = locked[0]!.startDate;
+      // La moneda de un costo NO se edita: es la del proyecto. Si el cliente manda otra, 400 PROJECT_CURRENCY_MISMATCH; si manda la
+      // misma no hay cambio. Nunca se convierte.
+      resolveProjectCurrency(dto.currency, locked[0]!.economicCurrency, 'El costo');
 
       // 2) El costo FOR UPDATE (nunca antes que el proyecto). Con `deleted_at IS NULL`: una baja concurrente da 404 y nunca se revive.
       const currents: CurrentCost[] = await manager.query(
@@ -362,7 +369,7 @@ export class CostsService {
       const next = {
         costDate: dto.costDate !== undefined ? dto.costDate.trim() : current.costDate,
         amount: dto.amount !== undefined ? normalizeAmount(dto.amount.trim()) : current.amount,
-        currency: dto.currency !== undefined ? dto.currency.trim().toUpperCase() : current.currency,
+        currency: current.currency,
         costCategoryId: dto.costCategoryId !== undefined ? dto.costCategoryId.toLowerCase() : current.costCategoryId,
         description: dto.description !== undefined ? dto.description.trim() : current.description,
         taskId: dto.taskId === undefined ? current.taskId : dto.taskId === null ? null : dto.taskId.toLowerCase(),

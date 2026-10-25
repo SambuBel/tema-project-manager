@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsDateString, IsString, Matches, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsDateString, IsString, Matches, ValidateIf, ValidateNested } from 'class-validator';
 import type { CreateBudgetDto as ICreateBudgetDto } from '@tema/shared-types';
 import { AMOUNT_PATTERN, normalizeAmount } from './amount';
 import { CreateBudgetItemDto } from './create-budget-item.dto';
@@ -24,11 +24,15 @@ export class CreateBudgetDto implements ICreateBudgetDto {
   @Matches(AMOUNT_PATTERN, { message: 'El importe debe ser un monto sin signo, con hasta 12 enteros y 2 decimales' })
   totalAmount!: string;
 
-  /** trim + mayúsculas, luego exactamente 3 letras. Sin catálogo de monedas todavía (pendiente de TEMA). */
+  /**
+   * OPCIONAL (compatibilidad): el presupuesto SIEMPRE usa la moneda del proyecto (`projects.economic_currency`). Si se envía y es
+   * distinta, 400 PROJECT_CURRENCY_MISMATCH. trim + mayúsculas, luego exactamente 3 letras.
+   */
+  @ValidateIf((_object, value) => value !== undefined)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
   @IsString({ message: 'La moneda debe ser texto' })
   @Matches(/^[A-Z]{3}$/, { message: 'La moneda debe ser un código de 3 letras (ej. ARS, USD)' })
-  currency!: string;
+  currency?: string;
 
   /** Exactamente YYYY-MM-DD y una fecha de calendario real (2026-02-31 no). Las fechas futuras se aceptan (sin regla definida). */
   @Transform(trimmed)

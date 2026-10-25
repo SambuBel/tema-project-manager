@@ -32,6 +32,7 @@ const current = {
 const patch = (extra: Partial<UpdateCostDto> = {}): UpdateCostDto => ({ expectedRevision: 3, ...extra });
 
 type Opts = {
+  projectCurrency?: string;
   projectExists?: boolean;
   startDate?: string | null;
   cost?: typeof current | null;
@@ -55,7 +56,7 @@ function build(opts: Opts = {}) {
       if (sql.includes('FROM projects')) {
         calls.push('lock-project');
         expect(sql).toContain('FOR SHARE');
-        return [{ startDate: opts.startDate === undefined ? '2026-10-01' : opts.startDate }];
+        return [{ startDate: opts.startDate === undefined ? '2026-10-01' : opts.startDate, economicCurrency: opts.projectCurrency ?? 'ARS' }];
       }
       if (sql.includes('FOR UPDATE OF c')) {
         calls.push('lock-cost');
@@ -207,7 +208,6 @@ describe('CostsService.update', () => {
     it.each([
       ['description', { description: 'Nueva' }, 'description = $1', ['Nueva']],
       ['amount', { amount: '200000.00' }, 'amount = $1', ['200000.00']],
-      ['currency', { currency: 'USD' }, 'currency = $1', ['USD']],
       ['costDate', { costDate: '2026-10-20' }, 'cost_date = $1', ['2026-10-20']],
     ])('solo %s: UPDATE de esa columna', async (_f, body, assignment, values) => {
       const { service, updates } = build();
@@ -343,10 +343,17 @@ describe('CostsService.update', () => {
       await expect(service.update(PROJECT_ID, COST_ID, patch({ amount: '999999999999.99' }), admin)).resolves.toBeDefined();
       for (const call of manager.query.mock.calls) expect(String(call[0])).not.toMatch(/total_amount|bi\.amount|SUM\(|exchange_rates/i);
     });
-    it('acepta cambiar la moneda a una distinta de la del presupuesto, sin conversión', async () => {
-      const { service, updates } = build();
-      await service.update(PROJECT_ID, COST_ID, patch({ currency: 'USD' }), admin);
-      expect(updates[0]!.params[0]).toBe('USD');
+    it('la moneda de un costo NO se edita: otra moneda → 400 PROJECT_CURRENCY_MISMATCH, sin escrituras', async () => {
+      const { service, updates } = build({ projectCurrency: 'ARS' });
+      const error = (await service.update(PROJECT_ID, COST_ID, patch({ currency: 'USD' }), admin).catch((e: unknown) => e)) as BadRequestException;
+      expect(error.getResponse()).toMatchObject({ code: 'PROJECT_CURRENCY_MISMATCH', projectCurrency: 'ARS' });
+      expect(updates).toEqual([]);
+    });
+    it('reenviar la MISMA moneda del proyecto no cuenta como cambio (COST_NO_CHANGES si no hay nada más)', async () => {
+      const { service, updates } = build({ projectCurrency: 'ARS' });
+      const error = (await service.update(PROJECT_ID, COST_ID, patch({ currency: 'ARS' }), admin).catch((e: unknown) => e)) as ConflictException;
+      expect(error.getResponse()).toMatchObject({ code: 'COST_NO_CHANGES' });
+      expect(updates).toEqual([]);
     });
   });
 
@@ -370,8 +377,8 @@ describe('CostsService.update', () => {
     });
     it('changedFields: orden determinístico y solo lo que cambió', async () => {
       const { service, saved } = build();
-      await service.update(PROJECT_ID, COST_ID, patch({ taskId: null, description: 'd', costDate: '2026-10-20', currency: 'EUR', amount: '1.00', costCategoryId: CAT_RRHH }), admin);
-      expect(auditOf(saved).newValues.change.changedFields).toEqual(['costDate', 'amount', 'currency', 'costCategoryId', 'description', 'taskId']);
+      await service.update(PROJECT_ID, COST_ID, patch({ taskId: null, description: 'd', costDate: '2026-10-20', amount: '1.00', costCategoryId: CAT_RRHH }), admin);
+      expect(auditOf(saved).newValues.change.changedFields).toEqual(['costDate', 'amount', 'costCategoryId', 'description', 'taskId']);
     });
     it('un cambio solo de descripción NO afirma que se revalidó el rubro (categoryValidatedAgainstBudgetVersion = null)', async () => {
       const { service, saved } = build();

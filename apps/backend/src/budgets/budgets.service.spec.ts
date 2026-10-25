@@ -49,7 +49,7 @@ const NOT_ALLOWED_TO_DEFINE: Array<[string, RequestUser]> = [
   ['PROJECT_LEADER ajeno', foreignLeader],
 ];
 
-function build(opts: { projectExists?: boolean; existingVersions?: number; failOn?: 'audit' | 'budget' | 'unique' | 'items'; membership?: ProjectMemberRole; categories?: typeof CATEGORIES } = {}) {
+function build(opts: { projectCurrency?: string; projectExists?: boolean; existingVersions?: number; failOn?: 'audit' | 'budget' | 'unique' | 'items'; membership?: ProjectMemberRole; categories?: typeof CATEGORIES } = {}) {
   /** Orden en el que se tocó cada cosa dentro de la transacción. */
   const calls: string[] = [];
   const saved: Array<Record<string, unknown>> = [];
@@ -66,7 +66,7 @@ function build(opts: { projectExists?: boolean; existingVersions?: number; failO
       }
       calls.push('lock');
       expect(sql).toContain('FOR UPDATE');
-      return opts.projectExists === false ? [] : [{ id: PROJECT_ID }];
+      return opts.projectExists === false ? [] : [{ id: PROJECT_ID, economicCurrency: opts.projectCurrency ?? 'ARS' }];
     }),
     insert: jest.fn(async (entity: unknown, rows: Array<Record<string, unknown>>) => {
       calls.push('insert-items');
@@ -106,6 +106,28 @@ function build(opts: { projectExists?: boolean; existingVersions?: number; failO
 }
 
 describe('BudgetsService.create (presupuesto inicial)', () => {
+  describe('moneda ÚNICA del proyecto', () => {
+    it('sin currency en el request: el presupuesto nace en la moneda del proyecto', async () => {
+      const { service, saved } = build({ projectCurrency: 'USD' });
+      const { currency: _omit, ...withoutCurrency } = dto;
+      void _omit;
+      const result = await service.create(PROJECT_ID, withoutCurrency, admin);
+      expect(result.currency).toBe('USD');
+      expect(saved.find((r) => r.__entity === BudgetEntity)).toMatchObject({ currency: 'USD' });
+    });
+    it.each([['ARS', 'USD'], ['USD', 'ARS']])('proyecto %s: un presupuesto %s se rechaza con 400 PROJECT_CURRENCY_MISMATCH y no escribe nada', async (projectCurrency, currency) => {
+      const { service, saved } = build({ projectCurrency });
+      const error = (await service.create(PROJECT_ID, { ...dto, currency }, admin).catch((e: unknown) => e)) as BadRequestException;
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error.getResponse()).toMatchObject({ code: 'PROJECT_CURRENCY_MISMATCH', projectCurrency });
+      expect(saved).toEqual([]);
+    });
+    it.each([['ARS'], ['USD']])('proyecto %s: un presupuesto en %s se acepta', async (currency) => {
+      const { service } = build({ projectCurrency: currency });
+      await expect(service.create(PROJECT_ID, { ...dto, currency }, admin)).resolves.toMatchObject({ currency });
+    });
+  });
+
   it.each([
     ['ADMIN', admin],
     ['PROGRAM_MANAGER', pm],

@@ -92,6 +92,13 @@ export interface Project {
   archivedAt: string | null;
   memberCount?: number;
   progress?: number;
+  /**
+   * Moneda ÚNICA de todo lo económico del proyecto (presupuesto, costos y asignaciones). Es información económica (RN-25): solo la
+   * reciben ADMIN, PROGRAM_MANAGER y el líder real; para el resto el campo no viene.
+   */
+  economicCurrency?: string;
+  /** true si el proyecto ya tiene presupuesto, costos o asignaciones: la moneda ya no se puede cambiar (409 PROJECT_CURRENCY_IN_USE). Mismo criterio de visibilidad. */
+  economicCurrencyLocked?: boolean;
 }
 
 export interface CreateProjectDto {
@@ -101,6 +108,8 @@ export interface CreateProjectDto {
   estimatedEndDate?: string;
   /** Líder del proyecto. Omitido = el propio usuario, solo si tiene PROJECT_LEADER; ADMIN/PM sin ese rol deben enviarlo. */
   leaderId?: ID;
+  /** Moneda única del proyecto (3 letras mayúsculas; la UI ofrece ARS y USD). Omitida = ARS. */
+  economicCurrency?: string;
 }
 
 export interface UpdateProjectDto {
@@ -108,6 +117,8 @@ export interface UpdateProjectDto {
   description?: string;
   startDate?: string;
   estimatedEndDate?: string;
+  /** Solo se acepta mientras el proyecto NO tenga datos económicos; si no, 409 PROJECT_CURRENCY_IN_USE. */
+  economicCurrency?: string;
 }
 
 /** Rol de un usuario DENTRO de un proyecto puntual. Nunca incluye PROJECT_LEADER: el líder es project.leaderId. */
@@ -354,7 +365,10 @@ export interface MemberResourceAllocationHistoryEntry {
   origin: string;
 }
 
-/** Miembros activos con su asignación vigente y los totales por moneda (sin conversión hasta FX-01). */
+/**
+ * Miembros activos con su asignación vigente y los totales por moneda. Con moneda única por proyecto `totalsByCurrency` tiene
+ * como máximo UNA línea (se conserva la forma por compatibilidad del contrato). No hay conversión ni FX.
+ */
 export interface ProjectResourceAllocationSummary {
   members: MemberResourceAllocation[];
   totalsByCurrency: Array<{ currency: string; amount: string }>;
@@ -381,7 +395,7 @@ export interface CreateResourceProfileDto {
   name: string;
   /** String (nunca number), >= 0, hasta 10 enteros y 2 decimales. */
   hourlyCost: string;
-  /** 3 letras mayúsculas. Sin catálogo ISO ni conversión (FX-01). */
+  /** 3 letras mayúsculas (la UI ofrece ARS y USD). El catálogo es global; solo se asigna a proyectos de la misma moneda. */
   currency: string;
 }
 
@@ -403,8 +417,11 @@ export interface CreateCostDto {
   costDate: string;
   /** Importe como STRING (nunca number), >= 0, hasta 12 enteros y 2 decimales. */
   amount: string;
-  /** 3 letras mayúsculas. Puede ser distinta de la moneda del presupuesto: no se convierte (FX-01). */
-  currency: string;
+  /**
+   * OPCIONAL y desaconsejada: el costo SIEMPRE se registra en la moneda del proyecto (`Project.economicCurrency`), que el backend
+   * deriva. Si se envía y es distinta responde 400 PROJECT_CURRENCY_MISMATCH; nunca se convierte.
+   */
+  currency?: string;
   /** Debe estar activo y tener una partida en el presupuesto VIGENTE del proyecto. */
   costCategoryId: ID;
   /** Obligatoria, hasta 500 caracteres (tope técnico). */
@@ -479,8 +496,11 @@ export interface BudgetItem {
 export interface CreateBudgetDto {
   /** Importe como STRING (nunca number: sin floating point), hasta 12 enteros y 2 decimales, >= 0. */
   totalAmount: string;
-  /** 3 letras mayúsculas (formato ISO 4217). Todavía sin catálogo de monedas habilitadas. */
-  currency: string;
+  /**
+   * OPCIONAL y desaconsejada: el presupuesto SIEMPRE usa la moneda del proyecto (`Project.economicCurrency`), que el backend
+   * deriva. Si se envía y es distinta responde 400 PROJECT_CURRENCY_MISMATCH; una versión nueva tampoco puede cambiarla.
+   */
+  currency?: string;
   /** YYYY-MM-DD */
   approvalDate: string;
   /** Desglose por rubro: obligatorio, 1 a 100 partidas, sin rubros repetidos; la suma debe ser igual a `totalAmount`. */

@@ -27,6 +27,7 @@ const current: Current = { revision: 3, resourceProfileId: PROFILE_SENIOR, profi
 const emptyProfile: Current = { revision: 1, resourceProfileId: null, profileName: null, hourlyCost: null, currency: null, estimatedHours: null };
 
 type Opts = {
+  projectCurrency?: string;
   current?: Current | null;
   memberExists?: boolean;
   catalog?: { id: string; name: string; hourlyCost: string; currency: string; active: boolean } | null;
@@ -49,7 +50,7 @@ function build(opts: Opts = {}) {
       if (sql.includes('FROM projects')) {
         calls.push('lock-project');
         expect(sql).toContain('FOR SHARE');
-        return [{ id: PROJECT_ID }];
+        return [{ id: PROJECT_ID, economicCurrency: opts.projectCurrency ?? 'USD' }];
       }
       if (sql.includes('FROM project_members') && sql.includes('FOR UPDATE')) {
         calls.push('lock-member');
@@ -220,10 +221,22 @@ describe('ResourceAllocationsService.update', () => {
       await service.update(PROJECT_ID, MEMBER_ID, patch({ resourceProfileId: PROFILE_ARCH }), admin);
       expect(insertOf(inserts)).toMatchObject({ hours: '100.00', hourlyCost: '80.00', cost: '8000.00' });
     });
-    it('toma también la MONEDA actual del perfil nuevo', async () => {
-      const { service, inserts } = build({ catalog: { id: PROFILE_ARCH, name: 'Arquitecto', hourlyCost: '60000.00', currency: 'ARS', active: true } });
+    it('toma también la MONEDA actual del perfil nuevo (que coincide con la del proyecto)', async () => {
+      const { service, inserts } = build({ projectCurrency: 'ARS', catalog: { id: PROFILE_ARCH, name: 'Arquitecto', hourlyCost: '60000.00', currency: 'ARS', active: true } });
       await service.update(PROJECT_ID, MEMBER_ID, patch({ resourceProfileId: PROFILE_ARCH }), admin);
       expect(insertOf(inserts)).toMatchObject({ currency: 'ARS', hourlyCost: '60000.00', cost: '6000000.00' });
+    });
+    it.each([['ARS', 'USD'], ['USD', 'ARS']])('proyecto %s: un perfil %s se rechaza con 400 RESOURCE_PROFILE_CURRENCY_MISMATCH y no se escribe nada', async (projectCurrency, profileCurrency) => {
+      const { service, calls } = build({ projectCurrency, catalog: { id: PROFILE_ARCH, name: 'Arquitecto', hourlyCost: '80.00', currency: profileCurrency, active: true } });
+      const error = (await errorOf(service.update(PROJECT_ID, MEMBER_ID, patch({ resourceProfileId: PROFILE_ARCH }), admin))) as BadRequestException;
+      expect(error.getResponse()).toMatchObject({ code: 'RESOURCE_PROFILE_CURRENCY_MISMATCH', profileCurrency, projectCurrency });
+      for (const write of WRITES) expect(calls).not.toContain(write);
+    });
+    it('conservar el perfil actual (cambiar solo horas) no vuelve a validar la moneda contra el catálogo', async () => {
+      const { service, inserts, calls } = build({ projectCurrency: 'USD', catalog: { id: PROFILE_SENIOR, name: 'Consultor Senior', hourlyCost: '60.00', currency: 'ARS', active: true } });
+      await service.update(PROJECT_ID, MEMBER_ID, patch({ estimatedHours: '120.00' }), admin);
+      expect(insertOf(inserts)).toMatchObject({ currency: 'USD', hourlyCost: '50.00', hours: '120.00' });
+      expect(calls).not.toContain('lock-profile');
     });
     it('perfil inactivo: 400 RESOURCE_PROFILE_INACTIVE y no se escribe nada', async () => {
       const { service, calls } = build({ catalog: { id: PROFILE_ARCH, name: 'Arq', hourlyCost: '80.00', currency: 'USD', active: false } });

@@ -53,6 +53,7 @@ const sameAsV1: CreateBudgetVersionDto = {
 };
 
 type Opts = {
+  projectCurrency?: string;
   projectExists?: boolean;
   current?: typeof v1 | null;
   maxVersion?: number;
@@ -80,7 +81,7 @@ function build(opts: Opts = {}) {
       }
       if (sql.includes('FOR UPDATE')) {
         calls.push('lock');
-        return opts.projectExists === false ? [] : [{ id: PROJECT_ID }];
+        return opts.projectExists === false ? [] : [{ id: PROJECT_ID, economicCurrency: opts.projectCurrency ?? 'ARS' }];
       }
       calls.push('stats');
       return [{ maxVersion: opts.maxVersion ?? (current ? current.version : 0), total: opts.total ?? (current ? 1 : 0) }];
@@ -203,12 +204,23 @@ describe('BudgetsService.createVersion', () => {
     expect(saved.every((r) => [AuditLogEntity, BudgetEntity, BudgetItemEntity].includes(r.__entity as never))).toBe(true);
   });
 
-  describe('cambio de moneda', () => {
-    it('V1 ARS → V2 USD es válido si se reenvían las partidas en la moneda nueva', async () => {
-      const { service } = build();
-      await expect(
-        service.createVersion(PROJECT_ID, { ...sameAsV1, currency: 'USD' }, admin),
-      ).resolves.toMatchObject({ version: 2, currency: 'USD' });
+  describe('moneda ÚNICA del proyecto', () => {
+    it('una versión nueva NO puede cambiar de moneda: V1 ARS → V2 USD se rechaza con 400 PROJECT_CURRENCY_MISMATCH, sin escrituras', async () => {
+      const { service, calls } = build();
+      const error = (await errorOf(service.createVersion(PROJECT_ID, { ...sameAsV1, currency: 'USD' }, admin))) as BadRequestException;
+      expect(error.getResponse()).toMatchObject({ code: 'PROJECT_CURRENCY_MISMATCH', projectCurrency: 'ARS' });
+      expect(calls).not.toContain('save-budget');
+    });
+    it('sin currency en el request: usa la del proyecto', async () => {
+      const { service } = build({ projectCurrency: 'USD' });
+      const { currency: _omit, ...withoutCurrency } = { ...dto, expectedVersion: 1 };
+      void _omit;
+      await expect(service.createVersion(PROJECT_ID, withoutCurrency, admin)).resolves.toMatchObject({ currency: 'USD' });
+    });
+    it('proyecto USD: una versión en USD se acepta y en ARS se rechaza', async () => {
+      const { service } = build({ projectCurrency: 'USD' });
+      await expect(service.createVersion(PROJECT_ID, { ...dto, currency: 'USD' }, admin)).resolves.toMatchObject({ currency: 'USD' });
+      await expect(errorOf(service.createVersion(PROJECT_ID, { ...dto, currency: 'ARS' }, admin))).resolves.toMatchObject({ response: { code: 'PROJECT_CURRENCY_MISMATCH' } });
     });
   });
 
@@ -296,11 +308,6 @@ describe('BudgetsService.createVersion', () => {
     it('solo cambia el encabezado (mismas partidas): SÍ crea la versión', async () => {
       const { service } = build();
       await expect(service.createVersion(PROJECT_ID, { ...sameAsV1, approvalDate: '2026-12-01' }, admin)).resolves.toMatchObject({ version: 2 });
-    });
-
-    it('solo cambia la moneda (mismas partidas): SÍ crea la versión', async () => {
-      const { service } = build();
-      await expect(service.createVersion(PROJECT_ID, { ...sameAsV1, currency: 'USD' }, admin)).resolves.toMatchObject({ currency: 'USD' });
     });
 
     it('expectedVersion se valida ANTES de detectar "sin cambios"', async () => {

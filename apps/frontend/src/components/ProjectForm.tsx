@@ -6,6 +6,7 @@ import { resolveCreationLeader } from '../lib/projectLeader';
 import { formatLocalDate } from '../lib/dates';
 import { findTasksOutsidePeriod, type AffectedTask } from '../lib/projectDates';
 import { ConfirmDialog } from './ConfirmDialog';
+import { PROJECT_CURRENCY_OPTIONS, DEFAULT_PROJECT_CURRENCY, currencyOptionLabel } from '../lib/currencies';
 import type { CreateProjectDto, UpdateProjectDto, Project, ProjectStatus } from '@tema/shared-types';
 
 const statusLabels: Record<ProjectStatus, string> = {
@@ -35,6 +36,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
           startDate: initialData.startDate?.split('T')[0] || '',
           estimatedEndDate: initialData.estimatedEndDate?.split('T')[0] || '',
           status: initialData.status,
+          economicCurrency: initialData.economicCurrency ?? DEFAULT_PROJECT_CURRENCY,
         }
       : {
           name: '',
@@ -44,6 +46,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
           startDate: '',
           estimatedEndDate: '',
           status: 'PLANNED' as ProjectStatus,
+          economicCurrency: DEFAULT_PROJECT_CURRENCY,
         },
   );
 
@@ -57,6 +60,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
         startDate: initialData.startDate?.split('T')[0] || '',
         estimatedEndDate: initialData.estimatedEndDate?.split('T')[0] || '',
         status: initialData.status,
+        economicCurrency: initialData.economicCurrency ?? DEFAULT_PROJECT_CURRENCY,
       });
     }
   }, [initialData]);
@@ -135,6 +139,16 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
     }
   };
 
+  // Moneda única del proyecto. Al crear siempre se envía lo elegido; al editar solo si cambió (y nunca si el proyecto no la
+  // expone: quien no puede ver lo económico no la recibe). El backend rechaza el cambio si ya hay datos económicos.
+  const showCurrency = !isEditing || initialData?.economicCurrency !== undefined;
+  const currencyLocked = isEditing && !!initialData?.economicCurrencyLocked;
+  const currencyPayload = () => {
+    if (!showCurrency) return {};
+    if (!isEditing) return { economicCurrency: formData.economicCurrency };
+    return formData.economicCurrency !== initialData?.economicCurrency ? { economicCurrency: formData.economicCurrency } : {};
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || datesInvalid) return;
@@ -145,6 +159,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
       startDate: formData.startDate || undefined,
       estimatedEndDate: formData.estimatedEndDate || undefined,
       ...(canChooseLeader && leaderId ? { leaderId } : {}),
+      ...currencyPayload(),
     };
 
     if (isEditing) {
@@ -174,6 +189,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
       startDate: formData.startDate || undefined,
       estimatedEndDate: formData.estimatedEndDate || undefined,
       ...(canChooseLeader && leaderId ? { leaderId } : {}),
+      ...currencyPayload(),
     };
     await doUpdateProject(payload);
   };
@@ -284,6 +300,32 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
                 </p>
               )}
 
+              {showCurrency && (
+                <div className="flex flex-col gap-1.5 max-w-xs">
+                  <label htmlFor="economicCurrency" className="text-sm font-medium text-gray-700">Moneda del proyecto</label>
+                  <select
+                    id="economicCurrency"
+                    className="rounded-md border border-gray-300 px-3 py-2.5 bg-white focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card disabled:bg-gray-50 disabled:text-gray-500"
+                    value={formData.economicCurrency}
+                    disabled={currencyLocked}
+                    aria-describedby="economicCurrencyHint"
+                    onChange={(e) => setFormData({ ...formData, economicCurrency: e.target.value })}
+                  >
+                    {PROJECT_CURRENCY_OPTIONS.map((option) => (
+                      <option key={option.code} value={option.code}>{currencyOptionLabel(option)}</option>
+                    ))}
+                    {!PROJECT_CURRENCY_OPTIONS.some((option) => option.code === formData.economicCurrency) && (
+                      <option value={formData.economicCurrency}>{formData.economicCurrency}</option>
+                    )}
+                  </select>
+                  <p id="economicCurrencyHint" className="text-xs text-gray-500">
+                    {currencyLocked
+                      ? 'La moneda no puede modificarse porque el proyecto ya tiene información económica.'
+                      : 'Presupuesto, costos y recursos del proyecto usan esta única moneda. No se puede cambiar cuando ya hay información económica.'}
+                  </p>
+                </div>
+              )}
+
               {isEditing && (
                 <div className="flex flex-col gap-1.5 max-w-xs">
                   <label htmlFor="status" className="text-sm font-medium text-gray-700">Estado del proyecto</label>
@@ -347,9 +389,11 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
         <div className="flex gap-3 mr-4">
           {isError && (
             <span className="self-center text-sm text-red-600 mr-2">
-              {create.error instanceof ApiRequestError && create.error.details[0]
-                ? create.error.details[0]
-                : `Error al ${isEditing ? 'guardar' : 'crear'}.`}
+              {update.error instanceof ApiRequestError && update.error.code === 'PROJECT_CURRENCY_IN_USE'
+                ? 'La moneda del proyecto ya no puede modificarse porque existen datos económicos.'
+                : create.error instanceof ApiRequestError && create.error.details[0]
+                  ? create.error.details[0]
+                  : `Error al ${isEditing ? 'guardar' : 'crear'}.`}
             </span>
           )}
           <button

@@ -1,4 +1,5 @@
 import {
+  Check,
   Column,
   CreateDateColumn,
   DeleteDateColumn,
@@ -13,6 +14,7 @@ import { UserEntity } from '../database/entities/user.entity';
 import { ProjectStatus } from '../database/enums';
 
 /** Un proyecto siempre tiene lider (leader_id NOT NULL): no puede quedar sin lider. */
+@Check('ck_projects_economic_currency_format', `"economic_currency" ~ '^[A-Z]{3}$'`)
 @Entity('projects')
 export class ProjectEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -30,6 +32,17 @@ export class ProjectEntity {
 
   @Column({ name: 'start_date', type: 'date', nullable: true })
   startDate!: string | null;
+
+  /**
+   * Moneda ÚNICA de todo lo económico del proyecto (presupuesto, costos y asignaciones de recursos). Es información económica
+   * (RN-25): `select: false` para que no salga en la lista/detalle por defecto; ProjectsService la agrega SOLO para quien puede
+   * ver lo económico del proyecto. Se puede cambiar solo mientras el proyecto no tenga datos económicos.
+   */
+  @Column({ name: 'economic_currency', type: 'varchar', length: 3, default: 'ARS', select: false })
+  economicCurrency?: string;
+
+  /** Calculado (no es columna): true si ya hay presupuesto, costos o asignaciones y por lo tanto la moneda no se puede cambiar. Solo para quien ve lo económico. */
+  economicCurrencyLocked?: boolean;
 
   @Column({ name: 'estimated_end_date', type: 'date', nullable: true })
   estimatedEndDate!: string | null;

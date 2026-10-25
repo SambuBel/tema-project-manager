@@ -32,6 +32,7 @@ export class UpdateCostDto implements IUpdateCostDto {
   @Matches(AMOUNT_PATTERN, { message: 'El importe debe ser un monto sin signo, con hasta 12 enteros y 2 decimales' })
   amount?: string;
 
+  /** La moneda de un costo no se edita (es la del proyecto): solo se acepta igual a la del proyecto; otra → 400 PROJECT_CURRENCY_MISMATCH. */
   @ValidateIf(whenPresent)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
   @IsString({ message: 'La moneda debe ser texto' })

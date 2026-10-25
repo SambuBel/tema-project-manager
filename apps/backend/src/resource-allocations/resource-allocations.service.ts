@@ -77,7 +77,7 @@ const ALLOCATION_COLUMNS = `
  *
  * CÁLCULO: costo = horas × tarifa del snapshot, redondeado HALF-UP a 2 decimales POR ASIGNACIÓN (ver estimated-cost.ts); los
  * totales por moneda suman esos importes ya redondeados. Se guarda el resultado (la base exige que coincida con sus insumos).
- * Perfil y horas son independientes: sin ambos, el costo es NULL (nunca 0). Sin conversiones: los totales son POR MONEDA hasta FX-01.
+ * Perfil y horas son independientes: sin ambos, el costo es NULL (nunca 0). Sin conversiones: el perfil asignado tiene SIEMPRE la moneda del proyecto (RESOURCE_PROFILE_CURRENCY_MISMATCH si no), así que `totalsByCurrency` tiene como máximo una línea.
  *
  * PRESUPUESTO: cada revisión registra `budget_id` (el vigente en ese instante; la versión sale por join). Sin presupuesto →
  * NULL (no bloquea). Versiones pero ninguna vigente → 500 BUDGET_NO_CURRENT_VERSION (no se oculta la inconsistencia).
@@ -189,8 +189,13 @@ export class ResourceAllocationsService {
 
     return this.dataSource.transaction(async (manager) => {
       // 1) Proyecto FOR SHARE: coordina con el FOR UPDATE del versionado de presupuesto.
-      const locked = await manager.query('SELECT id FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE', [project.id]);
+      const locked: Array<{ economicCurrency: string }> = await manager.query(
+        'SELECT economic_currency AS "economicCurrency" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE',
+        [project.id],
+      );
       if (locked.length === 0) throw new NotFoundException(`Project ${idOrSlug} no encontrado`);
+      // Moneda ÚNICA del proyecto, leída bajo el lock: el cambio de moneda toma FOR UPDATE y espera a esta transacción.
+      const projectCurrency = locked[0]!.economicCurrency;
 
       // 2) El miembro FOR UPDATE (solo activos): serializa a todos los escritores de este miembro, también la primera asignación.
       const members = await manager.query('SELECT id FROM project_members WHERE id = $1 AND project_id = $2 AND removed_at IS NULL FOR UPDATE', [memberId, project.id]);
@@ -230,7 +235,7 @@ export class ResourceAllocationsService {
       //    No cambia → se copia el snapshot vigente SIN consultar el catálogo (la tarifa histórica no se toca).
       let snapshot: { resourceProfileId: string | null; profileName: string | null; hourlyCost: string | null; currency: string | null };
       if (profileChanged && requestedProfileId !== null && requestedProfileId !== undefined) {
-        snapshot = await this.snapshotFromCatalog(manager, requestedProfileId);
+        snapshot = await this.snapshotFromCatalog(manager, requestedProfileId, projectCurrency);
       } else if (profileChanged) {
         snapshot = { resourceProfileId: null, profileName: null, hourlyCost: null, currency: null };
       } else {
@@ -300,7 +305,7 @@ export class ResourceAllocationsService {
   }
 
   /** Lee el perfil del catálogo FOR SHARE: debe existir y estar activo. Devuelve el snapshot a congelar. */
-  private async snapshotFromCatalog(manager: EntityManager, profileId: string) {
+  private async snapshotFromCatalog(manager: EntityManager, profileId: string, projectCurrency: string) {
     const profiles: Array<{ id: string; name: string; hourlyCost: string; currency: string; active: boolean }> = await manager.query(
       'SELECT id, name, hourly_cost::text AS "hourlyCost", currency, active FROM resource_profiles WHERE id = $1 FOR SHARE',
       [profileId],
@@ -314,6 +319,17 @@ export class ResourceAllocationsService {
         code: 'RESOURCE_PROFILE_INACTIVE',
         message: 'El perfil de recurso está inactivo: no se puede asignar a un miembro.',
         resourceProfileId: profile.id,
+      });
+    }
+    // Moneda ÚNICA por proyecto: solo se asignan perfiles de la moneda del proyecto. Nunca se convierte. (Solo aplica a un perfil
+    // NUEVO: conservar el actual copia su snapshot sin pasar por acá.)
+    if (profile.currency !== projectCurrency) {
+      throw new BadRequestException({
+        code: 'RESOURCE_PROFILE_CURRENCY_MISMATCH',
+        message: `El perfil de recurso utiliza una moneda (${profile.currency}) distinta a la del proyecto (${projectCurrency}).`,
+        resourceProfileId: profile.id,
+        profileCurrency: profile.currency,
+        projectCurrency,
       });
     }
     return { resourceProfileId: profile.id, profileName: profile.name, hourlyCost: profile.hourlyCost, currency: profile.currency };
