@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { ProjectDetail } from '../components/ProjectDetail';
 import { ProjectMembers } from '../components/ProjectMembers';
 import { TaskList } from '../components/TaskList';
+import type { TaskListPersistedState } from '../components/TaskList';
 import { TaskDetail } from '../components/TaskDetail';
 import { TaskBoard } from '../components/TaskBoard/TaskBoard';
 import { TaskBoardFilters } from '../components/TaskBoard/TaskBoardFilters';
@@ -13,10 +14,8 @@ import { ProjectGantt } from '../components/gantt/ProjectGantt';
 import { MilestonesManager } from '../components/milestones/MilestonesManager';
 import { EconomyTab } from '../components/economy/EconomyTab';
 import { useCurrentUser } from '../hooks/useCurrentUser';
-import { canManageProjectUI } from '../lib/permissions';
-import type { ProjectStatus, TaskPriority } from '@tema/shared-types';
 import { canManageProjectUI, canViewEconomicDataUI } from '../lib/permissions';
-import type { ProjectStatus } from '@tema/shared-types';
+import type { ProjectStatus, TaskPriority } from '@tema/shared-types';
 
 /* Helpers */
 
@@ -59,17 +58,17 @@ export function ProjectPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const { user } = useCurrentUser();
+  const [taskListState, setTaskListState] = useState<TaskListPersistedState | null>(null);
   const [boardAssignee, setBoardAssignee] = useState('');
   const [boardPriority, setBoardPriority] = useState<TaskPriority | ''>('');
 
   const viewParam = searchParams.get('view');
   const taskIdParam = searchParams.get('taskId');
+  const taskSlugParam = searchParams.get('task');
 
   const validViews = ['resumen', 'tablero', 'tasks', 'hitos', 'gantt', 'equipo', 'economia', 'actividad'];
   const baseView = (validViews.includes(viewParam as string) ? viewParam : 'resumen') as ProjectView;
 
-  const view = taskIdParam ? 'task-detail' : baseView;
-  const selectedTaskId = taskIdParam;
   const selectedTaskIdentifier = taskSlugParam || taskIdParam;
   const rawView: ProjectView = selectedTaskIdentifier ? 'task-detail' : baseView;
   const selectedTaskId = selectedTaskIdentifier;
@@ -80,15 +79,17 @@ export function ProjectPage() {
       const next = new URLSearchParams(prev);
       next.set('view', newView);
       next.delete('taskId');
+      next.delete('task');
       return next;
     });
   };
 
-  const openTask = (taskId: string) => {
+  const openTask = (taskIdentifier: string) => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       next.set('view', baseView);
-      next.set('taskId', taskId);
+      next.delete('taskId');
+      next.set('task', taskIdentifier);
       return next;
     });
   };
@@ -97,6 +98,7 @@ export function ProjectPage() {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       next.delete('taskId');
+      next.delete('task');
       return next;
     });
   };
@@ -106,6 +108,12 @@ export function ProjectPage() {
     queryFn: () => api.getProject(projectId),
     enabled: !!projectId,
   });
+
+  useEffect(() => {
+    if (project?.id && taskListState && taskListState.projectId !== project.id) {
+      setTaskListState(null);
+    }
+  }, [project?.id, taskListState]);
 
   useEffect(() => {
     if (project?.slug && projectId !== project.slug) {
@@ -304,12 +312,15 @@ export function ProjectPage() {
         <TaskList
           projectId={project.id}
           onSelectTask={openTask}
+          persistedState={taskListState && taskListState.projectId === project.id ? taskListState : null}
+          onPersistedStateChange={setTaskListState}
         />
       )}
 
       {view === 'task-detail' && selectedTaskId && (
         <TaskDetail
           taskId={selectedTaskId}
+          projectId={project.id}
           onBack={closeTask}
         />
       )}
