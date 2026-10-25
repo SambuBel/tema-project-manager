@@ -54,7 +54,7 @@ export function TaskBoardFilters({
 }: TaskBoardFiltersProps) {
   const { data: tasks } = useQuery({
     queryKey: ['tasks', projectId],
-    queryFn: () => api.listTasks({ projectId }),
+    queryFn: () => api.listAllTasks({ projectId }),
   });
 
   /* Responsables que aparecen en el tablero, sin repetidos y ordenados por nombre. */
