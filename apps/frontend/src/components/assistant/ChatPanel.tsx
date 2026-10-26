@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, type ChatTurn } from '../../lib/api';
@@ -46,6 +46,7 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
   const [lastQuestion, setLastQuestion] = useState('');
   // Clave de la que ya se cargó la charla: evita guardar mensajes de otro usuario bajo la clave nueva.
   const [loadedKey, setLoadedKey] = useState(key);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!key) return;
@@ -104,7 +105,25 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
     ask(lastQuestion);
   };
 
+  // Presentación del asistente: se muestra mientras la charla está vacía, no forma parte del historial.
+  const firstName = user?.name?.trim().split(' ')[0];
+  const intro =
+    `¡Hola${firstName ? `, ${firstName}` : ''}! Soy el asistente de TEMA Project Manager. ` +
+    'Te ayudo a consultar y gestionar tus proyectos y tareas:\n' +
+    '- Ver proyectos, tareas, tareas vencidas y el avance real vs. esperado\n' +
+    '- Ver el equipo de un proyecto\n' +
+    '- Crear tareas, cambiar su estado, responsable, prioridad o fechas\n' +
+    '- Agregar comentarios\n' +
+    'Antes de modificar algo te pido confirmación, y solo hago lo que tu rol te permite. ' +
+    '¿En qué te ayudo?';
+
   const canRetry = !!messages[messages.length - 1]?.isError && !!lastQuestion && !send.isPending;
+
+  // Scroll automatico al ultimo mensaje (o al indicador de "consultando") al abrir y cada vez que cambia la charla.
+  useEffect(() => {
+    if (!open) return;
+    bottomRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'end' });
+  }, [open, messages, send.isPending]);
 
   if (!open) return null;
 
@@ -134,9 +153,9 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
         {messages.length === 0 && (
-          <p className="text-sm italic text-slate-400">
-            Preguntame algo, por ejemplo "¿qué tareas están vencidas?" en un proyecto, o escribí "ayuda".
-          </p>
+          <div className="mb-3 max-w-[85%] self-start whitespace-pre-wrap rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-800">
+            {intro}
+          </div>
         )}
         <div className="flex flex-col gap-3">
           {messages.map((m) => (
@@ -171,6 +190,7 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
               Consultando tus proyectos...
             </div>
           )}
+          <div ref={bottomRef} />
         </div>
       </div>
 

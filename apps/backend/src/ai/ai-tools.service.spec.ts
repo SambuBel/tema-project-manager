@@ -18,7 +18,7 @@ const taskPage = (data: unknown[]) => ({ data, total: data.length, page: 1, limi
 
 describe('AiToolsService', () => {
   let tools: AiToolsService;
-  let mockTasksService: { findAllByProject: jest.Mock; findOne: jest.Mock; updateStatus: jest.Mock; create: jest.Mock };
+  let mockTasksService: { findAllByProject: jest.Mock; findOne: jest.Mock; updateStatus: jest.Mock; create: jest.Mock; addComment: jest.Mock; update: jest.Mock };
   let mockProjectsService: { findOne: jest.Mock; findAll: jest.Mock; getMembers: jest.Mock };
   const ctx: ToolContext = { user, project };
 
@@ -28,6 +28,8 @@ describe('AiToolsService', () => {
       findOne: jest.fn(),
       updateStatus: jest.fn(),
       create: jest.fn(),
+      addComment: jest.fn(),
+      update: jest.fn(),
     };
     mockProjectsService = { findOne: jest.fn(), findAll: jest.fn().mockResolvedValue([]), getMembers: jest.fn() };
 
@@ -153,6 +155,109 @@ describe('AiToolsService', () => {
       expect.objectContaining({ userId: 'lider-1', name: 'Gabi' }),
       expect.objectContaining({ userId: 'u1', name: 'Cris' }),
     ]);
+  });
+
+  describe('get_project / obtener_proyecto', () => {
+    it('calcula métricas de avance real, esperado y desvío', async () => {
+      const now = new Date();
+      const past = new Date(now.getTime() - 10 * 86400000).toISOString().split('T')[0];
+      const future = new Date(now.getTime() + 10 * 86400000).toISOString().split('T')[0];
+
+      const projWithDates = {
+        ...project,
+        startDate: past,
+        estimatedEndDate: future,
+      } as ProjectEntity;
+
+      mockProjectsService.getMembers.mockResolvedValue([
+        { userId: 'u1', user: { name: 'Cris', email: 'cris@test.com' }, projectRole: 'COLLABORATOR' },
+      ]);
+      mockTasksService.findAllByProject.mockResolvedValue([
+        { id: 't1', status: TaskStatus.COMPLETED, dueDate: null },
+        { id: 't2', status: TaskStatus.IN_PROGRESS, dueDate: null },
+        { id: 't3', status: TaskStatus.PENDING, dueDate: null },
+        { id: 't4', status: TaskStatus.BLOCKED, dueDate: null },
+      ]);
+
+      const result = await tools.execute(TOOL_NAMES.getProject, {}, { user, project: projWithDates });
+
+      expect(result.project).toBeDefined();
+      expect((result.project as any).id).toBe(PROJECT_ID);
+      expect(result.metrics).toMatchObject({
+        totalTasks: 4,
+        completedTasks: 1,
+        inProgressTasks: 1,
+        pendingTasks: 1,
+        blockedTasks: 1,
+        realProgressPercentage: 25,
+      });
+      expect(result.members).toHaveLength(1);
+    });
+  });
+
+  describe('add_comment / agregar_comentario', () => {
+    it('agrega un comentario a una tarea existente', async () => {
+      mockTasksService.addComment.mockResolvedValue({
+        id: 'c1',
+        taskId: TASK_ID,
+        content: 'Buen avance',
+        createdAt: new Date(),
+      });
+
+      const result = await tools.execute(
+        TOOL_NAMES.addComment,
+        { taskId: TASK_ID, content: 'Buen avance' },
+        ctx,
+      );
+
+      expect(mockTasksService.addComment).toHaveBeenCalledWith(TASK_ID, 'Buen avance', user);
+      expect((result.comment as any).content).toBe('Buen avance');
+    });
+  });
+
+  describe('update_task / actualizar_tarea', () => {
+    it('modifica solo los campos indicados via TasksService.update marcando origen IA', async () => {
+      mockTasksService.update.mockResolvedValue({ id: TASK_ID, title: 'X', status: TaskStatus.IN_PROGRESS, dueDate: '2026-11-01' });
+      const aiCtx: ToolContext = { user, project, message: 'pasala a en progreso' };
+
+      const result = await tools.execute(
+        TOOL_NAMES.updateTask,
+        { taskId: TASK_ID, status: TaskStatus.IN_PROGRESS, dueDate: '2026-11-01' },
+        aiCtx,
+      );
+
+      expect(mockTasksService.update).toHaveBeenCalledWith(
+        TASK_ID,
+        expect.objectContaining({ status: TaskStatus.IN_PROGRESS, dueDate: '2026-11-01' }),
+        user,
+        expect.objectContaining({ request: 'pasala a en progreso' }),
+      );
+      const dto = mockTasksService.update.mock.calls[0][1];
+      expect(dto.priority).toBeUndefined();
+      expect((result.updated as any).id).toBe(TASK_ID);
+    });
+
+    it('sin ningun campo a cambiar devuelve error y no llama al servicio', async () => {
+      const result = await tools.execute(TOOL_NAMES.updateTask, { taskId: TASK_ID }, ctx);
+
+      expect(result.error).toBeDefined();
+      expect(mockTasksService.update).not.toHaveBeenCalled();
+    });
+
+    it('rechaza una fecha invalida sin llamar al servicio', async () => {
+      const result = await tools.execute(TOOL_NAMES.updateTask, { taskId: TASK_ID, dueDate: 'manana' }, ctx);
+
+      expect(result.error).toBeDefined();
+      expect(mockTasksService.update).not.toHaveBeenCalled();
+    });
+
+    it('si el usuario no tiene permiso devuelve el error de permisos', async () => {
+      mockTasksService.update.mockRejectedValue(new ForbiddenException('No podés editar esta tarea.'));
+
+      const result = await tools.execute(TOOL_NAMES.updateTask, { taskId: TASK_ID, priority: 'HIGH' }, ctx);
+
+      expect(result.error).toMatch(/No podés editar/);
+    });
   });
 
   it('una tool desconocida devuelve error', async () => {

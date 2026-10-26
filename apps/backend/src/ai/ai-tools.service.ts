@@ -9,6 +9,7 @@ import { AuditOrigin, ProjectStatus, TaskPriority, TaskStatus } from '../databas
 import { TaskEntity } from '../tasks/task.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { CreateTaskDto } from '../tasks/dto/create-task.dto';
+import { UpdateTaskDto } from '../tasks/dto/update-task.dto';
 
 export interface ToolContext {
   user: RequestUser;
@@ -35,6 +36,9 @@ export const TOOL_NAMES = {
   listProjectMembers: 'list_project_members',
   updateTaskStatus: 'update_task_status',
   createTask: 'create_task',
+  getProject: 'get_project',
+  addComment: 'add_comment',
+  updateTask: 'update_task',
 } as const;
 
 const PROJECT_ID_PARAM = {
@@ -147,6 +151,51 @@ export class AiToolsService {
         required: ['title'],
       },
     },
+    {
+      name: TOOL_NAMES.updateTask,
+      description:
+        'Modifica una tarea: estado, responsable, prioridad, fecha de inicio o de vencimiento (solo los campos indicados). Es una acción que modifica datos: solo llamarla después de que el usuario confirme explícitamente los cambios.',
+      parametersJsonSchema: {
+        type: 'object',
+        properties: {
+          taskId: { type: 'string', description: 'UUID de la tarea.' },
+          status: { type: 'string', enum: Object.values(TaskStatus) },
+          priority: { type: 'string', enum: Object.values(TaskPriority) },
+          assignedToId: {
+            type: 'string',
+            description: 'UUID del nuevo responsable (sacarlo de list_project_members, nunca inventarlo). Enviar null para desasignar.',
+            nullable: true,
+          },
+          startDate: { type: 'string', description: 'Formato AAAA-MM-DD. Enviar null para quitarla.', nullable: true },
+          dueDate: { type: 'string', description: 'Formato AAAA-MM-DD. Enviar null para quitarla.', nullable: true },
+        },
+        required: ['taskId'],
+      },
+    },
+    {
+      name: TOOL_NAMES.getProject,
+      description:
+        'Devuelve la información detallada de un proyecto, incluyendo miembros de equipo y métricas de avance real, esperado y desvío temporal.',
+      parametersJsonSchema: {
+        type: 'object',
+        properties: {
+          projectId: PROJECT_ID_PARAM,
+        },
+      },
+    },
+    {
+      name: TOOL_NAMES.addComment,
+      description:
+        'Agrega un comentario a una tarea. Es una acción que modifica datos: solo llamarla si el usuario lo solicita o confirma.',
+      parametersJsonSchema: {
+        type: 'object',
+        properties: {
+          taskId: { type: 'string', description: 'UUID de la tarea a comentar.' },
+          content: { type: 'string', description: 'Texto del comentario a publicar.' },
+        },
+        required: ['taskId', 'content'],
+      },
+    },
   ];
 
   /**
@@ -190,7 +239,7 @@ export class AiToolsService {
           },
           ctx.user,
         );
-        return withEmptyNote({ project: project.name, tasks: tasks.data.map(toTaskSummary) }, 'tasks', 'No se encontraron tareas con esos criterios.');
+        return withEmptyNote({ project: project.name, tasks: extractTaskList(tasks).map(toTaskSummary) }, 'tasks', 'No se encontraron tareas con esos criterios.');
       }
 
       case TOOL_NAMES.listOverdueTasks: {
@@ -202,7 +251,7 @@ export class AiToolsService {
           ctx.user,
         );
         return withEmptyNote(
-          { project: project.name, tasks: tasks.data.filter((task) => isOverdue(task)).map(toTaskSummary) },
+          { project: project.name, tasks: extractTaskList(tasks).filter((task) => isOverdue(task)).map(toTaskSummary) },
           'tasks',
           'No hay tareas vencidas.',
         );
@@ -262,6 +311,124 @@ export class AiToolsService {
         return { created: toTaskSummary(task) };
       }
 
+      case TOOL_NAMES.updateTask:
+      case 'actualizar_tarea': {
+        const taskId = requiredString(args.taskId, 'taskId');
+        const fields = ['status', 'priority', 'assignedToId', 'startDate', 'dueDate'] as const;
+        const changes: Record<string, unknown> = {};
+        for (const field of fields) {
+          if (args[field] !== undefined) changes[field] = args[field];
+        }
+        if (Object.keys(changes).length === 0) {
+          throw new ToolInputError('Indicá qué querés cambiar: estado, responsable, prioridad, fecha de inicio o de vencimiento.');
+        }
+        const dto = plainToInstance(UpdateTaskDto, changes);
+        // El ValidationPipe global no corre aca (no es un request HTTP): se valida a mano con el mismo DTO.
+        const errors = await validate(dto, { whitelist: true });
+        if (errors.length > 0) {
+          throw new ToolInputError(errors.flatMap((e) => Object.values(e.constraints ?? {})).join('; '));
+        }
+        const task = await this.tasksService.update(taskId, dto, ctx.user, aiSource(ctx));
+        return { updated: toTaskSummary(task) };
+      }
+
+      case TOOL_NAMES.getProject:
+      case 'obtener_proyecto': {
+        const project = await this.resolveProject(args.projectId, ctx);
+        const [rawMembers, tasksResult] = await Promise.all([
+          this.projectsService.getMembers(project.id, ctx.user),
+          this.tasksService.findAllByProject({ projectId: project.id, limit: 10000 }, ctx.user),
+        ]);
+
+        const members = rawMembers.map((m) => ({
+          userId: m.userId,
+          name: m.user?.name ?? null,
+          email: m.user?.email ?? null,
+          role: m.projectRole as string,
+        }));
+        if (project.leaderId && !members.some((m) => m.userId === project.leaderId)) {
+          members.unshift({
+            userId: project.leaderId,
+            name: project.leader?.name ?? null,
+            email: project.leader?.email ?? null,
+            role: 'LÍDER DEL PROYECTO',
+          });
+        }
+
+        const taskList = extractTaskList(tasksResult);
+        const totalTasks = taskList.length;
+        const completedTasks = taskList.filter((t) => t.status === TaskStatus.COMPLETED).length;
+        const inProgressTasks = taskList.filter((t) => t.status === TaskStatus.IN_PROGRESS).length;
+        const pendingTasks = taskList.filter((t) => t.status === TaskStatus.PENDING).length;
+        const blockedTasks = taskList.filter((t) => t.status === TaskStatus.BLOCKED).length;
+        const overdueTasks = taskList.filter((t) => isOverdue(t)).length;
+
+        const realProgress = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
+
+        let expectedProgress = null;
+        if (project.startDate && project.estimatedEndDate) {
+          const start = new Date(project.startDate).getTime();
+          const end = new Date(project.estimatedEndDate).getTime();
+          const now = Date.now();
+          if (!isNaN(start) && !isNaN(end) && end > start) {
+            if (now <= start) expectedProgress = 0;
+            else if (now >= end) expectedProgress = 100;
+            else expectedProgress = Math.round(((now - start) / (end - start)) * 100);
+          }
+        }
+
+        const deviation = expectedProgress !== null ? realProgress - expectedProgress : null;
+        let scheduleStatus = 'Sin cronograma estimado';
+        if (deviation !== null) {
+          if (deviation < -10) scheduleStatus = 'Atrasado';
+          else if (deviation < 0) scheduleStatus = 'Leve desvío negativo';
+          else if (deviation > 5) scheduleStatus = 'Adelantado';
+          else scheduleStatus = 'Al día';
+        }
+
+        return {
+          project: {
+            id: project.id,
+            slug: project.slug,
+            name: project.name,
+            description: project.description ?? null,
+            status: project.status,
+            startDate: project.startDate,
+            estimatedEndDate: project.estimatedEndDate,
+            leader: project.leader ? { id: project.leader.id, name: project.leader.name, email: project.leader.email } : null,
+          },
+          metrics: {
+            totalTasks,
+            completedTasks,
+            inProgressTasks,
+            pendingTasks,
+            blockedTasks,
+            overdueTasks,
+            realProgressPercentage: realProgress,
+            expectedProgressPercentage: expectedProgress,
+            deviationPercentage: deviation,
+            scheduleStatus,
+          },
+          members,
+        };
+      }
+
+      case TOOL_NAMES.addComment:
+      case 'agregar_comentario': {
+        const taskId = requiredString(args.taskId, 'taskId');
+        const content = requiredString(args.content, 'content');
+        const comment = await this.tasksService.addComment(taskId, content, ctx.user);
+        return {
+          comment: {
+            id: comment.id,
+            taskId: comment.taskId,
+            author: ctx.user.name ?? 'Usuario',
+            content: comment.content,
+            createdAt: comment.createdAt,
+          },
+        };
+      }
+
       default:
         throw new ToolInputError(`La herramienta "${name}" no existe.`);
     }
@@ -282,6 +449,14 @@ export class AiToolsService {
 function withEmptyNote(result: ToolResult, listKey: string, note: string): ToolResult {
   const list = result[listKey];
   return Array.isArray(list) && list.length === 0 ? { ...result, empty: true, note } : result;
+}
+
+export function extractTaskList(tasks: unknown): TaskEntity[] {
+  if (Array.isArray(tasks)) return tasks;
+  if (tasks && typeof tasks === 'object' && 'data' in tasks && Array.isArray((tasks as any).data)) {
+    return (tasks as any).data;
+  }
+  return [];
 }
 
 export function isOverdue(task: Pick<TaskEntity, 'dueDate' | 'status'>, today = new Date()): boolean {
