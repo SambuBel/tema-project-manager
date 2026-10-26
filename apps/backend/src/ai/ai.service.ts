@@ -102,7 +102,7 @@ export class AiService {
     this.logger.warn(`Se agotaron las ${MAX_TOOL_ROUNDS} vueltas de tools sin respuesta final`);
     return lastError
       ? `No pude completarlo: ${lastError}`
-      : 'La consulta se volvió demasiado larga, probá preguntando algo más puntual.';
+      : 'No pude resolver la consulta. Probá abriendo el proyecto y preguntando algo más puntual.';
   }
 
   // --- Asistente por reglas (sin Gemini) ---

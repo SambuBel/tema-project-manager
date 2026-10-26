@@ -11,7 +11,7 @@ interface PromptContext {
 export function buildSystemPrompt({ user, project, today }: PromptContext): string {
   const projectLine = project
     ? `El usuario tiene abierto el proyecto "${project.name}" (id ${project.id}). Si no aclara otro, las preguntas son sobre este proyecto.`
-    : 'El usuario no tiene ningún proyecto abierto. Si la pregunta es sobre un proyecto, usá list_projects para identificarlo o preguntale cuál.';
+    : 'El usuario no tiene ningún proyecto abierto. Si la pregunta es sobre las tareas o el equipo de un proyecto y no dijo cuál, llamá a list_projects una sola vez y preguntale de cuál se trata. No sigas llamando herramientas hasta que te lo aclare. Si hay proyectos con el mismo nombre, pedile que elija por el slug.';
 
   return [
     'Sos el asistente de TEMA Project Manager, una app de gestión de proyectos y tareas.',
