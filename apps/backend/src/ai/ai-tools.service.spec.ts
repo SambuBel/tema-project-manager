@@ -13,6 +13,9 @@ const TASK_ID = '44444444-4444-4444-8444-444444444444';
 const project = { id: PROJECT_ID, slug: 'demo', name: 'Demo' } as ProjectEntity;
 const user = { id: '33333333-3333-4333-8333-333333333333', roles: [] } as unknown as RequestUser;
 
+/** Forma de la respuesta paginada de TasksService.findAllByProject. */
+const taskPage = (data: unknown[]) => ({ data, total: data.length, page: 1, limit: 10000, totalPages: 1, counts: {} });
+
 describe('AiToolsService', () => {
   let tools: AiToolsService;
   let mockTasksService: { findAllByProject: jest.Mock; findOne: jest.Mock; updateStatus: jest.Mock; create: jest.Mock };
@@ -21,7 +24,7 @@ describe('AiToolsService', () => {
 
   beforeEach(async () => {
     mockTasksService = {
-      findAllByProject: jest.fn().mockResolvedValue([]),
+      findAllByProject: jest.fn().mockResolvedValue(taskPage([])),
       findOne: jest.fn(),
       updateStatus: jest.fn(),
       create: jest.fn(),
@@ -84,7 +87,7 @@ describe('AiToolsService', () => {
   });
 
   it('una lista con datos no lleva la marca empty', async () => {
-    mockTasksService.findAllByProject.mockResolvedValue([{ id: TASK_ID, title: 'X', status: TaskStatus.PENDING, dueDate: null }]);
+    mockTasksService.findAllByProject.mockResolvedValue(taskPage([{ id: TASK_ID, title: 'X', status: TaskStatus.PENDING, dueDate: null }]));
 
     const result = await tools.execute(TOOL_NAMES.listTasks, {}, ctx);
 
