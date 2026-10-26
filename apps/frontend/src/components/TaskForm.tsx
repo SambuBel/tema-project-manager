@@ -121,10 +121,27 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
     onSuccess: (task) => {
       setCreatedTask(task);
       setForm(EMPTY_FORM);
-      void qc.invalidateQueries({ queryKey: ['tasks', projectId] });
       if (parentTaskId) {
+        qc.setQueryData<Task[]>(['subtasks', parentTaskId], (old) => {
+          if (!old) return [task];
+          const exists = old.some((s) => s.id === task.id);
+          return exists ? old : [...old, task];
+        });
+        qc.setQueriesData<Task[]>({ queryKey: ['tasks'] }, (old) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((t) =>
+            t.id === parentTaskId
+              ? {
+                  ...t,
+                  subtaskCount: (t.subtaskCount ?? 0) + 1,
+                  completedSubtaskCount: t.completedSubtaskCount ?? 0,
+                }
+              : t,
+          );
+        });
         void qc.invalidateQueries({ queryKey: ['subtasks', parentTaskId] });
       }
+      void qc.invalidateQueries({ queryKey: ['tasks'] });
       onCreated?.(task);
     },
   });
@@ -132,8 +149,16 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
   const update = useMutation({
     mutationFn: (dto: UpdateTaskDto) => api.updateTask(initialData!.id, dto),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['tasks', projectId] });
+      void qc.invalidateQueries({ queryKey: ['tasks'] });
       void qc.invalidateQueries({ queryKey: ['task', initialData!.id] });
+      if (initialData!.slug) {
+        void qc.invalidateQueries({ queryKey: ['task', initialData!.slug] });
+      }
+      if (initialData!.parentTaskId) {
+        void qc.invalidateQueries({ queryKey: ['subtasks', initialData!.parentTaskId] });
+      } else {
+        void qc.invalidateQueries({ queryKey: ['subtasks'] });
+      }
       navigate(`/projects/${project?.slug || projectId}`);
     },
   });

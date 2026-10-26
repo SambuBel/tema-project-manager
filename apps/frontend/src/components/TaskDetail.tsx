@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { taskPriorityLabels } from '../types/task';
-import type { TaskPriority, TaskStatus } from '../types/task';
+import type { Task, TaskPriority } from '../types/task';
 import { SubtaskList } from './SubtaskList';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useCurrentUser } from '../hooks/useCurrentUser';
@@ -37,6 +37,7 @@ function formatDate(dateStr: string | null): string {
 
 interface TaskDetailProps {
   taskId: string;
+  projectId?: string;
   onBack: () => void;
 }
 
@@ -45,25 +46,65 @@ interface TaskDetailProps {
 /**
  * Detalle de una tarea individual.
  */
-export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
+export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
   const qc = useQueryClient();
   const { user } = useCurrentUser();
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [showSubtaskModal, setShowSubtaskModal] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: task, isLoading, isError } = useQuery({
     queryKey: ['task', taskId],
-    queryFn: () => api.getTask(taskId),
+    queryFn: () => api.getTask(taskId, projectId),
   });
 
   const { membership } = useMyMembership(task?.projectId);
 
+  // Reemplazo transparente en la barra de direcciones:
+  // Si se ingresó con ?taskId=<UUID> o con un slug histórico anterior,
+  // se reemplaza en la URL por ?task=<currentSlug> sin recargar la página.
+  useEffect(() => {
+    const slug = task?.slug;
+    if (!slug) return;
+    const currentTask = searchParams.get('task');
+    const currentTaskId = searchParams.get('taskId');
+    if (currentTaskId || (currentTask && currentTask !== slug)) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete('taskId');
+          next.set('task', slug);
+          return next;
+        },
+        { replace: true },
+      );
+    }
+  }, [task?.slug, searchParams, setSearchParams]);
+
   const archive = useMutation({
-    mutationFn: () => api.archiveTask(taskId),
+    mutationFn: () => api.archiveTask(task?.id ?? taskId),
     onSuccess: () => {
       setConfirmArchive(false);
-      void qc.invalidateQueries({ queryKey: ['task', taskId] });
-      void qc.invalidateQueries({ queryKey: ['tasks', task?.projectId] });
+      if (task?.parentTaskId) {
+        qc.setQueryData<Task[]>(['subtasks', task.parentTaskId], (old) => {
+          if (!old) return old;
+          return old.filter((s) => s.id !== (task?.id ?? taskId));
+        });
+        qc.setQueriesData<Task[]>({ queryKey: ['tasks'] }, (old) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((t) =>
+            t.id === task.parentTaskId
+              ? {
+                  ...t,
+                  subtaskCount: Math.max(0, (t.subtaskCount ?? 1) - 1),
+                }
+              : t,
+          );
+        });
+      }
+      void qc.invalidateQueries({ queryKey: ['task'] });
+      void qc.invalidateQueries({ queryKey: ['tasks'] });
+      void qc.invalidateQueries({ queryKey: ['subtasks'] });
     },
   });
 
@@ -106,7 +147,7 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-4xl font-semibold">{task.title}</h1>
-          <TaskStatusDropdown taskId={taskId} currentStatus={task.status} canChange={canEdit} />
+          <TaskStatusDropdown taskId={task.id} currentStatus={task.status} canChange={canEdit} />
           <span className={'rounded-full px-3 py-1 text-xs font-medium ' + priorityColors[task.priority]}>
             {taskPriorityLabels[task.priority]}
           </span>
@@ -233,14 +274,14 @@ export function TaskDetail({ taskId, onBack }: TaskDetailProps) {
           )}
         </div>
         <div className="mt-4">
-          <SubtaskList parentTaskId={taskId} projectId={task.projectId} />
+          <SubtaskList parentTaskId={task.id} />
         </div>
       </div>
 
       <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
         <h3 className="text-lg font-semibold text-[#172B42]">Actividad y Comentarios</h3>
         <div className="mt-4">
-          <TaskTimeline taskId={taskId} canComment={canComment} />
+          <TaskTimeline taskId={task.id} projectId={task.projectId} canComment={canComment} />
         </div>
       </div>
 

@@ -9,6 +9,7 @@ import { DependencyType, TaskStatus } from '../database/enums';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { GanttResponseDto, GanttTaskDto } from './dto/gantt-response.dto';
+import type { GanttDependencyType } from '@tema/shared-types';
 
 /**
  * Read model del Gantt: una sola respuesta con proyecto, tareas (raíz + subtareas, sin archivadas)
@@ -71,7 +72,7 @@ export class GanttService {
         id: dep.id,
         predecessorTaskId: dep.predecessorTaskId,
         successorTaskId: dep.successorTaskId,
-        type: 'FINISH_TO_START',
+        type: this.mapDependencyType(dep.dependencyType),
       })),
     };
   }
@@ -105,7 +106,6 @@ export class GanttService {
       .andWhere('succ.projectId = :projectId', { projectId })
       .andWhere('pred.archivedAt IS NULL')
       .andWhere('succ.archivedAt IS NULL')
-      .andWhere('dep.dependencyType = :type', { type: DependencyType.FINISH_START })
       .orderBy('dep.createdAt', 'ASC')
       .getMany();
   }
@@ -139,5 +139,57 @@ export class GanttService {
       assignedTo: task.assignedTo ? { id: task.assignedTo.id, name: task.assignedTo.name } : null,
       blocked,
     };
+  }
+
+    /**
+   * RF-GA-05 — Devuelve los IDs de tareas bloqueadas por dependencias (no archivadas).
+   * Reutiliza computeBlockedTaskIds. Autorización: canViewProject.
+   */
+  async getBlockedTaskIds(projectIdOrSlug: string, user: RequestUser): Promise<string[]> {
+    // Reutilizamos la misma lógica de resolución de proyecto que getGantt
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectIdOrSlug);
+    const where = (isUuid ? { id: projectIdOrSlug } : { slug: projectIdOrSlug }) as any;
+    let project =
+      typeof this.projectRepo.findOne === 'function'
+        ? await this.projectRepo.findOne({ where })
+        : await this.projectRepo.findOneBy(where);
+
+    if (!project && !isUuid && typeof this.projectRepo.manager?.findOne === 'function') {
+      try {
+        const history = await this.projectRepo.manager.findOne(ProjectSlugHistoryEntity, {
+          where: { slug: projectIdOrSlug },
+        });
+        if (history && history.projectId) {
+          project =
+            typeof this.projectRepo.findOne === 'function'
+              ? await this.projectRepo.findOne({ where: { id: history.projectId } })
+              : await this.projectRepo.findOneBy({ id: history.projectId } as any);
+        }
+      } catch {
+        // Silently ignore
+      }
+    }
+
+    if (!project) {
+      throw new NotFoundException(`Project ${projectIdOrSlug} no encontrado`);
+    }
+    if (!(await this.permissions.canViewProject(user, project))) {
+      throw new ForbiddenException('No tenés acceso a este proyecto.');
+    }
+
+    const tasks = await this.findTasks(project.id);
+    const dependencies = await this.findDependencies(project.id);
+    const blockedSet = this.computeBlockedTaskIds(tasks, dependencies);
+    return Array.from(blockedSet);
+  }
+
+  private mapDependencyType(type: DependencyType): GanttDependencyType {
+    const map: Record<DependencyType, GanttDependencyType> = {
+      [DependencyType.FINISH_START]: 'FINISH_TO_START',
+      [DependencyType.START_START]: 'START_TO_START',
+      [DependencyType.FINISH_FINISH]: 'FINISH_TO_FINISH',
+      [DependencyType.START_FINISH]: 'START_TO_FINISH',
+    };
+    return map[type] ?? 'FINISH_TO_START';
   }
 }

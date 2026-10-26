@@ -28,7 +28,7 @@ const task = (overrides: Partial<Task> & { id: string; title: string }): Task =>
 /** TaskList con el cache sembrado (sin red; renderToString, sin jsdom). */
 function render(tasks: Task[]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  client.setQueryData(['tasks', { projectId: PROJECT_ID }], tasks);
+  client.setQueryData(['tasks', { projectId: PROJECT_ID, page: 1, limit: 10 }, 'ALL'], { data: tasks, total: tasks.length, page: 1, limit: 10, totalPages: 1, counts: { all: tasks.length, mine: 0, atRisk: 0 } });
   client.setQueryData(['project', PROJECT_ID], { id: PROJECT_ID, name: 'P', leaderId: 'u1' });
   client.setQueryData(['project-members', PROJECT_ID], []);
   return renderToString(

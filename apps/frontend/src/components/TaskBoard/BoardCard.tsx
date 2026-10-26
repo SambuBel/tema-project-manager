@@ -1,16 +1,16 @@
-import type { Task, TaskPriority } from '@tema/shared-types';
+import type { Project, Task, TaskPriority } from '@tema/shared-types';
 import { canEditTaskUI } from '../../lib/permissions';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import { useMyMembership } from '../../hooks/useMyMembership';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../../lib/api';
 import { taskPriorityLabels } from '../../types/task';
 import { Draggable } from '@hello-pangea/dnd';
 
 interface BoardCardProps {
   task: Task;
   index: number;
+  project: Project;
   onSelectTask: (taskId: string) => void;
+  blockedByDependency?: boolean;
 }
 
 const priorityColors: Record<TaskPriority, string> = {
@@ -24,14 +24,9 @@ function initials(name: string) {
   return name.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase();
 }
 
-export function BoardCard({ task, index, onSelectTask }: BoardCardProps) {
+export function BoardCard({ task, index, project, onSelectTask, blockedByDependency }: BoardCardProps) {
   const { user } = useCurrentUser();
   const { membership } = useMyMembership(task.projectId);
-  const { data: project } = useQuery({
-    queryKey: ['project', task.projectId],
-    queryFn: () => api.getProject(task.projectId),
-    enabled: false,
-  });
 
   const canEdit = user && project ? canEditTaskUI(user, task, project, membership) : false;
 
@@ -42,7 +37,7 @@ export function BoardCard({ task, index, onSelectTask }: BoardCardProps) {
           ref={provided.innerRef}
           {...provided.draggableProps}
           {...provided.dragHandleProps}
-          onClick={() => onSelectTask(task.id)}
+          onClick={() => onSelectTask(task.slug || task.id)}
           className={`group relative flex cursor-pointer flex-col gap-3 rounded-lg border bg-white p-3 shadow-sm transition-all hover:border-[#245B78] hover:shadow-md
             ${!canEdit ? 'opacity-80' : ''}
             ${snapshot.isDragging ? 'border-[#245B78] shadow-lg rotate-2 scale-105 z-10' : 'border-[#DEE5EC]'}`}
@@ -53,6 +48,16 @@ export function BoardCard({ task, index, onSelectTask }: BoardCardProps) {
             <h4 className="text-sm font-medium text-[#172B42] line-clamp-2 leading-tight">
               {task.title}
             </h4>
+
+            {blockedByDependency && (
+              <span
+                className="shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700"
+                title="Bloqueada por dependencia"
+              >
+                🔒
+              </span>
+            )}
+            
             {!canEdit && (
               <div className="text-[#607185]" title="Solo lectura">
                 <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

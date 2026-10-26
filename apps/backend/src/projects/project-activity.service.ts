@@ -3,7 +3,7 @@ import { EntityManager, Repository, Not } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ProjectActivityEntity } from '../database/entities/project-activity.entity';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
-import { ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
+import { AuditOrigin, ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
 import { UserEntity } from '../database/entities/user.entity';
 import { ProjectEntity } from './project.entity';
 
@@ -14,6 +14,8 @@ export interface CreateActivityParams {
   entityType: ProjectActivityEntityType;
   entityId?: string | null;
   metadata?: any;
+  /** Si no se indica, el evento queda como UI. */
+  origin?: AuditOrigin;
 }
 
 @Injectable()

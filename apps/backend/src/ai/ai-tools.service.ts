@@ -2,10 +2,10 @@ import { HttpException, Injectable } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { FunctionDeclaration } from '@google/genai';
-import { TasksService } from '../tasks/tasks.service';
+import { ChangeSource, TasksService } from '../tasks/tasks.service';
 import { ProjectsService } from '../projects/projects.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
-import { ProjectStatus, TaskPriority, TaskStatus } from '../database/enums';
+import { AuditOrigin, ProjectStatus, TaskPriority, TaskStatus } from '../database/enums';
 import { TaskEntity } from '../tasks/task.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { CreateTaskDto } from '../tasks/dto/create-task.dto';
@@ -14,9 +14,14 @@ export interface ToolContext {
   user: RequestUser;
   /** Proyecto que el usuario tiene abierto en pantalla (si hay), ya resuelto y con permiso verificado. */
   project: ProjectEntity | null;
+  /** Mensaje del usuario que originó la consulta: queda en el historial si el asistente modifica algo. */
+  message?: string;
 }
 
-export type ToolArgs = Record<string, unknown>;
+/** Marca de origen para los cambios que hace el asistente (HU39): el actor sigue siendo el usuario. */
+const aiSource = (ctx: ToolContext): ChangeSource => ({ origin: AuditOrigin.AI, request: ctx.message });
+
+export type ToolArgs =Record<string, unknown>;
 export type ToolResult = Record<string, unknown>;
 
 /** Error "esperable" de una tool (falta un dato, valor invalido): se le devuelve al modelo, no rompe el chat. */
@@ -169,7 +174,7 @@ export class AiToolsService {
           },
           ctx.user,
         );
-        return { projects: projects.map(toProjectSummary) };
+        return withEmptyNote({ projects: projects.map(toProjectSummary) }, 'projects', 'No se encontraron proyectos con esos criterios.');
       }
 
       case TOOL_NAMES.listTasks: {
@@ -181,21 +186,26 @@ export class AiToolsService {
             priority: optionalEnum(args.priority, TaskPriority, 'priority'),
             search: optionalString(args.search),
             assignedToId: args.onlyMine === true ? ctx.user.id : undefined,
+            limit: 10000,
           },
           ctx.user,
         );
-        return { project: project.name, tasks: tasks.map(toTaskSummary) };
+        return withEmptyNote({ project: project.name, tasks: tasks.data.map(toTaskSummary) }, 'tasks', 'No se encontraron tareas con esos criterios.');
       }
 
       case TOOL_NAMES.listOverdueTasks: {
         const project = await this.resolveProject(args.projectId, ctx);
         const tasks = await this.tasksService.findAllByProject(
           args.onlyMine === true
-            ? { projectId: project.id, assignedToId: ctx.user.id }
-            : { projectId: project.id },
+            ? { projectId: project.id, assignedToId: ctx.user.id, limit: 10000 }
+            : { projectId: project.id, limit: 10000 },
           ctx.user,
         );
-        return { project: project.name, tasks: tasks.filter((task) => isOverdue(task)).map(toTaskSummary) };
+        return withEmptyNote(
+          { project: project.name, tasks: tasks.data.filter((task) => isOverdue(task)).map(toTaskSummary) },
+          'tasks',
+          'No hay tareas vencidas.',
+        );
       }
 
       case TOOL_NAMES.getTask: {
@@ -228,7 +238,7 @@ export class AiToolsService {
       case TOOL_NAMES.updateTaskStatus: {
         const status = optionalEnum(args.status, TaskStatus, 'status');
         if (!status) throw new ToolInputError('Falta el estado nuevo de la tarea.');
-        const task = await this.tasksService.updateStatus(requiredString(args.taskId, 'taskId'), { status }, ctx.user);
+        const task = await this.tasksService.updateStatus(requiredString(args.taskId, 'taskId'), { status }, ctx.user, aiSource(ctx));
         return { updated: toTaskSummary(task) };
       }
 
@@ -248,7 +258,7 @@ export class AiToolsService {
         if (errors.length > 0) {
           throw new ToolInputError(errors.flatMap((e) => Object.values(e.constraints ?? {})).join('; '));
         }
-        const task = await this.tasksService.create(dto, ctx.user);
+        const task = await this.tasksService.create(dto, ctx.user, aiSource(ctx));
         return { created: toTaskSummary(task) };
       }
 
@@ -266,6 +276,12 @@ export class AiToolsService {
     if (ctx.project) return ctx.project;
     throw new ToolInputError('No sé de qué proyecto hablás: abrí un proyecto o decime cuál.');
   }
+}
+
+/** Si la lista viene vacía se lo marcamos al modelo: tiene que decir que no hay datos, no completarlos. */
+function withEmptyNote(result: ToolResult, listKey: string, note: string): ToolResult {
+  const list = result[listKey];
+  return Array.isArray(list) && list.length === 0 ? { ...result, empty: true, note } : result;
 }
 
 export function isOverdue(task: Pick<TaskEntity, 'dueDate' | 'status'>, today = new Date()): boolean {

@@ -9,7 +9,13 @@ import { UsersModule } from './users/users.module';
 import { TasksModule } from './tasks/tasks.module';
 import { SubtasksModule } from './subtasks/subtasks.module';
 import { GanttModule } from './gantt/gantt.module';
+import { BudgetsModule } from './budgets/budgets.module';
+import { CostCategoriesModule } from './cost-categories/cost-categories.module';
+import { CostsModule } from './costs/costs.module';
+import { ResourceProfilesModule } from './resource-profiles/resource-profiles.module';
+import { ResourceAllocationsModule } from './resource-allocations/resource-allocations.module';
 import { AiModule } from './ai/ai.module';
+import { MilestonesModule } from './milestones/milestones.module';
 import { envValidationSchema } from './config/env.validation';
 import { ExportModule } from './export/export.module';
 
@@ -37,9 +43,14 @@ import { ExportModule } from './export/export.module';
     SubtasksModule,
     GanttModule,
     ExportModule,
+    BudgetsModule,
+    CostCategoriesModule,
+    CostsModule,
+    ResourceProfilesModule,
+    ResourceAllocationsModule,
     AiModule,
+    MilestonesModule,
   ],
   controllers: [HealthController],
 })
 export class AppModule {}
-

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useBlockedTasks } from '../hooks/useBlockedTasks';
+import { useEffect, useRef, useState } from 'react';
+import { keepPreviousData, useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
@@ -9,9 +10,7 @@ import { CreateTaskDrawer } from './CreateTaskDrawer';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
-
-/** Espera (ms) tras dejar de escribir en el buscador antes de refrescar la lista. */
-const SEARCH_DEBOUNCE_MS = 400;
+import { Pagination } from './Pagination';
 
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
@@ -61,15 +60,384 @@ function isAtRisk(task: Task): boolean {
   return isOverdue(task) || task.status === 'BLOCKED';
 }
 
+function getWindowScrollTop(): number {
+  if (typeof window === 'undefined') return 0;
+  return window.scrollY || document.documentElement?.scrollTop || document.body?.scrollTop || 0;
+}
+
+function setWindowScrollTop(top: number): void {
+  if (typeof window === 'undefined') return;
+  if (document.documentElement) {
+    document.documentElement.scrollTop = top;
+  }
+  if (document.body) {
+    document.body.scrollTop = top;
+  }
+  try {
+    window.scrollTo(0, top);
+  } catch {
+    // En entornos de test sin mock de scrollTo puede no estar implementado
+  }
+}
+
 /* Tipos */
 
-type ViewFilter = 'ALL' | 'AT_RISK' | 'MINE';
+export type ViewFilter = 'ALL' | 'AT_RISK' | 'MINE';
+
+export interface TaskListPersistedState {
+  projectId: string;
+  filters: TaskFilters;
+  searchInput: string;
+  viewFilter: ViewFilter;
+  onlyWithSubtasks?: boolean;
+  expandedTasks: Record<string, boolean>;
+  scrollTop: number | null;
+}
 
 /* Props */
 
 interface TaskListProps {
   projectId: string;
   onSelectTask: (taskId: string) => void;
+  persistedState?: TaskListPersistedState | null;
+  onPersistedStateChange?: (state: TaskListPersistedState) => void;
+}
+
+interface TaskRowProps {
+  task: Task;
+  isExpanded: boolean;
+  onToggleExpand: (taskId: string) => void;
+  onSelectTask: (taskIdentifier: string) => void;
+  canCreateSubtask: boolean;
+  onAddSubtask: (task: Task) => void;
+  projectEstimatedEndDate?: string | null;
+  blockedByDependency?: boolean;
+}
+
+function TaskRow({
+  task,
+  isExpanded,
+  onToggleExpand,
+  onSelectTask,
+  canCreateSubtask,
+  onAddSubtask,
+  projectEstimatedEndDate,
+  blockedByDependency,
+}: TaskRowProps) {
+  const backendSubtaskCount = task.subtaskCount ?? 0;
+  const backendCompletedCount = task.completedSubtaskCount ?? 0;
+
+  const subtasksQuery = useQuery({
+    queryKey: ['subtasks', task.id],
+    queryFn: () => api.getSubtasks(task.id),
+    enabled: isExpanded && backendSubtaskCount > 0,
+  });
+
+  const subtasks = subtasksQuery.data;
+  const activeSubtasks = subtasks ? subtasks.filter((s) => !s.archivedAt) : undefined;
+  const totalSubtasks = isExpanded && subtasksQuery.isSuccess && activeSubtasks
+    ? activeSubtasks.length
+    : Math.max(backendSubtaskCount, activeSubtasks?.length ?? 0);
+  const completedSubtasks = isExpanded && subtasksQuery.isSuccess && activeSubtasks
+    ? activeSubtasks.filter((s) => s.status === 'COMPLETED').length
+    : activeSubtasks && activeSubtasks.length > 0
+      ? activeSubtasks.filter((s) => s.status === 'COMPLETED').length
+      : backendCompletedCount;
+  const hasSubtasks = totalSubtasks > 0;
+  const showExpanded = isExpanded && hasSubtasks;
+
+  // Si se archiva o elimina la última subtarea visible mientras estaba expandida, contraer automáticamente
+  useEffect(() => {
+    if (isExpanded && !hasSubtasks && !subtasksQuery.isLoading && !subtasksQuery.isError) {
+      onToggleExpand(task.id);
+    }
+  }, [isExpanded, hasSubtasks, subtasksQuery.isLoading, subtasksQuery.isError, onToggleExpand, task.id]);
+
+  return (
+    <div className="border-b border-[#DEE5EC] last:border-b-0">
+      <div className="flex items-center transition-colors hover:bg-[#EAF2F7]/40">
+        <div
+          className="flex w-10 shrink-0 items-center justify-center pl-3"
+          aria-hidden={!hasSubtasks ? 'true' : undefined}
+        >
+          {hasSubtasks && (
+            <button
+              type="button"
+              onClick={() => onToggleExpand(task.id)}
+              aria-expanded={showExpanded}
+              aria-controls={`subtasks-panel-${task.id}`}
+              aria-label={(showExpanded ? 'Contraer subtareas de ' : 'Expandir subtareas de ') + task.title}
+              title={showExpanded ? 'Contraer subtareas' : 'Expandir subtareas'}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-[#607185] transition-colors hover:bg-[#EAF2F7] hover:text-[#245B78] focus:outline-none focus:ring-2 focus:ring-[#245B78]/30"
+            >
+              <svg
+                className={`h-4 w-4 transition-transform duration-150 motion-reduce:transition-none ${
+                  showExpanded ? 'rotate-90 text-[#245B78]' : ''
+                }`}
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onSelectTask(task.slug || task.id)}
+          className="grid min-w-0 flex-1 grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 py-3.5 pl-1 pr-5 text-left"
+        >
+          {/* Tarea */}
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <p className="truncate text-sm font-medium text-[#172B42]">{task.title}</p>
+              {hasSubtasks && (
+                <span
+                  className="shrink-0 rounded-full bg-[#EAF2F7] px-2 py-0.5 text-xs font-medium text-[#245B78]"
+                  title={`Subtareas completadas: ${completedSubtasks} de ${totalSubtasks}`}
+                  aria-label={`Subtareas completadas: ${completedSubtasks} de ${totalSubtasks}`}
+                >
+                  {completedSubtasks}/{totalSubtasks}
+                </span>
+              )}
+              {/* Condición adicional, NO un TaskStatus: el estado real se sigue mostrando en su columna. */}
+              {task.archivedAt && (
+                <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-500">
+                  Archivada
+                </span>
+              )}
+            </div>
+            
+            {blockedByDependency && (
+                <span
+                  className="shrink-0 rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700"
+                  title="Bloqueada por dependencia: tiene predecesoras sin completar"
+                >
+                  🔒 Bloqueada
+                </span>
+              )}
+
+            {task.description && (
+              <p className="mt-0.5 truncate text-xs text-[#607185]">{task.description}</p>
+            )}
+          </div>
+
+          {/* Responsable */}
+          <div className="flex items-center">
+            {task.assignedTo ? (
+              <div className="flex items-center gap-2">
+                <div
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#EAF2F7] text-[10px] font-semibold text-[#245B78]"
+                  title={task.assignedTo.name}
+                >
+                  {initials(task.assignedTo.name)}
+                </div>
+                <span className="hidden truncate text-xs text-[#172B42] lg:inline">
+                  {task.assignedTo.name.split(' ')[0]}
+                </span>
+              </div>
+            ) : (
+              <div
+                className="flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-[#DEE5EC] text-[10px] text-[#607185]"
+                title="Sin asignar"
+              >
+                —
+              </div>
+            )}
+          </div>
+
+          {/* Estado */}
+          <div>
+            <span className={'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ' + statusColors[task.status]}>
+              {taskStatusLabels[task.status]}
+            </span>
+          </div>
+
+          {/* Prioridad */}
+          <div>
+            <span className={'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ' + priorityColors[task.priority]}>
+              {taskPriorityLabels[task.priority]}
+            </span>
+          </div>
+
+          {/* Vencimiento */}
+          <div>
+            <span className={'text-xs ' + (isOverdue(task) ? 'font-semibold text-red-600' : 'text-[#607185]')}>
+              {isOverdue(task) && '⚠️ '}
+              {formatDate(task.dueDate)}
+            </span>
+            {isTaskExceedingProjectEnd(task.dueDate, projectEstimatedEndDate) && (
+              <span
+                className="block text-[10px] font-medium text-amber-700"
+                title="El vencimiento supera el fin estimado del proyecto (RN-08)"
+              >
+                ⚠️ Supera fin proy.
+              </span>
+            )}
+          </div>
+        </button>
+
+        {canCreateSubtask && (
+          <div className="w-[130px] shrink-0 pr-5">
+            {!task.archivedAt && (
+              <button
+                type="button"
+                onClick={() => onAddSubtask(task)}
+                title={'Agregar subtarea a ' + task.title}
+                aria-label={'Agregar subtarea a ' + task.title}
+                className="w-full rounded-lg border border-[#DEE5EC] bg-white px-3 py-1.5 text-xs font-medium text-[#245B78] transition-colors hover:bg-[#EAF2F7]"
+              >
+                + Subtarea
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Desplegable de subtareas */}
+      {showExpanded && (
+        <div
+          id={`subtasks-panel-${task.id}`}
+          role="region"
+          aria-label={'Subtareas de ' + task.title}
+          className="border-t border-[#DEE5EC]/70 bg-[#F7F9FB]"
+        >
+          {subtasksQuery.isLoading && (
+            <p className="py-3 pl-11 pr-5 text-xs text-[#607185]">Cargando subtareas…</p>
+          )}
+
+          {subtasksQuery.isError && (
+            <p role="alert" className="py-3 pl-11 pr-5 text-xs text-red-600">
+              Error al cargar las subtareas.
+            </p>
+          )}
+
+          {subtasksQuery.isSuccess && activeSubtasks && activeSubtasks.length > 0 && (
+            <div className="divide-y divide-[#DEE5EC]/60">
+              {activeSubtasks.map((subtask) => (
+                <div
+                  key={subtask.id}
+                  className="flex items-center transition-colors hover:bg-[#EAF2F7]/50"
+                >
+                  <div className="w-10 shrink-0 pl-3" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => onSelectTask(subtask.slug || subtask.id)}
+                    className="grid min-w-0 flex-1 grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 py-2.5 pl-1 pr-5 text-left"
+                  >
+                    {/* Subtarea indentada */}
+                    <div className="min-w-0 border-l-2 border-[#245B78]/25 pl-4">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="shrink-0 text-xs text-[#607185]" aria-hidden="true">
+                          ↳
+                        </span>
+                        <p
+                          className={
+                            'truncate text-xs font-medium ' +
+                            (subtask.status === 'COMPLETED'
+                              ? 'line-through text-[#607185]'
+                              : 'text-[#172B42]')
+                          }
+                        >
+                          {subtask.title}
+                        </p>
+                        {subtask.archivedAt && (
+                          <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+                            Archivada
+                          </span>
+                        )}
+                      </div>
+                      {subtask.description && (
+                        <p className="mt-0.5 truncate pl-4 text-[11px] text-[#607185]">
+                          {subtask.description}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Responsable */}
+                    <div className="flex items-center">
+                      {subtask.assignedTo ? (
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#EAF2F7] text-[10px] font-semibold text-[#245B78]"
+                            title={subtask.assignedTo.name}
+                          >
+                            {initials(subtask.assignedTo.name)}
+                          </div>
+                          <span className="hidden truncate text-xs text-[#172B42] lg:inline">
+                            {subtask.assignedTo.name.split(' ')[0]}
+                          </span>
+                        </div>
+                      ) : (
+                        <div
+                          className="flex h-6 w-6 items-center justify-center rounded-full border border-dashed border-[#DEE5EC] text-[10px] text-[#607185]"
+                          title="Sin asignar"
+                        >
+                          —
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Estado */}
+                    <div>
+                      <span
+                        className={
+                          'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ' +
+                          statusColors[subtask.status]
+                        }
+                      >
+                        {taskStatusLabels[subtask.status]}
+                      </span>
+                    </div>
+
+                    {/* Prioridad */}
+                    <div>
+                      <span
+                        className={
+                          'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ' +
+                          priorityColors[subtask.priority]
+                        }
+                      >
+                        {taskPriorityLabels[subtask.priority]}
+                      </span>
+                    </div>
+
+                    {/* Vencimiento */}
+                    <div>
+                      <span
+                        className={
+                          'text-xs ' +
+                          (isOverdue(subtask) ? 'font-semibold text-red-600' : 'text-[#607185]')
+                        }
+                      >
+                        {isOverdue(subtask) && '⚠️ '}
+                        {formatDate(subtask.dueDate)}
+                      </span>
+                      {isTaskExceedingProjectEnd(subtask.dueDate, projectEstimatedEndDate) && (
+                        <span
+                          className="block text-[10px] font-medium text-amber-700"
+                          title="El vencimiento supera el fin estimado del proyecto (RN-08)"
+                        >
+                          ⚠️ Supera fin proy.
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                  {canCreateSubtask && <div className="w-[130px] shrink-0 pr-5" aria-hidden="true" />}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* Componente */
@@ -77,18 +445,115 @@ interface TaskListProps {
 /**
  * Lista de tareas de un proyecto en formato tabla.
  */
-export function TaskList({ projectId, onSelectTask }: TaskListProps) {
+export function TaskList({
+  projectId,
+  onSelectTask,
+  persistedState,
+  onPersistedStateChange,
+}: TaskListProps) {
+  const qc = useQueryClient();
   const { user: currentUser } = useCurrentUser();
-  const [filters, setFilters] = useState<TaskFilters>({ projectId });
-  const [searchInput, setSearchInput] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [statusInput, setStatusInput] = useState<TaskStatus | ''>('');
-  const [priorityInput, setPriorityInput] = useState<TaskPriority | ''>('');
-  const [assignedToInput, setAssignedToInput] = useState('');
-  const [viewFilter, setViewFilter] = useState<ViewFilter>('ALL');
+  const initialRestoredState = persistedState && persistedState.projectId === projectId
+    ? persistedState
+    : null;
+  const [filters, setFilters] = useState<TaskFilters>(
+    () => initialRestoredState?.filters ?? { projectId, page: 1, limit: 10 },
+  );
+  const [searchInput, setSearchInput] = useState<string>(
+    () => initialRestoredState?.searchInput ?? '',
+  );
+  const [viewFilter, setViewFilter] = useState<ViewFilter>(
+    () => initialRestoredState?.viewFilter ?? 'ALL',
+  );
+  const [onlyWithSubtasks, setOnlyWithSubtasks] = useState<boolean>(
+    () => initialRestoredState?.onlyWithSubtasks ?? false,
+  );
   const [subtaskParent, setSubtaskParent] = useState<Task | null>(null);
   const [creatingTask, setCreatingTask] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [expandedTasks, setExpandedTasks] = useState<Record<string, boolean>>(
+    () => initialRestoredState?.expandedTasks ?? {},
+  );
+  const [pendingScrollTop, setPendingScrollTop] = useState<number | null>(
+    () => initialRestoredState?.scrollTop ?? null,
+  );
+
+  const prevProjectIdRef = useRef(projectId);
+  const tableContainerRef = useRef<HTMLDivElement | null>(null);
+  const fetchingSubtasksCount = useIsFetching({ queryKey: ['subtasks'] });
+
+  // Si se monta por primera vez sin scroll previo restaurado para este proyecto, asegurar scroll en 0
+  useEffect(() => {
+    if (initialRestoredState?.scrollTop === null || initialRestoredState?.scrollTop === undefined) {
+      setWindowScrollTop(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Si cambia la prop projectId sobre la misma instancia montada, reiniciar el estado para el nuevo proyecto
+  useEffect(() => {
+    if (prevProjectIdRef.current !== projectId) {
+      prevProjectIdRef.current = projectId;
+      setFilters({ projectId, page: 1, limit: 10 });
+      setSearchInput('');
+      setViewFilter('ALL');
+      setOnlyWithSubtasks(false);
+      setExpandedTasks({});
+      setPendingScrollTop(null);
+      setWindowScrollTop(0);
+    }
+  }, [projectId]);
+
+  // Sincronizar cambios de estado con el contenedor padre (ProjectPage)
+  useEffect(() => {
+    const nextSnapshot: TaskListPersistedState = {
+      projectId,
+      filters,
+      searchInput,
+      viewFilter,
+      onlyWithSubtasks,
+      expandedTasks,
+      scrollTop: pendingScrollTop,
+    };
+    onPersistedStateChange?.(nextSnapshot);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, filters, searchInput, viewFilter, onlyWithSubtasks, expandedTasks, pendingScrollTop]);
+
+  const toggleExpand = (taskId: string) => {
+    setExpandedTasks((prev) => {
+      const nextExpanded = !prev[taskId];
+      if (nextExpanded) {
+        const taskObj = tasks.data?.data?.find((t) => t.id === taskId);
+        const cachedSubtasks = qc.getQueryData<Task[]>(['subtasks', taskId]);
+        const activeCachedCount = cachedSubtasks
+          ? cachedSubtasks.filter((s) => !s.archivedAt).length
+          : 0;
+        const availableCount = Math.max(taskObj?.subtaskCount ?? 0, activeCachedCount);
+        if (availableCount <= 0) {
+          return prev;
+        }
+      }
+      return { ...prev, [taskId]: nextExpanded };
+    });
+  };
+
+  const handleSelectTask = (taskIdentifier: string) => {
+    const currentScrollTop = getWindowScrollTop();
+    const effectiveFilters: TaskFilters = searchInput
+      ? { ...filters, search: searchInput }
+      : filters;
+    const snapshot: TaskListPersistedState = {
+      projectId,
+      filters: effectiveFilters,
+      searchInput,
+      viewFilter,
+      onlyWithSubtasks,
+      expandedTasks,
+      scrollTop: currentScrollTop,
+    };
+    onPersistedStateChange?.(snapshot);
+    onSelectTask(taskIdentifier);
+  };
 
   const project = useQuery({ queryKey: ['project', projectId], queryFn: () => api.getProject(projectId) });
   const members = useQuery({ queryKey: ['project-members', projectId], queryFn: () => api.getProjectMembers(projectId) });
@@ -100,36 +565,43 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
     if (member.user) assignees.set(member.user.id, member.user);
   }
 
-  const tasks = useQuery({
-    queryKey: ['tasks', filters],
-    queryFn: () => api.listTasks(filters),
+    const tasks = useQuery({
+    queryKey: ['tasks', filters, viewFilter],
+    queryFn: () => api.listTasks({
+      ...filters,
+      myTasks: viewFilter === 'MINE' ? true : undefined,
+      atRisk: viewFilter === 'AT_RISK' ? true : undefined,
+    }),
     placeholderData: keepPreviousData,
   });
 
   const { membership } = useMyMembership(projectId);
+  const { blockedIds } = useBlockedTasks(projectId);
   const canCreateSubtask = !!currentUser && !!project.data && canCreateTaskUI(currentUser, project.data, membership);
 
-  /* El texto se aplica con una pequeña espera para no consultar al servidor por cada letra. */
+  /* Búsqueda por texto: se aplica sola 300 ms después de dejar de escribir (sin botón "Buscar"). */
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearch(searchInput), SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
+    const timer = setTimeout(() => {
+      const next = searchInput || undefined;
+      setFilters((prev) => (prev.search === next ? prev : { ...prev, search: next, page: 1 }));
+    }, 300);
+    return () => clearTimeout(timer);
   }, [searchInput]);
 
-  /* Cualquier cambio de filtro refresca la lista solo; no hace falta un botón "Buscar". */
-  useEffect(() => {
-    setFilters({
-      projectId,
-      search: debouncedSearch || undefined,
-      status: statusInput || undefined,
-      priority: priorityInput || undefined,
-      assignedToId: assignedToInput || undefined,
-    });
-  }, [projectId, debouncedSearch, statusInput, priorityInput, assignedToInput]);
+  /* Estado, prioridad y responsable se aplican apenas se elige una opción. */
+  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value as TaskStatus | '';
+    setFilters((prev) => ({ ...prev, status: value || undefined, page: 1 }));
+  };
 
-  /* Enter en el buscador aplica el texto al instante, sin esperar. */
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setDebouncedSearch(searchInput);
+  const handlePriorityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value as TaskPriority | '';
+    setFilters((prev) => ({ ...prev, priority: value || undefined, page: 1 }));
+  };
+
+  const handleAssigneeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value;
+    setFilters((prev) => ({ ...prev, assignedToId: value || undefined, page: 1 }));
   };
 
   const handleExportCsv = async () => {
@@ -148,30 +620,67 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
   }
 
   const clearFilters = () => {
+    setFilters({ projectId, page: 1, limit: 10 });
     setSearchInput('');
-    setDebouncedSearch('');
-    setStatusInput('');
-    setPriorityInput('');
-    setAssignedToInput('');
     setViewFilter('ALL');
+    setOnlyWithSubtasks(false);
   };
 
-  const hasActiveFilters = !!(filters.status || filters.priority || filters.search || filters.assignedToId);
+  const hasActiveFilters = !!(
+    filters.status ||
+    filters.priority ||
+    filters.search ||
+    filters.assignedToId ||
+    onlyWithSubtasks
+  );
 
-  /* "Mis tareas" y "En riesgo" se aplican sobre los datos ya cargados (client-side):
-     comparten la misma consulta que "Todas", solo cambia qué se muestra de esa lista. */
-  const isMine = (task: Task): boolean => !!currentUser && task.assignedToId === currentUser.id;
-
+  /* Los datos ya vienen filtrados y paginados del backend.
+     "Solo con subtareas" se filtra client-side sobre la página actual. */
   const visibleTasks: Task[] = (() => {
-    if (!tasks.data) return [];
-    if (viewFilter === 'AT_RISK') return tasks.data.filter(isAtRisk);
-    if (viewFilter === 'MINE') return tasks.data.filter(isMine);
-    return tasks.data;
+    const serverData = tasks.data?.data ?? [];
+    if (onlyWithSubtasks) {
+      return serverData.filter((task) => {
+        const cachedSubtasks = qc.getQueryData<Task[]>(['subtasks', task.id]);
+        const activeCachedCount = cachedSubtasks
+          ? cachedSubtasks.filter((s) => !s.archivedAt).length
+          : 0;
+        const effectiveCount = Math.max(task.subtaskCount ?? 0, activeCachedCount);
+        return effectiveCount > 0;
+      });
+    }
+    return serverData;
   })();
+  const counts = tasks.data?.counts ?? { all: 0, mine: 0, atRisk: 0 };
+  const totalPages = tasks.data?.totalPages ?? 1;
 
-  const totalCount = tasks.data?.length ?? 0;
-  const atRiskCount = tasks.data?.filter(isAtRisk).length ?? 0;
-  const mineCount = tasks.data?.filter(isMine).length ?? 0;
+  // Restauración determinística del scroll
+  useEffect(() => {
+    if (pendingScrollTop === null) return;
+    if (!tasks.isSuccess) return;
+    if (visibleTasks.length > 0 && !tableContainerRef.current) return;
+
+    const expandedVisibleIds = visibleTasks
+      .filter((t) => expandedTasks[t.id] && (t.subtaskCount ?? 0) > 0)
+      .map((t) => t.id);
+
+    const allExpandedSubtasksReady = expandedVisibleIds.every((id) => {
+      const state = qc.getQueryState(['subtasks', id]);
+      return state?.data !== undefined || state?.status === 'error';
+    });
+
+    if (!allExpandedSubtasksReady) return;
+
+    setWindowScrollTop(pendingScrollTop);
+    setPendingScrollTop(null);
+  }, [
+    pendingScrollTop,
+    tasks.isSuccess,
+    visibleTasks,
+    expandedTasks,
+    fetchingSubtasksCount,
+    projectId,
+    qc,
+  ]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -183,9 +692,9 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
               ? 'bg-[#245B78] text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-[#EAF2F7]'
           }`}
-          onClick={() => setViewFilter('ALL')}
+          onClick={() => { setViewFilter('ALL'); setFilters((prev) => ({ ...prev, page: 1 })); }}
         >
-          Todas ({totalCount})
+          Todas ({counts.all})
         </button>
         <button
           className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -193,9 +702,9 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
               ? 'bg-[#245B78] text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-[#EAF2F7]'
           }`}
-          onClick={() => setViewFilter('MINE')}
+          onClick={() => { setViewFilter('MINE'); setFilters((prev) => ({ ...prev, page: 1 })); }}
         >
-          Mis tareas ({mineCount})
+          Mis tareas ({counts.mine})
         </button>
         <button
           className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -203,9 +712,9 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
               ? 'bg-red-600 text-white'
               : 'border border-[#DEE5EC] bg-white text-[#607185] hover:bg-red-50'
           }`}
-          onClick={() => setViewFilter('AT_RISK')}
+          onClick={() => { setViewFilter('AT_RISK'); setFilters((prev) => ({ ...prev, page: 1 })); }}
         >
-          En riesgo ({atRiskCount})
+          En riesgo ({counts.atRisk})
         </button>
 
         <button
@@ -231,7 +740,7 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
 
       {/* Filtros */}
       <div className="rounded-xl border border-[#DEE5EC] bg-white p-4">
-        <form onSubmit={handleSearch} className="flex flex-wrap items-center gap-3">
+        <form onSubmit={(e) => e.preventDefault()} className="flex flex-wrap items-center gap-3">
           <input
             className="min-w-[200px] flex-1 rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm placeholder:text-[#607185] focus:border-[#245B78] focus:outline-none"
             placeholder="Buscar por título o descripción…"
@@ -241,8 +750,8 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
 
           <select
             className="rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
-            value={statusInput}
-            onChange={(e) => setStatusInput(e.target.value as TaskStatus | '')}
+            value={filters.status ?? ''}
+            onChange={handleStatusChange}
           >
             <option value="">Estado: Todos</option>
             {Object.entries(taskStatusLabels).map(([key, label]) => (
@@ -254,8 +763,8 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
 
           <select
             className="rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
-            value={priorityInput}
-            onChange={(e) => setPriorityInput(e.target.value as TaskPriority | '')}
+            value={filters.priority ?? ''}
+            onChange={handlePriorityChange}
           >
             <option value="">Prioridad: Todas</option>
             {Object.entries(taskPriorityLabels).map(([key, label]) => (
@@ -267,8 +776,8 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
 
           <select
             className="rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
-            value={assignedToInput}
-            onChange={(e) => setAssignedToInput(e.target.value)}
+            value={filters.assignedToId ?? ''}
+            onChange={handleAssigneeChange}
           >
             <option value="">Responsable: Todos</option>
             {[...assignees.values()].map((u) => (
@@ -277,6 +786,16 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
               </option>
             ))}
           </select>
+
+          <label className="flex cursor-pointer select-none items-center gap-2 rounded-lg border border-[#DEE5EC] px-3 py-2 text-sm text-[#172B42] transition-colors hover:bg-[#EAF2F7]/50">
+            <input
+              type="checkbox"
+              checked={onlyWithSubtasks}
+              onChange={(e) => setOnlyWithSubtasks(e.target.checked)}
+              className="h-4 w-4 rounded border-[#DEE5EC] text-[#245B78] focus:ring-[#245B78]"
+            />
+            <span>Solo tareas con subtareas</span>
+          </label>
 
           {hasActiveFilters && (
             <button
@@ -304,12 +823,15 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
       {tasks.isSuccess && visibleTasks.length === 0 && (
         <div className="rounded-xl border border-[#DEE5EC] bg-white p-8 text-center">
           <p className="text-sm text-[#607185]">
-            {viewFilter === 'AT_RISK'
-              ? 'No hay tareas en riesgo. ¡Todo en orden!'
-              : viewFilter === 'MINE'
-                ? 'No tenés tareas asignadas acá.'
-                : hasActiveFilters
-                  ? 'No se encontraron tareas con los filtros actuales.'
+            {hasActiveFilters &&
+            (viewFilter === 'ALL' ||
+              (viewFilter === 'AT_RISK' && counts.atRisk > 0) ||
+              (viewFilter === 'MINE' && counts.mine > 0))
+              ? 'No se encontraron tareas con los filtros actuales.'
+              : viewFilter === 'AT_RISK'
+                ? 'No hay tareas en riesgo. ¡Todo en orden!'
+                : viewFilter === 'MINE'
+                  ? 'No tenés tareas asignadas acá.'
                   : 'Este proyecto todavía no tiene tareas.'}
           </p>
         </div>
@@ -317,129 +839,54 @@ export function TaskList({ projectId, onSelectTask }: TaskListProps) {
 
       {/* Tabla de tareas */}
       {tasks.isSuccess && visibleTasks.length > 0 && (
-        <div className="overflow-hidden rounded-xl border border-[#DEE5EC] bg-white">
-          {/* Header */}
-          <div className="flex items-center border-b border-[#DEE5EC] bg-[#F7F9FB] text-xs font-semibold uppercase tracking-wide text-[#607185]">
-            <div className="grid min-w-0 flex-1 grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 px-5 py-3">
-              <span>Tarea</span>
-              <span>Responsable</span>
-              <span>Estado</span>
-              <span>Prioridad</span>
-              <span>Vencimiento</span>
-            </div>
-            {canCreateSubtask && <div className="w-[130px] shrink-0 pr-5" aria-hidden="true" />}
-          </div>
-
-          {/* Rows */}
-          {visibleTasks.map((task) => (
-            <div
-              key={task.id}
-              className="flex items-center border-b border-[#DEE5EC] transition-colors last:border-b-0 hover:bg-[#EAF2F7]/40"
-            >
-            <button
-              onClick={() => onSelectTask(task.id)}
-              className="grid min-w-0 flex-1 grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 px-5 py-3.5 text-left"
-            >
-              {/* Tarea */}
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2">
-                  <p className="truncate text-sm font-medium text-[#172B42]">{task.title}</p>
-                  {/* Condición adicional, NO un TaskStatus: el estado real se sigue mostrando en su columna. */}
-                  {task.archivedAt && (
-                    <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-500">
-                      Archivada
-                    </span>
-                  )}
+        <div
+          ref={tableContainerRef}
+          className="overflow-hidden rounded-xl border border-[#DEE5EC] bg-white"
+        >
+          <div className="overflow-x-auto">
+            <div className="min-w-[680px]">
+              {/* Header */}
+              <div className="flex items-center border-b border-[#DEE5EC] bg-[#F7F9FB] text-xs font-semibold uppercase tracking-wide text-[#607185]">
+                <div className="w-10 shrink-0 pl-3" aria-hidden="true" />
+                <div className="grid min-w-0 flex-1 grid-cols-[1fr_120px_120px_110px_100px] items-center gap-2 py-3 pl-1 pr-5">
+                  <span>Tarea</span>
+                  <span>Responsable</span>
+                  <span>Estado</span>
+                  <span>Prioridad</span>
+                  <span>Vencimiento</span>
                 </div>
-                {task.description && (
-                  <p className="mt-0.5 truncate text-xs text-[#607185]">{task.description}</p>
-                )}
+                {canCreateSubtask && <div className="w-[130px] shrink-0 pr-5" aria-hidden="true" />}
               </div>
 
-              {/* Responsable */}
-              <div className="flex items-center">
-                {task.assignedTo ? (
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#EAF2F7] text-[10px] font-semibold text-[#245B78]"
-                      title={task.assignedTo.name}
-                    >
-                      {initials(task.assignedTo.name)}
-                    </div>
-                    <span className="hidden truncate text-xs text-[#172B42] lg:inline">
-                      {task.assignedTo.name.split(' ')[0]}
-                    </span>
-                  </div>
-                ) : (
-                  <div
-                    className="flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-[#DEE5EC] text-[10px] text-[#607185]"
-                    title="Sin asignar"
-                  >
-                    —
-                  </div>
-                )}
-              </div>
-
-              {/* Estado */}
-              <div>
-                <span className={'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ' + statusColors[task.status]}>
-                  {taskStatusLabels[task.status]}
-                </span>
-              </div>
-
-              {/* Prioridad */}
-              <div>
-                <span className={'inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ' + priorityColors[task.priority]}>
-                  {taskPriorityLabels[task.priority]}
-                </span>
-              </div>
-
-              {/* Vencimiento */}
-              <div>
-                <span className={'text-xs ' + (isOverdue(task) ? 'font-semibold text-red-600' : 'text-[#607185]')}>
-                  {isOverdue(task) && '⚠️ '}
-                  {formatDate(task.dueDate)}
-                </span>
-                {isTaskExceedingProjectEnd(task.dueDate, project.data?.estimatedEndDate) && (
-                  <span
-                    className="block text-[10px] font-medium text-amber-700"
-                    title="El vencimiento supera el fin estimado del proyecto (RN-08)"
-                  >
-                    ⚠️ Supera fin proy.
-                  </span>
-                )}
-              </div>
-            </button>
-            {canCreateSubtask && (
-              <div className="w-[130px] shrink-0 pr-5">
-                {!task.archivedAt && (
-                  <button
-                    type="button"
-                    onClick={() => setSubtaskParent(task)}
-                    title={'Agregar subtarea a ' + task.title}
-                    aria-label={'Agregar subtarea a ' + task.title}
-                    className="w-full rounded-lg border border-[#DEE5EC] bg-white px-3 py-1.5 text-xs font-medium text-[#245B78] transition-colors hover:bg-[#EAF2F7]"
-                  >
-                    + Subtarea
-                  </button>
-                )}
-              </div>
-            )}
+              {/* Rows */}
+              {visibleTasks.map((task) => (
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  isExpanded={!!expandedTasks[task.id]}
+                  onToggleExpand={toggleExpand}
+                  onSelectTask={handleSelectTask}
+                  canCreateSubtask={canCreateSubtask}
+                  onAddSubtask={setSubtaskParent}
+                  projectEstimatedEndDate={project.data?.estimatedEndDate}
+                  blockedByDependency={blockedIds.has(task.id)}
+                />
+              ))}
             </div>
-          ))}
+          </div>
 
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-[#DEE5EC] bg-[#F7F9FB] px-5 py-2.5 text-xs text-[#607185]">
             <span>
-              {viewFilter === 'AT_RISK'
-                ? visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '') + ' en riesgo'
-                : viewFilter === 'MINE'
-                  ? visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '') + ' asignada' + (visibleTasks.length !== 1 ? 's' : '') + ' a vos'
-                  : visibleTasks.length + ' tarea' + (visibleTasks.length !== 1 ? 's' : '')}
+              {tasks.data
+                ? `Mostrando ${visibleTasks.length} de ${tasks.data.total} tarea${tasks.data.total !== 1 ? 's' : ''}`
+                : ''}
             </span>
-            {hasActiveFilters && (
-              <span className="italic">Filtros activos</span>
-            )}
+            <Pagination
+              page={filters.page ?? 1}
+              totalPages={totalPages}
+              onPageChange={(p) => setFilters((prev) => ({ ...prev, page: p }))}
+            />
           </div>
         </div>
       )}

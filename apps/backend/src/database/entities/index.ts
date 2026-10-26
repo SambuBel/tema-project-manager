@@ -7,11 +7,13 @@ import { AuthorizedDomainEntity } from './authorized-domain.entity';
 import { ProjectStatusHistoryEntity } from './project-status-history.entity';
 import { ResourceProfileEntity } from './resource-profile.entity';
 import { ProjectMemberEntity } from './project-member.entity';
+import { ProjectMemberAllocationEntity } from './project-member-allocation.entity';
 import { TaskEntity } from '../../tasks/task.entity';
 import { TaskDependencyEntity } from './task-dependency.entity';
 import { TagEntity } from './tag.entity';
 import { TaskTagEntity } from './task-tag.entity';
 import { CommentEntity } from './comment.entity';
+import { CommentMentionEntity } from './comment-mention.entity';
 import { AttachmentEntity } from './attachment.entity';
 import { CostCategoryEntity } from './cost-category.entity';
 import { BudgetEntity } from './budget.entity';
@@ -37,6 +39,7 @@ export * from './task-dependency.entity';
 export * from './tag.entity';
 export * from './task-tag.entity';
 export * from './comment.entity';
+export * from './comment-mention.entity';
 export * from './attachment.entity';
 export * from './cost-category.entity';
 export * from './budget.entity';
@@ -53,11 +56,15 @@ import { ProjectActivityEntity } from './project-activity.entity';
 import { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
 import { SubtaskEntity } from '../../subtasks/subtask.entity';
 import { ProjectSlugHistoryEntity } from '../../projects/project-slug-history.entity';
+import { TaskSlugHistoryEntity } from '../../tasks/task-slug-history.entity';
+import { MilestoneEntity } from '../../milestones/milestone.entity';
 
 export const ALL_ENTITIES = [
+  MilestoneEntity,
   ProjectInvitationEntity,
   ProjectActivityEntity,
   ProjectSlugHistoryEntity,
+  TaskSlugHistoryEntity,
   ProjectEntity,
   UserEntity,
   RoleEntity,
@@ -67,12 +74,14 @@ export const ALL_ENTITIES = [
   ProjectStatusHistoryEntity,
   ResourceProfileEntity,
   ProjectMemberEntity,
+  ProjectMemberAllocationEntity,
   TaskEntity,
   SubtaskEntity,
   TaskDependencyEntity,
   TagEntity,
   TaskTagEntity,
   CommentEntity,
+  CommentMentionEntity,
   AttachmentEntity,
   CostCategoryEntity,
   BudgetEntity,
@@ -90,3 +99,5 @@ export { SubtaskEntity } from '../../subtasks/subtask.entity';
 export * from './project-activity.entity';
 export { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
 export { ProjectSlugHistoryEntity } from '../../projects/project-slug-history.entity';
+export { TaskSlugHistoryEntity } from '../../tasks/task-slug-history.entity';
+export { MilestoneEntity } from '../../milestones/milestone.entity';

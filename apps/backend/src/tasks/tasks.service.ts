@@ -1,12 +1,16 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { IsNull, Not, Repository, EntityManager } from 'typeorm';
 import { TaskEntity } from './task.entity';
+import { TaskSlugHistoryEntity } from './task-slug-history.entity';
+import { slugify } from '../projects/utils/slug.util';
 import { SubtaskEntity } from '../subtasks/subtask.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { CommentEntity } from '../database/entities/comment.entity';
+import { CommentMentionEntity } from '../database/entities/comment-mention.entity';
+import { CommentMentionDto } from './dto/comment-mention.dto';
 import { ProjectActivityService } from '../projects/project-activity.service';
-import { ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
+import { AuditOrigin, ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
 import { ProjectActivityEntity } from '../database/entities/project-activity.entity';
 import { TaskPriority, TaskStatus } from '../database/enums';
 import { UsersService } from '../users/users.service';
@@ -29,6 +33,20 @@ import {
  * RN-03 (el responsable debe pertenecer al proyecto), la jerarquía de subtareas
  * y RN-04 (no completar con subtareas pendientes)
  */
+/** Desde dónde viene un cambio. Sin esto se asume que lo hizo el usuario desde la app. */
+export interface ChangeSource {
+  origin: AuditOrigin;
+  /** Pedido original del usuario cuando el cambio lo ejecutó el asistente. */
+  request?: string;
+}
+
+const originOf = (source?: ChangeSource) => (source ? { origin: source.origin } : {});
+
+function withSourceMetadata<T extends object>(metadata: T, source?: ChangeSource): T | (T & { viaAssistant: true; request?: string }) {
+  if (source?.origin !== AuditOrigin.AI) return metadata;
+  return { ...metadata, viaAssistant: true, request: source.request };
+}
+
 @Injectable()
 export class TasksService {
   constructor(
@@ -38,12 +56,106 @@ export class TasksService {
     private readonly projectRepo: Repository<ProjectEntity>,
     @InjectRepository(CommentEntity)
     private readonly commentRepo: Repository<CommentEntity>,
+    @InjectRepository(CommentMentionEntity)
+    private readonly commentMentionRepo: Repository<CommentMentionEntity>,
     private readonly usersService: UsersService,
     private readonly permissions: PermissionsService,
     private readonly activityService: ProjectActivityService,
     @InjectRepository(SubtaskEntity)
     private readonly subtaskRepo: Repository<SubtaskEntity>,
+    @InjectRepository(TaskSlugHistoryEntity)
+    private readonly taskSlugHistoryRepo: Repository<TaskSlugHistoryEntity>,
   ) {}
+
+  /**
+   * Genera un slug único para la tarea dentro de su proyecto.
+   * Si ya existe una tarea o slug histórico con ese nombre en el proyecto, calcula el sufijo incremental (-2, -3, etc.).
+   * Usa advisory lock por proyecto y baseSlug para evitar colisiones en creaciones simultáneas.
+   */
+  async generateUniqueSlug(
+    title: string,
+    projectId: string,
+    manager: EntityManager,
+    currentTaskId?: string,
+  ): Promise<string> {
+    const baseSlug = slugify(title, 'tarea');
+
+    if (typeof manager.query === 'function') {
+      try {
+        await manager.query(
+          'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+          [`tema_task_slugs_${projectId}`, baseSlug],
+        );
+      } catch {
+        try {
+          await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`task_slug_${projectId}_${baseSlug}`]);
+        } catch {
+          // En tests o drivers donde advisory lock no está disponible
+        }
+      }
+    }
+
+    interface SlugRow {
+      slug: string;
+      task_id?: string;
+      source?: 'task' | 'history';
+    }
+    let rows: SlugRow[] = [];
+    if (typeof manager.query === 'function') {
+      try {
+        const queryResult = await manager.query(
+          `SELECT slug, id::text AS task_id, 'task' AS source FROM tasks WHERE project_id = $1 AND (slug = $2 OR slug LIKE $3)
+           UNION ALL
+           SELECT slug, task_id::text AS task_id, 'history' AS source FROM task_slug_histories WHERE project_id = $1 AND (slug = $2 OR slug LIKE $3)`,
+          [projectId, baseSlug, `${baseSlug}-%`],
+        );
+        if (Array.isArray(queryResult)) {
+          rows = queryResult;
+        }
+      } catch {
+        rows = [];
+      }
+    } else {
+      const tasks = (await manager.find?.(TaskEntity, { where: { projectId } as any })) || [];
+      const histories = (await manager.find?.(TaskSlugHistoryEntity, { where: { projectId } as any })) || [];
+      rows = [
+        ...tasks.map((t: any) => ({ slug: t.slug, task_id: t.id, source: 'task' as const })),
+        ...histories.map((h: any) => ({ slug: h.slug, task_id: h.taskId, source: 'history' as const })),
+      ].filter((r) => r.slug === baseSlug || r.slug?.startsWith(`${baseSlug}-`));
+    }
+
+    if (currentTaskId) {
+      const selfCurrent = rows.find((r) => r.slug === baseSlug && r.task_id === currentTaskId);
+      if (selfCurrent) {
+        return baseSlug;
+      }
+
+      const occupiedByOthers = new Set(
+        rows.filter((r) => r.task_id && r.task_id !== currentTaskId).map((r) => r.slug),
+      );
+
+      if (!occupiedByOthers.has(baseSlug)) {
+        return baseSlug;
+      }
+
+      let nextSuffix = 2;
+      while (occupiedByOthers.has(`${baseSlug}-${nextSuffix}`)) {
+        nextSuffix++;
+      }
+      return `${baseSlug}-${nextSuffix}`;
+    }
+
+    const occupied = new Set(rows.map((r) => r.slug));
+    if (!occupied.has(baseSlug)) {
+      return baseSlug;
+    }
+
+    let nextSuffix = 2;
+    while (occupied.has(`${baseSlug}-${nextSuffix}`)) {
+      nextSuffix++;
+    }
+    return `${baseSlug}-${nextSuffix}`;
+  }
 
   private async findProjectOrThrow(projectId: string): Promise<ProjectEntity> {
     const project = await this.projectRepo.findOneBy({ id: projectId });
@@ -53,14 +165,43 @@ export class TasksService {
     return project;
   }
 
-  /** Sin chequeo de autorización */
-  private async findTaskOrThrow(id: string): Promise<TaskEntity> {
-    const task = await this.repo.findOne({
-      where: { id },
-      relations: ['project', 'assignedTo'],
-    });
+  /** Sin chequeo de autorización. Acepta UUID o slug dentro del proyecto (o buscando en su histórico). */
+  private async findTaskOrThrow(idOrSlug: string, projectId?: string): Promise<TaskEntity> {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
+    let task: TaskEntity | null = null;
+
+    if (isUuid) {
+      task = await this.repo.findOne({
+        where: { id: idOrSlug },
+        relations: ['project', 'assignedTo'],
+      });
+    } else {
+      const where: any = { slug: idOrSlug };
+      if (projectId) {
+        where.projectId = projectId;
+      }
+      task = await this.repo.findOne({
+        where,
+        relations: ['project', 'assignedTo'],
+      });
+
+      if (!task) {
+        const historyWhere: any = { slug: idOrSlug };
+        if (projectId) {
+          historyWhere.projectId = projectId;
+        }
+        const history = await this.taskSlugHistoryRepo.findOne({
+          where: historyWhere,
+          relations: ['task', 'task.project', 'task.assignedTo'],
+        });
+        if (history?.task) {
+          task = history.task;
+        }
+      }
+    }
+
     if (!task) {
-      throw new NotFoundException(`Task ${id} no encontrada`);
+      throw new NotFoundException(`Task ${idOrSlug} no encontrada`);
     }
     return task;
   }
@@ -80,7 +221,24 @@ export class TasksService {
     }
   }
 
-  async create(dto: CreateTaskDto, user: RequestUser): Promise<TaskEntity> {
+  /**
+   * Una subtarea tiene que apuntar a una tarea que exista, del MISMO proyecto, y que no
+   * sea a su vez una subtarea.
+   */
+  private async assertValidParentTask(projectId: string, parentTaskId: string): Promise<void> {
+    const parent = await this.repo.findOneBy({ id: parentTaskId });
+    if (!parent) {
+      throw new NotFoundException(`Task ${parentTaskId} no encontrada`);
+    }
+    if (parent.projectId !== projectId) {
+      throw new BadRequestException('La tarea padre debe pertenecer al mismo proyecto');
+    }
+    if (parent.parentTaskId) {
+      throw new BadRequestException('No se pueden anidar subtareas: la tarea padre ya es una subtarea');
+    }
+  }
+
+  async create(dto: CreateTaskDto, user: RequestUser, source?: ChangeSource): Promise<TaskEntity> {
     const project = await this.findProjectOrThrow(dto.projectId);
 
     const allowed = await this.permissions.canCreateTask(user, project);
@@ -92,31 +250,82 @@ export class TasksService {
       await this.assertAssigneeIsProjectMember(project, dto.assignedToId);
     }
 
+    if (dto.parentTaskId) {
+      await this.assertValidParentTask(dto.projectId, dto.parentTaskId);
+    }
 
-    const task = new TaskEntity();
-    task.projectId = dto.projectId;
-    task.title = dto.title;
-    task.description = dto.description ?? null;
-    task.status = dto.status ?? TaskStatus.PENDING;
-    task.priority = dto.priority ?? TaskPriority.MEDIUM;
-    task.assignedToId = dto.assignedToId ?? null;
-    task.startDate = dto.startDate ?? null;
-    task.dueDate = dto.dueDate ?? null;
-    task.createdBy = user.id;
+    return this.repo.manager.transaction(async (manager) => {
+      const slug = await this.generateUniqueSlug(dto.title, project.id, manager);
 
-    const saved = await this.repo.save(task);
-    await this.activityService.logEvent({
-      projectId: saved.projectId,
-      actorId: user.id,
-      actionType: ProjectActivityAction.TASK_CREATED,
-      entityType: ProjectActivityEntityType.TASK,
-      entityId: saved.id,
-      metadata: { title: saved.title },
+      const task = new TaskEntity();
+      task.projectId = dto.projectId;
+      task.parentTaskId = dto.parentTaskId ?? null;
+      task.title = dto.title;
+      task.slug = slug;
+      task.description = dto.description ?? null;
+      task.status = dto.status ?? TaskStatus.PENDING;
+      task.priority = dto.priority ?? TaskPriority.MEDIUM;
+      task.assignedToId = dto.assignedToId ?? null;
+      task.startDate = dto.startDate ?? null;
+      task.dueDate = dto.dueDate ?? null;
+      task.createdBy = user.id;
+
+      const saved = await manager.save(TaskEntity, task);
+
+      await this.activityService.logEvent(
+        {
+          projectId: saved.projectId,
+          actorId: user.id,
+          actionType: ProjectActivityAction.TASK_CREATED,
+          entityType: ProjectActivityEntityType.TASK,
+          entityId: saved.id,
+          metadata: withSourceMetadata({ title: saved.title, slug: saved.slug }, source),
+          ...originOf(source),
+        },
+        manager,
+      );
+
+      return saved;
     });
-    return saved;
   }
 
-  async findAllByProject(filters: FilterTasksDto, user: RequestUser): Promise<TaskEntity[]> {
+  private async getSubtaskCountsByParentIds(
+    projectId: string,
+    parentIds: string[],
+  ): Promise<Map<string, { total: number; completed: number }>> {
+    const map = new Map<string, { total: number; completed: number }>();
+    if (parentIds.length === 0 || typeof this.repo.manager?.query !== 'function') {
+      return map;
+    }
+
+    const rows = await this.repo.manager.query(
+      `SELECT
+         parent_task_id AS "parentTaskId",
+         COUNT(*)::int AS "total",
+         COUNT(*) FILTER (WHERE status = $2)::int AS "completed"
+       FROM tasks
+       WHERE project_id = $1
+         AND parent_task_id = ANY($3::uuid[])
+         AND archived_at IS NULL
+       GROUP BY parent_task_id`,
+      [projectId, TaskStatus.COMPLETED, parentIds],
+    );
+
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        if (row?.parentTaskId) {
+          map.set(row.parentTaskId, {
+            total: Number(row.total) || 0,
+            completed: Number(row.completed) || 0,
+          });
+        }
+      }
+    }
+
+    return map;
+  }
+
+  async findAllByProject(filters: FilterTasksDto, user: RequestUser) {
     const project = await this.findProjectOrThrow(filters.projectId);
 
     const allowed = await this.permissions.canViewTask(user, project);
@@ -124,38 +333,95 @@ export class TasksService {
       throw new ForbiddenException('No tenés acceso a este proyecto.');
     }
 
-    const qb = this.repo
-      .createQueryBuilder('task')
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 10;
+
+    const buildBaseQb = () => {
+      const qb = this.repo
+        .createQueryBuilder('task')
+        .where('task.projectId = :projectId', { projectId: filters.projectId });
+
+      if (!filters.includeSubtasks) {
+        qb.andWhere('task.parentTaskId IS NULL');
+      }
+
+      if (filters.status) {
+        qb.andWhere('task.status = :status', { status: filters.status });
+      }
+      if (filters.priority) {
+        qb.andWhere('task.priority = :priority', { priority: filters.priority });
+      }
+      if (filters.assignedToId) {
+        qb.andWhere('task.assignedToId = :assignedToId', { assignedToId: filters.assignedToId });
+      }
+      if (filters.search) {
+        qb.andWhere(
+          '(task.title ILIKE :search OR task.description ILIKE :search)',
+          { search: `%${filters.search}%` },
+        );
+      }
+      return qb;
+    };
+
+    const dataQb = buildBaseQb()
       .leftJoinAndSelect('task.assignedTo', 'assignedTo')
-      .leftJoinAndSelect('task.project', 'project')
-      .where('task.projectId = :projectId', { projectId: filters.projectId })
+      .leftJoinAndSelect('task.project', 'project');
 
-    if (filters.status) {
-      qb.andWhere('task.status = :status', { status: filters.status });
+    if (filters.myTasks) {
+      dataQb.andWhere('task.assignedToId = :currentUserId', { currentUserId: user.id });
     }
-
-    if (filters.priority) {
-      qb.andWhere('task.priority = :priority', { priority: filters.priority });
-    }
-
-    if (filters.assignedToId) {
-      qb.andWhere('task.assignedToId = :assignedToId', {
-        assignedToId: filters.assignedToId,
-      });
-    }
-
-    if (filters.search) {
-      qb.andWhere(
-        '(task.title ILIKE :search OR task.description ILIKE :search)',
-        { search: `%${filters.search}%` },
+    if (filters.atRisk) {
+      dataQb.andWhere(
+        '((task.dueDate < NOW() AND task.status != :completedStatus) OR task.status = :blockedStatus)',
+        { completedStatus: TaskStatus.COMPLETED, blockedStatus: TaskStatus.BLOCKED },
       );
     }
 
-    return qb.orderBy('task.createdAt', 'DESC').getMany();
+    dataQb.orderBy('task.createdAt', 'DESC');
+
+    const [data, total] = await dataQb
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    if (data.length > 0) {
+      const countsByParent = await this.getSubtaskCountsByParentIds(
+        filters.projectId,
+        data.map((t) => t.id),
+      );
+
+      for (const task of data) {
+        const counts = countsByParent.get(task.id);
+        task.subtaskCount = counts?.total ?? 0;
+        task.completedSubtaskCount = counts?.completed ?? 0;
+      }
+    }
+
+    const [allCount, mineCount, atRiskCount] = await Promise.all([
+      buildBaseQb().getCount(),
+      buildBaseQb()
+        .andWhere('task.assignedToId = :currentUserId', { currentUserId: user.id })
+        .getCount(),
+      buildBaseQb()
+        .andWhere(
+          '((task.dueDate < NOW() AND task.status != :completedStatus) OR task.status = :blockedStatus)',
+          { completedStatus: TaskStatus.COMPLETED, blockedStatus: TaskStatus.BLOCKED },
+        )
+        .getCount(),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      counts: { all: allCount, mine: mineCount, atRisk: atRiskCount },
+    };
   }
 
-  async findOne(id: string, user: RequestUser): Promise<TaskEntity> {
-    const task = await this.findTaskOrThrow(id);
+  async findOne(id: string, user: RequestUser, projectId?: string): Promise<TaskEntity> {
+    const task = await this.findTaskOrThrow(id, projectId);
 
     const allowed = await this.permissions.canViewTask(user, task.project);
     if (!allowed) {
@@ -163,6 +429,17 @@ export class TasksService {
     }
 
     return task;
+  }
+
+  /** Subtareas de una tarea */
+  async findSubtasks(parentTaskId: string, user: RequestUser): Promise<TaskEntity[]> {
+    await this.findOne(parentTaskId, user);
+
+    return this.repo.find({
+      where: { parentTaskId },
+      relations: ['assignedTo'],
+      order: { createdAt: 'ASC' },
+    });
   }
 
   async update(id: string, dto: UpdateTaskDto, user: RequestUser): Promise<TaskEntity> {
@@ -196,48 +473,133 @@ export class TasksService {
       const pendingSubtasks = await this.subtaskRepo.count({
         where: { taskId: task.id, completed: false },
       });
-      if (pendingSubtasks > 0) {
+      const pendingChildTasks = await this.repo.count({
+        where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED), archivedAt: IsNull() },
+      });
+      if (pendingSubtasks > 0 || pendingChildTasks > 0) {
         throw new BadRequestException('No se puede completar una tarea con subtareas pendientes');
       }
     }
 
-    
-    const changes: Record<string, { old: any; new: any }> = {};
-    const trackChange = (field: keyof TaskEntity, dtoField: keyof UpdateTaskDto) => {
-      if (dto[dtoField] !== undefined && task[field] !== dto[dtoField]) {
-        changes[field as string] = { old: task[field], new: dto[dtoField] };
-        (task as any)[field] = dto[dtoField];
+    return this.repo.manager.transaction(async (manager) => {
+      const changes: Record<string, { old: any; new: any }> = {};
+
+      // Si cambió el título, actualizar el slug de la tarea y registrar el anterior en el histórico
+      if (dto.title !== undefined && dto.title.trim() && dto.title.trim() !== task.title) {
+        const oldSlug = task.slug;
+        const candidateBaseSlug = slugify(dto.title.trim(), 'tarea');
+        if (candidateBaseSlug && candidateBaseSlug !== task.slug) {
+          const newSlug = await this.generateUniqueSlug(
+            dto.title.trim(),
+            task.projectId,
+            manager,
+            task.id,
+          );
+          if (newSlug !== task.slug) {
+            // Si el newSlug estaba en el histórico de esta misma tarea, liberarlo
+            await manager.delete(TaskSlugHistoryEntity, { taskId: task.id, slug: newSlug });
+
+            if (oldSlug) {
+              const historyRecord = this.taskSlugHistoryRepo.create({
+                taskId: task.id,
+                projectId: task.projectId,
+                slug: oldSlug,
+              });
+              await manager.save(TaskSlugHistoryEntity, historyRecord);
+            }
+            changes.slug = { old: oldSlug, new: newSlug };
+            task.slug = newSlug;
+          }
+        }
       }
-    };
 
-    trackChange('title', 'title');
-    trackChange('description', 'description');
-    trackChange('priority', 'priority');
-    trackChange('status', 'status');
-    trackChange('assignedToId', 'assignedToId');
-    trackChange('startDate', 'startDate');
-    trackChange('dueDate', 'dueDate');
+      const trackChange = (field: keyof TaskEntity, dtoField: keyof UpdateTaskDto) => {
+        if (dto[dtoField] !== undefined && task[field] !== dto[dtoField]) {
+          changes[field as string] = { old: task[field], new: dto[dtoField] };
+          (task as any)[field] = dto[dtoField];
+        }
+      };
 
-    const saved = await this.repo.save(task);
+      trackChange('title', 'title');
+      trackChange('description', 'description');
+      trackChange('priority', 'priority');
+      trackChange('status', 'status');
+      trackChange('assignedToId', 'assignedToId');
+      trackChange('startDate', 'startDate');
+      trackChange('dueDate', 'dueDate');
 
-    if (Object.keys(changes).length > 0) {
-      await this.activityService.logEvent({
-        projectId: saved.projectId,
-        actorId: user.id,
-        actionType: ProjectActivityAction.TASK_UPDATED,
-        entityType: ProjectActivityEntityType.TASK,
-        entityId: saved.id,
-        metadata: { changes },
-      });
-    }
+      const saved = await manager.save(TaskEntity, task);
 
-    return saved;
+      if (Object.keys(changes).length > 0) {
+        await this.activityService.logEvent(
+          {
+            projectId: saved.projectId,
+            actorId: user.id,
+            actionType: ProjectActivityAction.TASK_UPDATED,
+            entityType: ProjectActivityEntityType.TASK,
+            entityId: saved.id,
+            metadata: { changes },
+          },
+          manager,
+        );
+      }
 
+      return saved;
+    });
   }
 
+  private async validateMentions(
+    content: string,
+    mentions: CommentMentionDto[] | undefined,
+    task: TaskEntity,
+  ): Promise<CommentMentionDto[]> {
+    if (!mentions || mentions.length === 0) return [];
 
-  
-  async addComment(taskId: string, content: string, user: RequestUser): Promise<CommentEntity> {
+    const sorted = [...mentions].sort((a, b) => a.startIndex - b.startIndex);
+
+    for (let i = 0; i < sorted.length; i++) {
+      const m = sorted[i]!;
+      if (m.startIndex < 0 || m.endIndex > content.length || m.startIndex >= m.endIndex) {
+        throw new BadRequestException(`Rango de mención inválido [${m.startIndex}, ${m.endIndex}]`);
+      }
+
+      const prev = sorted[i - 1];
+      if (prev && m.startIndex < prev.endIndex) {
+        throw new BadRequestException('Las menciones no pueden superponerse');
+      }
+
+      const expectedText = content.substring(m.startIndex, m.endIndex);
+      if (expectedText !== `@${m.name}`) {
+        throw new BadRequestException(
+          `El texto de la mención en posición [${m.startIndex}, ${m.endIndex}] ("${expectedText}") no coincide con "@${m.name}"`,
+        );
+      }
+
+      const user = await this.usersService.findById(m.userId);
+      if (!user || !user.active || (user as any).deletedAt) {
+        throw new BadRequestException(`El usuario mencionado ${m.name} no existe o no está activo`);
+      }
+
+      const requestUser: RequestUser = {
+        id: user.id,
+        roles: Array.isArray((user as any).roles) ? (user as any).roles : [],
+      } as RequestUser;
+
+      const hasAccess = await this.permissions.canViewTask(requestUser, task.project);
+      if (!hasAccess) {
+        throw new BadRequestException(`El usuario mencionado ${m.name} no tiene acceso a esta tarea`);
+      }
+    }
+
+    return sorted;
+  }
+
+  async addComment(
+    taskId: string,
+    content: string,
+    user: RequestUser,
+    mentions?: CommentMentionDto[],
+  ): Promise<CommentEntity> {
     const task = await this.findTaskOrThrow(taskId);
     // Escribir un comentario NO es ver la tarea: policy propia (OBSERVER ve pero no comenta).
     const allowed = await this.permissions.canCommentOnTask(user, task.project);
@@ -246,30 +608,140 @@ export class TasksService {
     const trimmed = content?.trim();
     if (!trimmed) throw new BadRequestException('El comentario no puede estar vacío');
 
+    const validatedMentions = await this.validateMentions(content, mentions, task);
+
     const comment = this.commentRepo.create({
       taskId,
       authorUserId: user.id,
       content: trimmed,
     });
-    return this.commentRepo.save(comment);
+    const saved = await this.commentRepo.save(comment);
+
+    if (validatedMentions.length > 0) {
+      const mentionEntities = validatedMentions.map((m) =>
+        this.commentMentionRepo.create({
+          commentId: saved.id,
+          userId: m.userId,
+          name: m.name,
+          startIndex: m.startIndex,
+          endIndex: m.endIndex,
+        }),
+      );
+      saved.mentions = await this.commentMentionRepo.save(mentionEntities);
+    } else {
+      saved.mentions = [];
+    }
+
+    return saved;
   }
 
-  async getTimeline(taskId: string, user: RequestUser): Promise<any[]> {
+  async updateComment(
+    taskId: string,
+    commentId: string,
+    content: string,
+    user: RequestUser,
+    mentions?: CommentMentionDto[],
+  ): Promise<CommentEntity> {
+    const task = await this.findTaskOrThrow(taskId);
+    const allowed = await this.permissions.canViewTask(user, task.project);
+    if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
+
+    const comment = await this.commentRepo.findOne({ where: { id: commentId } });
+    if (!comment || comment.deletedAt) {
+      throw new NotFoundException('Comentario no encontrado');
+    }
+
+    if (comment.taskId !== task.id) {
+      throw new NotFoundException('El comentario no pertenece a esta tarea');
+    }
+
+    if (comment.authorUserId !== user.id) {
+      throw new ForbiddenException('Solo el autor puede editar este comentario');
+    }
+
+    const trimmed = content?.trim();
+    if (!trimmed) {
+      throw new BadRequestException('El comentario no puede estar vacío');
+    }
+
+    const validatedMentions = await this.validateMentions(content, mentions, task);
+
+    comment.content = trimmed;
+    comment.editedAt = new Date();
+    const saved = await this.commentRepo.save(comment);
+
+    await this.commentMentionRepo.delete({ commentId: comment.id });
+
+    if (validatedMentions.length > 0) {
+      const mentionEntities = validatedMentions.map((m) =>
+        this.commentMentionRepo.create({
+          commentId: saved.id,
+          userId: m.userId,
+          name: m.name,
+          startIndex: m.startIndex,
+          endIndex: m.endIndex,
+        }),
+      );
+      saved.mentions = await this.commentMentionRepo.save(mentionEntities);
+    } else {
+      saved.mentions = [];
+    }
+
+    return saved;
+  }
+
+  async deleteComment(
+    taskId: string,
+    commentId: string,
+    user: RequestUser,
+  ): Promise<{ success: boolean }> {
+    const task = await this.findTaskOrThrow(taskId);
+    const allowed = await this.permissions.canViewTask(user, task.project);
+    if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
+
+    const comment = await this.commentRepo.findOne({ where: { id: commentId } });
+    if (!comment || comment.deletedAt) {
+      throw new NotFoundException('Comentario no encontrado');
+    }
+
+    if (comment.taskId !== task.id) {
+      throw new NotFoundException('El comentario no pertenece a esta tarea');
+    }
+
+    if (comment.authorUserId !== user.id) {
+      throw new ForbiddenException('Solo el autor puede eliminar este comentario');
+    }
+
+    comment.deletedAt = new Date();
+    await this.commentRepo.save(comment);
+    return { success: true };
+  }
+
+  async getTimeline(taskId: string, user: RequestUser, page = 1, limit = 10) {
     const task = await this.findTaskOrThrow(taskId);
     const allowed = await this.permissions.canViewTask(user, task.project);
     if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
 
     const comments = await this.commentRepo.find({
       where: { taskId },
-      relations: ['author'],
+      relations: ['author', 'mentions'],
     });
 
-    const mappedComments = comments.map((c: CommentEntity) => ({
+    const activeComments = comments.filter((c: CommentEntity) => !c.deletedAt);
+
+    const mappedComments = activeComments.map((c: CommentEntity) => ({
       id: c.id,
       type: 'COMMENT',
       content: c.content,
       actor: { id: c.author.id, name: c.author.name, avatar: c.author.name.substring(0, 2).toUpperCase() },
       createdAt: c.createdAt,
+      editedAt: c.editedAt ?? null,
+      mentions: (c.mentions || []).map((m) => ({
+        userId: m.userId,
+        name: m.name,
+        startIndex: m.startIndex,
+        endIndex: m.endIndex,
+      })),
     }));
 
     const activities = await this.projectRepo.manager.find(ProjectActivityEntity, {
@@ -293,7 +765,17 @@ export class TasksService {
       return a.id.localeCompare(b.id);
     });
 
-    return timeline;
+    const total = timeline.length;
+    const start = (page - 1) * limit;
+    const data = timeline.slice(start, start + limit);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async archive(id: string, user: RequestUser): Promise<TaskEntity> {
@@ -308,26 +790,31 @@ export class TasksService {
       return task;
     }
 
-    task.archivedAt = new Date();
-    const saved = await this.repo.save(task);
+    return this.repo.manager.transaction(async (manager) => {
+      task.archivedAt = new Date();
+      const saved = await manager.save(TaskEntity, task);
 
-    await this.activityService.logEvent({
-      projectId: saved.projectId,
-      actorId: user.id,
-      actionType: ProjectActivityAction.TASK_DELETED,
-      entityType: ProjectActivityEntityType.TASK,
-      entityId: saved.id,
-      metadata: { archivedAt: saved.archivedAt },
+      await this.activityService.logEvent(
+        {
+          projectId: saved.projectId,
+          actorId: user.id,
+          actionType: ProjectActivityAction.TASK_DELETED,
+          entityType: ProjectActivityEntityType.TASK,
+          entityId: saved.id,
+          metadata: { archivedAt: saved.archivedAt },
+        },
+        manager,
+      );
+
+      return saved;
     });
-
-    return saved;
   }
 
   /**
    * Cambia el estado de una tarea validando la transición.
    * Endpoint dedicado: PATCH /tasks/:id/status
    */
-  async updateStatus(id: string, dto: UpdateTaskStatusDto, user: RequestUser): Promise<TaskEntity> {
+  async updateStatus(id: string, dto: UpdateTaskStatusDto, user: RequestUser, source?: ChangeSource): Promise<TaskEntity> {
     const task = await this.findTaskOrThrow(id);
 
     const allowed = await this.permissions.canEditTask(user, task, task.project);
@@ -345,25 +832,34 @@ export class TasksService {
       const pendingSubtasks = await this.subtaskRepo.count({
         where: { taskId: task.id, completed: false },
       });
-      if (pendingSubtasks > 0) {
+      const pendingChildTasks = await this.repo.count({
+        where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED), archivedAt: IsNull() },
+      });
+      if (pendingSubtasks > 0 || pendingChildTasks > 0) {
         throw new BadRequestException('No se puede completar una tarea con subtareas pendientes');
       }
     }
 
-    const oldStatus = task.status;
-    task.status = dto.status;
-    const saved = await this.repo.save(task);
+    return this.repo.manager.transaction(async (manager) => {
+      const oldStatus = task.status;
+      task.status = dto.status;
+      const saved = await manager.save(TaskEntity, task);
 
-    await this.activityService.logEvent({
-      projectId: saved.projectId,
-      actorId: user.id,
-      actionType: ProjectActivityAction.TASK_UPDATED,
-      entityType: ProjectActivityEntityType.TASK,
-      entityId: saved.id,
-      metadata: { changes: { status: { old: oldStatus, new: dto.status } } },
+      await this.activityService.logEvent(
+        {
+          projectId: saved.projectId,
+          actorId: user.id,
+          actionType: ProjectActivityAction.TASK_UPDATED,
+          entityType: ProjectActivityEntityType.TASK,
+          entityId: saved.id,
+          metadata: withSourceMetadata({ changes: { status: { old: oldStatus, new: dto.status } } }, source),
+          ...originOf(source),
+        },
+        manager,
+      );
+
+      return saved;
     });
-
-    return saved;
   }
 
   /**

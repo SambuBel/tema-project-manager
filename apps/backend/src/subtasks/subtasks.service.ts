@@ -19,16 +19,25 @@ export class SubtasksService {
     private readonly taskRepo: Repository<TaskEntity>,
   ) {}
 
-  async findByTask(taskId: string): Promise<SubtaskEntity[]> {
-    // Verificar que la tarea existe
+  async findByTask(taskId: string, page = 1, limit = 5) {
     const task = await this.taskRepo.findOneBy({ id: taskId });
     if (!task) throw new NotFoundException('Tarea no encontrada');
 
-    return this.subtaskRepo.find({
+    const [data, total] = await this.subtaskRepo.findAndCount({
       where: { taskId },
       relations: ['assignedTo'],
       order: { createdAt: 'ASC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async create(

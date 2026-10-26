@@ -6,10 +6,12 @@ import {
   Index,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { TaskEntity } from '../../tasks/task.entity';
 import { UserEntity } from './user.entity';
+import { CommentMentionEntity } from './comment-mention.entity';
 
 @Entity('comments')
 export class CommentEntity {
@@ -42,4 +44,7 @@ export class CommentEntity {
 
   @DeleteDateColumn({ name: 'deleted_at', type: 'timestamptz', nullable: true })
   deletedAt!: Date | null;
+
+  @OneToMany(() => CommentMentionEntity, (m) => m.comment)
+  mentions!: CommentMentionEntity[];
 }

@@ -86,3 +86,11 @@ export const LogoutIcon = () => (
     <path d="M20 12H9.5" />
   </Icon>
 );
+
+export const ProfilesIcon = () => (
+  <Icon>
+    <circle cx="9" cy="8" r="3.2" />
+    <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" />
+    <path d="M16.5 5.5a3 3 0 0 1 0 5.6M18 14.3c1.8.6 2.8 2.2 2.8 4.2" />
+  </Icon>
+);

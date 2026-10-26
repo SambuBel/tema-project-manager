@@ -6,7 +6,7 @@
  * - Elimina guiones al inicio y al final.
  * - Provee un fallback seguro si el texto no contiene alfanuméricos.
  */
-export function slugify(text: string): string {
+export function slugify(text: string, fallback = 'proyecto'): string {
   const normalized = (text || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -14,5 +14,5 @@ export function slugify(text: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
-  return normalized || 'proyecto';
+  return normalized || fallback;
 }

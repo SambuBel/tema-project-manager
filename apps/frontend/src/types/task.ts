@@ -2,14 +2,17 @@
  * Tipos de tareas sincronizados con @tema/shared-types.
  * Cuando se migre completamente a shared-types, reemplazar estos imports.
  */
-import type { User } from '@tema/shared-types';
+import type { User, PaginatedResponse } from '@tema/shared-types';
 
 export type TaskStatus = 'PENDING' | 'BLOCKED' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED';
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface Task {
   id: string;
+  slug?: string;
   projectId: string;
+  parentTaskId: string | null;
+  milestoneId?: string | null;
   title: string;
   description: string | null;
   status: TaskStatus;
@@ -30,6 +33,8 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  subtaskCount?: number;
+  completedSubtaskCount?: number;
 }
 
 export interface TaskFilters {
@@ -38,6 +43,15 @@ export interface TaskFilters {
   priority?: TaskPriority;
   assignedToId?: string;
   search?: string;
+  page?: number;
+  limit?: number;
+  myTasks?: boolean;
+  atRisk?: boolean;
+  includeSubtasks?: boolean;
+}
+
+export interface TaskListResponse extends PaginatedResponse<Task> {
+  counts: { all: number; mine: number; atRisk: number };
 }
 
 export const taskStatusLabels: Record<TaskStatus, string> = {
@@ -67,6 +81,13 @@ export const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   COMPLETED:   ALL_STATUSES.filter((s) => s !== 'COMPLETED'),
 };
 
+export interface CommentMention {
+  userId: string;
+  name: string;
+  startIndex: number;
+  endIndex: number;
+}
+
 export interface TaskTimelineItem {
   id: string;
   type: 'COMMENT' | 'HISTORY';
@@ -79,4 +100,13 @@ export interface TaskTimelineItem {
     avatar: string;
   };
   createdAt: string;
+  editedAt?: string | null;
+  mentions?: CommentMention[];
+}
+
+export interface CommentMention {
+  userId: string;
+  name: string;
+  startIndex: number;
+  endIndex: number;
 }

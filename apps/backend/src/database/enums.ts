@@ -57,6 +57,7 @@ export enum AuditEntityType {
   PROJECT = 'PROJECT',
   BUDGET = 'BUDGET',
   COST = 'COST',
+  RESOURCE_PROFILE = 'RESOURCE_PROFILE',
 }
 
 export enum AuditOrigin {

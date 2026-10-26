@@ -20,10 +20,31 @@ import type {
   CreateSubtaskDto,
   UpdateSubtaskDto,
   GanttResponse,
+  CascadePreviewResponse,
   LoginDto,
   CreateUserDto,
+  PaginatedResponse,
+  CreateMilestoneDto,
+  UpdateMilestoneDto,
+  MilestoneSummaryDto,
+  MilestoneDetailDto,
+  Budget,
+  BudgetHistoryEntry,
+  CreateBudgetDto,
+  CreateBudgetVersionDto,
+  CostCategory,
+  Cost,
+  CreateCostDto,
+  UpdateCostDto,
+  ResourceProfile,
+  CreateResourceProfileDto,
+  UpdateResourceProfileDto,
+  ProjectResourceAllocationSummary,
+  MemberResourceAllocation,
+  MemberResourceAllocationHistoryEntry,
+  UpdateMemberResourceAllocationDto,
 } from '@tema/shared-types';
-import type { Task, TaskFilters, TaskStatus, TaskTimelineItem } from '../types/task'
+import type { Task, TaskFilters, TaskStatus, TaskTimelineItem, TaskListResponse, CommentMention } from '../types/task'
 
 const BASE = '/api';
 
@@ -158,6 +179,16 @@ export const api = {
   archiveProject: (id: string) =>
     request<Project>(`/projects/${id}/archive`, { method: 'PATCH' }),
   getGantt: (projectId: string) => request<GanttResponse>(`/projects/${projectId}/gantt`),
+  getBlockedTaskIds: (projectId: string) =>
+    request<string[]>(`/projects/${projectId}/blocked-task-ids`),
+  cascadePreview: (projectId: string, dto: { taskId: string; newStartDate: string; newDueDate: string }) =>
+    request<CascadePreviewResponse>(`/projects/${projectId}/dependencies/cascade-preview`, { method: 'POST', body: JSON.stringify(dto) }),
+  cascadeApply: (projectId: string, dto: { taskId: string; newStartDate: string; newDueDate: string }) =>
+    request<CascadePreviewResponse>(`/projects/${projectId}/dependencies/cascade-apply`, { method: 'POST', body: JSON.stringify(dto) }),
+  createDependency: (projectId: string, dto: { predecessorTaskId: string; successorTaskId: string; dependencyType?: string }) =>
+    request<any>(`/projects/${projectId}/dependencies`, { method: 'POST', body: JSON.stringify(dto) }),
+  deleteDependency: (projectId: string, dependencyId: string) =>
+    request<void>(`/projects/${projectId}/dependencies/${dependencyId}`, { method: 'DELETE' }),
   getProjectMembers: (id: string) => request<ProjectMember[]>(`/projects/${id}/members`),
   getAvailableUsers: (id: string, search?: string) =>
     request<UserWithRoles[]>(`/projects/${id}/available-users${search ? `?search=${encodeURIComponent(search)}` : ''}`),
@@ -198,6 +229,64 @@ export const api = {
   removeUserRole: (id: string, role: RoleName) =>
     request<UserWithRoles>(`/users/${id}/roles/${role}`, { method: 'DELETE' }),
 
+  // --- Economía: presupuesto (RN-25: solo ADMIN, PROGRAM_MANAGER y líder real lo ven; el backend es la autoridad) ---
+  // Estos endpoints reciben el UUID del proyecto (no el slug): usar siempre `project.id`.
+  /** 404 con code BUDGET_NOT_FOUND = todavía no hay presupuesto (no es un error: ver hooks/useProjectBudget). */
+  getProjectBudget: (projectId: string) => request<Budget>(`/projects/${projectId}/budget`),
+  createProjectBudget: (projectId: string, dto: CreateBudgetDto) =>
+    request<Budget>(`/projects/${projectId}/budget`, { method: 'POST', body: JSON.stringify(dto) }),
+  createProjectBudgetVersion: (projectId: string, dto: CreateBudgetVersionDto) =>
+    request<Budget>(`/projects/${projectId}/budget/versions`, { method: 'POST', body: JSON.stringify(dto) }),
+  getProjectBudgetHistory: (projectId: string) => request<BudgetHistoryEntry[]>(`/projects/${projectId}/budget/history`),
+  /** Rubros ACTIVOS del catálogo (los inactivos no aparecen: sirven solo para operaciones nuevas). */
+  listCostCategories: () => request<CostCategory[]>('/cost-categories'),
+
+  // --- Perfiles de recurso (catálogo global; sin DELETE ni detalle: no existen esos endpoints) ---
+  /** Sin `includeInactive` (o en false) el backend devuelve solo los activos; el filtro lo hace el servidor, no el cliente. */
+  listResourceProfiles: (includeInactive = false) =>
+    request<ResourceProfile[]>(`/resource-profiles${includeInactive ? '?includeInactive=true' : ''}`),
+  createResourceProfile: (dto: CreateResourceProfileDto) =>
+    request<ResourceProfile>('/resource-profiles', { method: 'POST', body: JSON.stringify(dto) }),
+  updateResourceProfile: (profileId: string, dto: UpdateResourceProfileDto) =>
+    request<ResourceProfile>(`/resource-profiles/${profileId}`, { method: 'PATCH', body: JSON.stringify(dto) }),
+
+  // --- Asignación económica de recursos (RES-02). Información económica: NO sale de GET members ---
+  getProjectResourceAllocation: (projectId: string) => request<ProjectResourceAllocationSummary>(`/projects/${projectId}/resource-allocation`),
+  updateMemberResourceAllocation: (projectId: string, memberId: string, dto: UpdateMemberResourceAllocationDto) =>
+    request<MemberResourceAllocation>(`/projects/${projectId}/members/${memberId}/resource-allocation`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  getMemberResourceAllocationHistory: (projectId: string, memberId: string) =>
+    request<MemberResourceAllocationHistoryEntry[]>(`/projects/${projectId}/members/${memberId}/resource-allocation/history`),
+
+  // --- Costos incurridos (sin DELETE: no hay endpoint aprobado) ---
+  listProjectCosts: (projectId: string, query: { page: number; limit: number }) =>
+    request<PaginatedResponse<Cost>>(`/projects/${projectId}/costs?page=${query.page}&limit=${query.limit}`),
+  getProjectCost: (projectId: string, costId: string) => request<Cost>(`/projects/${projectId}/costs/${costId}`),
+  createProjectCost: (projectId: string, dto: CreateCostDto) =>
+    request<Cost>(`/projects/${projectId}/costs`, { method: 'POST', body: JSON.stringify(dto) }),
+  updateProjectCost: (projectId: string, costId: string, dto: UpdateCostDto) =>
+    request<Cost>(`/projects/${projectId}/costs/${costId}`, { method: 'PATCH', body: JSON.stringify(dto) }),
+
+  // --- Milestones ---
+  listMilestones: (projectId: string, query?: { upcoming?: boolean; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (query?.upcoming !== undefined) params.append('upcoming', String(query.upcoming));
+    if (query?.limit !== undefined) params.append('limit', String(query.limit));
+    const qs = params.toString();
+    return request<MilestoneSummaryDto[]>(`/projects/${projectId}/milestones${qs ? `?${qs}` : ''}`);
+  },
+  getMilestone: (id: string) => request<MilestoneDetailDto>(`/milestones/${id}`),
+  createMilestone: (projectId: string, dto: CreateMilestoneDto) =>
+    request<MilestoneSummaryDto>(`/projects/${projectId}/milestones`, { method: 'POST', body: JSON.stringify(dto) }),
+  updateMilestone: (id: string, dto: UpdateMilestoneDto) =>
+    request<MilestoneSummaryDto>(`/milestones/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
+  deleteMilestone: (id: string) => request<void>(`/milestones/${id}`, { method: 'DELETE' }),
+  completeMilestone: (id: string) => request<MilestoneSummaryDto>(`/milestones/${id}/complete`, { method: 'PATCH' }),
+  reopenMilestone: (id: string) => request<MilestoneSummaryDto>(`/milestones/${id}/reopen`, { method: 'PATCH' }),
+  associateMilestoneTask: (milestoneId: string, taskId: string) =>
+    request<MilestoneSummaryDto>(`/milestones/${milestoneId}/tasks/${taskId}`, { method: 'PUT' }),
+  disassociateMilestoneTask: (milestoneId: string, taskId: string) =>
+    request<MilestoneSummaryDto>(`/milestones/${milestoneId}/tasks/${taskId}`, { method: 'DELETE' }),
+
   // --- Tasks ---
   listTasks: (filters: TaskFilters) => {
     const params = new URLSearchParams();
@@ -206,26 +295,46 @@ export const api = {
     if (filters.priority) params.append('priority', filters.priority);
     if (filters.assignedToId) params.append('assignedToId', filters.assignedToId);
     if (filters.search) params.append('search', filters.search);
-    return request<Task[]>(`/tasks?${params.toString()}`);
+    if (filters.page) params.append('page', String(filters.page));
+    if (filters.limit) params.append('limit', String(filters.limit));
+    if (filters.myTasks) params.append('myTasks', 'true');
+    if (filters.atRisk) params.append('atRisk', 'true');
+    if (filters.includeSubtasks) params.append('includeSubtasks', 'true');
+    return request<TaskListResponse>(`/tasks?${params.toString()}`);
+  },
+  listAllTasks: async (filters: TaskFilters): Promise<Task[]> => {
+    const first = await api.listTasks({ ...filters, page: 1, limit: 100 });
+    const tasks = [...first.data];
+    for (let page = 2; page <= first.totalPages; page++) {
+      const next = await api.listTasks({ ...filters, page, limit: 100 });
+      tasks.push(...next.data);
+    }
+    return tasks;
   },
   createTask: (dto: CreateTaskDto) =>
     request<Task>('/tasks', { method: 'POST', body: JSON.stringify(dto) }),
-  getTask: (id: string) => request<Task>(`/tasks/${id}`),
+  getTask: (idOrSlug: string, projectId?: string) =>
+    request<Task>(`/tasks/${encodeURIComponent(idOrSlug)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
   updateTask: (id: string, dto: UpdateTaskDto) =>
     request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
   updateTaskStatus: (id: string, status: TaskStatus) =>
     request<Task>(`/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   archiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
-  getSubtasks: (taskId: string) => request<Subtask[]>(`/tasks/${taskId}/subtasks`),
+  getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),
   createSubtask: (taskId: string, dto: CreateSubtaskDto) =>
     request<Subtask>(`/tasks/${taskId}/subtasks` , { method: 'POST', body: JSON.stringify(dto)}),
   updateSubtask: (taskId: string, subtaskId: string, dto: UpdateSubtaskDto) =>
     request<Subtask>(`/tasks/${taskId}/subtasks/${subtaskId}` , { method: 'PATCH', body: JSON.stringify(dto)}),
   deleteSubtask: (taskId: string, subtaskId: string) =>
     request<void>(`/tasks/${taskId}/subtasks/${subtaskId}` , { method: 'DELETE' }),
-  getTaskTimeline: (taskId: string) => request<TaskTimelineItem[]>(`/tasks/${taskId}/timeline`),
-  addTaskComment: (taskId: string, content: string) => request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
+  getTaskTimeline: (taskId: string, page = 1, limit = 10) => request<PaginatedResponse<TaskTimelineItem>>(`/tasks/${taskId}/timeline?page=${page}&limit=${limit}`),
+  addTaskComment: (taskId: string, content: string, mentions?: CommentMention[]) =>
+    request<TaskTimelineItem>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ content, mentions }) }),
+  updateTaskComment: (taskId: string, commentId: string, content: string, mentions?: CommentMention[]) =>
+    request<TaskTimelineItem>(`/tasks/${taskId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify({ content, mentions }) }),
+  deleteTaskComment: (taskId: string, commentId: string) =>
+    request<{ success: boolean }>(`/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' }),
 
   // --- Asistente ---
   sendChatMessage: (message: string, projectId?: string, history: ChatTurn[] = []) =>

@@ -42,7 +42,7 @@ export class AiService {
   }
 
   async answer(dto: ChatMessageDto, user: RequestUser): Promise<string> {
-    const ctx: ToolContext = { user, project: await this.resolveCurrentProject(dto.projectId, user) };
+    const ctx: ToolContext = { user, project: await this.resolveCurrentProject(dto.projectId, user), message: dto.message };
 
     if (this.gemini.isConfigured()) {
       try {

@@ -25,6 +25,11 @@ import { RequestUser } from './types/authenticated-request-user';
  *     COLLABORATOR con leaderId propio no administra nada.
  *   - La LECTURA es la excepción: canViewProject compara el leaderId a secas (ver ahí).
  */
+/** Quién ve el catálogo de perfiles de recurso (con tarifas). */
+const RESOURCE_PROFILE_VIEWER_ROLES: RoleName[] = [RoleName.ADMIN, RoleName.PROGRAM_MANAGER, RoleName.PROJECT_LEADER];
+/** Quién administra el catálogo (provisional: solo ADMIN; ver canManageResourceProfiles). */
+const RESOURCE_PROFILE_ADMIN_ROLES: RoleName[] = [RoleName.ADMIN];
+
 @Injectable()
 export class PermissionsService {
   constructor(
@@ -100,6 +105,11 @@ export class PermissionsService {
     return this.canManageProject(user, project);
   }
 
+  /** Administrar hitos del proyecto (crear, editar, eliminar): ADMIN/PM o líder real del proyecto. */
+  canManageMilestones(user: RequestUser, project: ProjectEntity): boolean {
+    return this.isAdminPmOrLeader(user, project);
+  }
+
   // ---------------------------------------------------------------------------
   // Económicos: preparados para cuando existan endpoints de Budget/Cost (no en
   // esta HU). Tres policies separadas a propósito, nunca una sola bandera
@@ -107,6 +117,41 @@ export class PermissionsService {
   //   - PROJECT_LEADER puede ver/gestionar costos SOLO en lo que lidera, pero
   //     nunca puede definir presupuesto (eso es exclusivo de ADMIN/PM).
   // ---------------------------------------------------------------------------
+
+  /**
+   * Catálogo global de rubros (solo nombres: no contiene datos de ningún presupuesto ni costo). Por rol global, sin
+   * proyecto: ADMIN, PROGRAM_MANAGER y PROJECT_LEADER; COLLABORATOR y OBSERVER no.
+   */
+  canViewCostCategories(user: RequestUser): boolean {
+    return this.hasAnyGlobalRole(user, [RoleName.ADMIN, RoleName.PROGRAM_MANAGER, RoleName.PROJECT_LEADER]);
+  }
+
+  /**
+   * Catálogo global de PERFILES DE RECURSO con su costo por hora (RF-CT-05). Es información económica (RN-25): COLLABORATOR y
+   * OBSERVER no reciben nada, ni siquiera los nombres. Ver: ADMIN, PROGRAM_MANAGER y PROJECT_LEADER (el líder elige perfiles
+   * para su equipo en RES-02). Por rol global, sin proyecto.
+   */
+  canViewResourceProfiles(user: RequestUser): boolean {
+    return this.hasAnyGlobalRole(user, RESOURCE_PROFILE_VIEWER_ROLES);
+  }
+
+  /**
+   * Crear, editar y activar/desactivar perfiles. DECISIÓN PROVISIONAL de menor privilegio: solo ADMIN, porque la matriz de
+   * TEMA no define quién administra las tarifas (PENDIENTE de validación funcional). Para habilitar a PROGRAM_MANAGER basta
+   * agregar el rol a RESOURCE_PROFILE_ADMIN_ROLES; nada más del módulo cambia.
+   */
+  canManageResourceProfiles(user: RequestUser): boolean {
+    return this.hasAnyGlobalRole(user, RESOURCE_PROFILE_ADMIN_ROLES);
+  }
+
+  /**
+   * Asignar o cambiar el perfil de recurso y las horas estimadas de un miembro (CU-01: parte de "administrar el equipo del
+   * proyecto"): ADMIN, PROGRAM_MANAGER y líder REAL del proyecto (delega en canManageProjectTeam, que ya exige rol global Y
+   * leaderId). Líder ajeno, COLLABORATOR y OBSERVER no. Es el mismo conjunto que canViewEconomicData.
+   */
+  canManageResourceAllocation(user: RequestUser, project: ProjectEntity): boolean {
+    return this.canManageProjectTeam(user, project);
+  }
 
   /** Solo ADMIN/PROGRAM_MANAGER, sin excepción — ni el líder del proyecto define presupuesto. */
   canDefineBudget(user: RequestUser): boolean {
