@@ -10,6 +10,7 @@ interface BoardCardProps {
   index: number;
   project: Project;
   onSelectTask: (taskId: string) => void;
+  blockedByDependency?: boolean;
 }
 
 const priorityColors: Record<TaskPriority, string> = {
@@ -23,7 +24,7 @@ function initials(name: string) {
   return name.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase();
 }
 
-export function BoardCard({ task, index, project, onSelectTask }: BoardCardProps) {
+export function BoardCard({ task, index, project, onSelectTask, blockedByDependency }: BoardCardProps) {
   const { user } = useCurrentUser();
   const { membership } = useMyMembership(task.projectId);
 
@@ -47,6 +48,16 @@ export function BoardCard({ task, index, project, onSelectTask }: BoardCardProps
             <h4 className="text-sm font-medium text-[#172B42] line-clamp-2 leading-tight">
               {task.title}
             </h4>
+
+            {blockedByDependency && (
+              <span
+                className="shrink-0 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700"
+                title="Bloqueada por dependencia"
+              >
+                🔒
+              </span>
+            )}
+            
             {!canEdit && (
               <div className="text-[#607185]" title="Solo lectura">
                 <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

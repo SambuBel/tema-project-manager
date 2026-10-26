@@ -263,7 +263,7 @@ export interface UpdateSubtaskDto {
 }
 
 // --- Gantt (GET /projects/:projectId/gantt) -------------------------------------------------
-export type GanttDependencyType = 'FINISH_TO_START';
+export type GanttDependencyType = 'FINISH_TO_START' | 'START_TO_START' | 'FINISH_TO_FINISH' | 'START_TO_FINISH';
 
 export interface GanttProject {
   id: ID;
@@ -302,6 +302,20 @@ export interface GanttResponse {
   tasks: GanttTask[];
   dependencies: GanttDependency[];
   milestones?: MilestoneSummary[];
+}
+
+export interface CascadeImpact {
+  taskId: ID;
+  title: string;
+  currentStartDate: string | null;
+  currentDueDate: string | null;
+  newStartDate: string | null;
+  newDueDate: string | null;
+}
+
+export interface CascadePreviewResponse {
+  deltaDays: number;
+  affected: CascadeImpact[];
 }
 
 export interface PaginatedResponse<T> {

@@ -41,8 +41,7 @@ export function toSvarTasks(scheduled: GanttTask[]): ITask[] {
     text: task.title,
     start: parseLocalDate(task.startDate)!,
     end: addDays(parseLocalDate(task.dueDate)!, 1),
-    type: 'task',
-    // Una subtarea cuyo padre no está programado queda como raíz: SVAR no admite padres inexistentes.
+    type: task.startDate === task.dueDate ? 'milestone' : 'task',    // Una subtarea cuyo padre no está programado queda como raíz: SVAR no admite padres inexistentes.
     parent: task.parentTaskId && scheduledIds.has(task.parentTaskId) ? task.parentTaskId : 0,
     open: true,
     status: task.status,
@@ -51,16 +50,41 @@ export function toSvarTasks(scheduled: GanttTask[]): ITask[] {
   }));
 }
 
-/** Solo FINISH_TO_START entre tareas dibujadas: una flecha con un extremo ausente rompería SVAR. */
+/** Mapea dependencia TEMA → tipo de link SVAR. */
+type SvarLinkType = 'e2s' | 's2s' | 'e2e' | 's2e';
+
+const DEPENDENCY_TYPE_MAP: Record<string, SvarLinkType> = {
+  FINISH_TO_START: 'e2s',
+  START_TO_START: 's2s',
+  FINISH_TO_FINISH: 'e2e',
+  START_TO_FINISH: 's2e',
+};
+
+/** Lo de arriba pero al inverso: tipo SVAR -> tipo backend (para crear dependencias). */
+export const SVAR_TO_DEPENDENCY_TYPE: Record<string, string> = {
+  'e2s': 'FINISH_START',
+  's2s': 'START_START',
+  'e2e': 'FINISH_FINISH',
+  's2e': 'START_FINISH',
+};
+
+/**
+ * Mapea los 4 tipos de dependencia TEMA → SVAR y filtra las que tengan ambos
+ * extremos dibujados: una flecha con un extremo ausente rompería SVAR.
+ */
 export function toSvarLinks(dependencies: GanttDependency[], scheduledIds: ReadonlySet<string>): ILink[] {
   return dependencies
     .filter(
       (dep) =>
-        dep.type === 'FINISH_TO_START' &&
         scheduledIds.has(dep.predecessorTaskId) &&
         scheduledIds.has(dep.successorTaskId),
     )
-    .map((dep) => ({ id: dep.id, type: 'e2s', source: dep.predecessorTaskId, target: dep.successorTaskId }));
+    .map((dep) => ({
+      id: dep.id,
+      type: DEPENDENCY_TYPE_MAP[dep.type] ?? ('e2s' as SvarLinkType),
+      source: dep.predecessorTaskId,
+      target: dep.successorTaskId,
+    }));
 }
 
 /** Padres antes que hijos, conservando el orden del backend dentro de cada nivel. */

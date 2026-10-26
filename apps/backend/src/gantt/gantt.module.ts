@@ -7,10 +7,12 @@ import { AuthModule } from '../auth/auth.module';
 import { UsersModule } from '../users/users.module';
 import { GanttController } from './gantt.controller';
 import { GanttService } from './gantt.service';
+import { DependenciesController } from './dependencies.controller';
+import { DependenciesService } from './dependencies.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([TaskEntity, ProjectEntity, TaskDependencyEntity]), AuthModule, UsersModule],
-  controllers: [GanttController],
-  providers: [GanttService],
+  controllers: [GanttController, DependenciesController],
+  providers: [GanttService, DependenciesService],
 })
 export class GanttModule {}

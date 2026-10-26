@@ -2,22 +2,33 @@ import { useState, useEffect } from 'react';
 import { DragDropContext, DropResult } from '@hello-pangea/dnd';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../../lib/api';
-import type { Project, Task, TaskStatus } from '@tema/shared-types';
+import type { Project, Task, TaskPriority, TaskStatus } from '@tema/shared-types';
 import { BoardColumn } from './BoardColumn';
 import { taskStatusLabels } from '../../types/task';
 import { handleDragEndLogic } from './dragDropLogic';
 import { getMutationOptions } from './mutationLogic';
+import { useBlockedTasks } from '../../hooks/useBlockedTasks';
+import { applyBoardFilters } from './TaskBoardFilters';
 import { CompleteTaskWithSubtasksModal } from '../CompleteTaskWithSubtasksModal';
 
 interface TaskBoardProps {
   projectId: string;
   project: Project;
   onSelectTask: (taskId: string) => void;
+  /* Filtros que llegan desde la barra de pestañas (ver TaskBoardFilters). */
+  assigneeFilter?: string;
+  priorityFilter?: TaskPriority | '';
 }
 
 const COLUMNS: TaskStatus[] = ['PENDING', 'IN_PROGRESS', 'IN_REVIEW', 'BLOCKED', 'COMPLETED'];
 
-export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) {
+export function TaskBoard({
+  projectId,
+  project,
+  onSelectTask,
+  assigneeFilter = '',
+  priorityFilter = '',
+}: TaskBoardProps) {
   const qc = useQueryClient();
   const [toast, setToast] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -44,6 +55,8 @@ export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) 
     queryFn: () => api.listAllTasks({ projectId }),
   });
 
+  const { blockedIds } = useBlockedTasks(projectId);
+
   const mutation = useMutation(
     getMutationOptions(qc, projectId, api.updateTaskStatus, setToast, (taskId) => {
       setModalError(null);
@@ -68,7 +81,7 @@ export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) 
         mutation.mutate({ taskId, status: destStatus });
       },
       onInvalidTransition: (sourceStatus, destStatus) => {
-        setToast(`No se puede pasar una tarea de ${taskStatusLabels[sourceStatus]} a ${taskStatusLabels[destStatus]}.`);
+        setToast('No se puede pasar una tarea de ' + taskStatusLabels[sourceStatus] + ' a ' + taskStatusLabels[destStatus] + '.');
       },
     });
   };
@@ -113,8 +126,10 @@ export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) 
     return <p className="text-sm text-red-600">Error al cargar las tareas.</p>;
   }
 
+  const filteredTasks = applyBoardFilters(tasks ?? [], assigneeFilter, priorityFilter);
+
   const tasksByStatus = COLUMNS.reduce((acc, status) => {
-    acc[status] = tasks?.filter((t) => t.status === status) || [];
+    acc[status] = filteredTasks.filter((t) => t.status === status);
     return acc;
   }, {} as Record<TaskStatus, Task[]>);
 
@@ -150,6 +165,7 @@ export function TaskBoard({ projectId, project, onSelectTask }: TaskBoardProps) 
               tasks={tasksByStatus[status]}
               project={project}
               onSelectTask={onSelectTask}
+              blockedIds={blockedIds}
             />
           ))}
         </div>

@@ -20,6 +20,7 @@ import type {
   CreateSubtaskDto,
   UpdateSubtaskDto,
   GanttResponse,
+  CascadePreviewResponse,
   LoginDto,
   CreateUserDto,
   PaginatedResponse,
@@ -141,6 +142,16 @@ export const api = {
   archiveProject: (id: string) =>
     request<Project>(`/projects/${id}/archive`, { method: 'PATCH' }),
   getGantt: (projectId: string) => request<GanttResponse>(`/projects/${projectId}/gantt`),
+  getBlockedTaskIds: (projectId: string) =>
+    request<string[]>(`/projects/${projectId}/blocked-task-ids`),
+  cascadePreview: (projectId: string, dto: { taskId: string; newStartDate: string; newDueDate: string }) =>
+    request<CascadePreviewResponse>(`/projects/${projectId}/dependencies/cascade-preview`, { method: 'POST', body: JSON.stringify(dto) }),
+  cascadeApply: (projectId: string, dto: { taskId: string; newStartDate: string; newDueDate: string }) =>
+    request<CascadePreviewResponse>(`/projects/${projectId}/dependencies/cascade-apply`, { method: 'POST', body: JSON.stringify(dto) }),
+  createDependency: (projectId: string, dto: { predecessorTaskId: string; successorTaskId: string; dependencyType?: string }) =>
+    request<any>(`/projects/${projectId}/dependencies`, { method: 'POST', body: JSON.stringify(dto) }),
+  deleteDependency: (projectId: string, dependencyId: string) =>
+    request<void>(`/projects/${projectId}/dependencies/${dependencyId}`, { method: 'DELETE' }),
   getProjectMembers: (id: string) => request<ProjectMember[]>(`/projects/${id}/members`),
   getAvailableUsers: (id: string, search?: string) =>
     request<UserWithRoles[]>(`/projects/${id}/available-users${search ? `?search=${encodeURIComponent(search)}` : ''}`),
