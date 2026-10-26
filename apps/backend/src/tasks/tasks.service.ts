@@ -443,7 +443,7 @@ export class TasksService {
     });
   }
 
-  async update(id: string, dto: UpdateTaskDto, user: RequestUser): Promise<TaskEntity> {
+  async update(id: string, dto: UpdateTaskDto, user: RequestUser, source?: ChangeSource): Promise<TaskEntity> {
     const task = await this.findTaskOrThrow(id);
 
     const allowed = await this.permissions.canEditTask(user, task, task.project);
@@ -484,7 +484,7 @@ export class TasksService {
 
     return this.repo.manager.transaction(async (manager) => {
       if (dto.status === TaskStatus.COMPLETED && dto.completeSubtasks) {
-        await this.completePendingSubtasksAtomically(task, user, manager);
+        await this.completePendingSubtasksAtomically(task, user, manager, source);
       }
       const changes: Record<string, { old: any; new: any }> = {};
 
@@ -542,7 +542,8 @@ export class TasksService {
             actionType: ProjectActivityAction.TASK_UPDATED,
             entityType: ProjectActivityEntityType.TASK,
             entityId: saved.id,
-            metadata: { changes },
+            metadata: withSourceMetadata({ changes }, source),
+            ...originOf(source),
           },
           manager,
         );
