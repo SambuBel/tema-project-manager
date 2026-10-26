@@ -52,6 +52,7 @@ export function ProjectPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const { user } = useCurrentUser();
+  const [ isExportingHistory, setIsExportingHistory] = useState(false);
 
   const viewParam = searchParams.get('view');
   const taskIdParam = searchParams.get('taskId');
@@ -225,6 +226,22 @@ export function ProjectPage() {
               onClick={() => navigate(`/projects/${project.slug || project.id}/edit`)}
             >
               Editar proyecto
+            </button>
+            <button
+              className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7] disabled:opacity-50"
+                disabled={isExportingHistory}
+                onClick={async () => {
+                  setIsExportingHistory(true);
+                  try {
+                    await api.exportStatusHistoryCsv(project.id);
+                  } catch (err: any) {
+                    alert(err?.details?.[0] || 'Error al exportar el historial de estados.');
+                  } finally {
+                    setIsExportingHistory(false);
+                  }
+                }}
+              >
+              {isExportingHistory ? 'Exportando…' : 'Exportar historial'}
             </button>
             <div className="flex flex-col items-end">
               <button
