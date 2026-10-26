@@ -11,6 +11,7 @@ import { AuthModule } from '../auth/auth.module';
 import { ExportController } from './export.controller';
 import { ExportService } from './export.service';
 import { UsersModule } from '../users/users.module';
+import { ProjectsModule } from '../projects/projects.module'
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { UsersModule } from '../users/users.module';
     ]),
     AuthModule,
     UsersModule,
+    ProjectsModule,
   ],
   controllers: [ExportController],
   providers: [ExportService],

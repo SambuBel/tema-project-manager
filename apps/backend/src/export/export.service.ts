@@ -11,6 +11,7 @@ import { CostEntity } from '../database/entities/cost.entity';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { ProjectMemberRole, RoleName } from '../database/enums';
+import { ProjectsService } from '../projects/projects.service';
 
 const TASK_STATUS_LABELS: Record<string, string> = {
   PENDING: 'Pendiente',
@@ -59,6 +60,7 @@ export class ExportService {
     @InjectRepository(CostEntity)
     private readonly costRepo: Repository<CostEntity>,
     private readonly permissions: PermissionsService,
+    private readonly projectsService: ProjectsService,
   ) {}
 
   /* Helpers internos */
@@ -301,6 +303,37 @@ async exportEconomicReportCsv(
   // Armar CSV completo
   const currency = budget?.currency ?? project.economicCurrency ?? '';
     return this.buildEconomicCsv(project.name, user.name || user.email, currency, summaryHeaders, summaryRows, detailHeaders, detailRows);
+  }
+
+    /* Exportar vista de portafolio a CSV */
+
+  async exportPortfolioCsv(user: RequestUser): Promise<string> {
+    // Reutilizamos findAll que ya filtra por permisos del usuario
+    const projects = await this.projectsService.findAll({}, user);
+
+    const headers = [
+      'Nombre',
+      'Estado',
+      'Líder',
+      'Avance (%)',
+      'Miembros',
+      'Fecha inicio',
+      'Fecha estimada fin',
+      'Creado',
+    ];
+
+    const rows = projects.map((p) => [
+      p.name,
+      PROJECT_STATUS_LABELS[p.status] ?? p.status,
+      p.leader?.name ?? 'Sin asignar',
+      String(p.progress ?? 0),
+      String(p.memberCount ?? 0),
+      p.startDate ?? '',
+      p.estimatedEndDate ?? '',
+      this.formatDate(new Date(p.createdAt)),
+    ]);
+
+    return this.buildCsv('Portafolio de proyectos', user.name || user.email, headers, rows);
   }
 
   /*  Generación de CSV */

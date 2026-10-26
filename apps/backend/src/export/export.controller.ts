@@ -13,6 +13,21 @@ import { ExportService, ExportTaskFilters } from './export.service';
 export class ExportController {
   constructor(private readonly exportService: ExportService) {}
 
+  /** exportar vista de portafolio (todos los proyectos del usuario) a CSV. */
+  @Get('export/portfolio')
+  async exportPortfolio(
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+  ) {
+    const csv = await this.exportService.exportPortfolioCsv(user);
+    const filename = `portafolio_${new Date().toISOString().slice(0, 10)}.csv`;
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.send(csv);
+  }
+
   /** exportar listado de tareas a CSV, respetando filtros de pantalla. */
   @Get(':projectId/export/tasks')
   async exportTasks(
