@@ -1,4 +1,6 @@
 import type { Project } from '@tema/shared-types';
+import { useState } from 'react';
+import { api } from '../../lib/api';
 import { BudgetSection } from './BudgetSection';
 import { CostsSection } from './CostsSection';
 import { ResourcesSection } from './ResourcesSection';
@@ -25,6 +27,18 @@ interface EconomyTabProps {
 export function EconomyTab({ project, section, onSectionChange }: EconomyTabProps) {
   const key: EconomySection = section && section in SECTIONS ? (section as EconomySection) : DEFAULT_SECTION;
   const { Component } = SECTIONS[key];
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExportEconomic = async () => {
+    setIsExporting(true);
+    try {
+      await api.exportEconomicReportCsv(project.id);
+    } catch (err) {
+      console.error('Error al exportar reporte económico:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
   return (
     <div className="flex flex-col gap-6">
       <nav aria-label="Secciones de Economía" className="flex flex-wrap gap-2">
@@ -42,6 +56,16 @@ export function EconomyTab({ project, section, onSectionChange }: EconomyTabProp
           </button>
         ))}
       </nav>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={handleExportEconomic}
+            disabled={isExporting}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#DEE5EC] bg-white px-3 py-1.5 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7] transition-colors disabled:opacity-50"
+          >
+            {isExporting ? 'Exportando…' : 'Exportar reporte CSV'}
+          </button>
+        </div>
       <Component project={project} />
     </div>
   );

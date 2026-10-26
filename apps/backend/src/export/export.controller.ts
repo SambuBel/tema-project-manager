@@ -45,4 +45,16 @@ export class ExportController {
     });
     res.send(csv);
   }
+
+  @Get(':projectId/export/economic-report')
+  async exportEconomicReport(
+    @Param('projectId') projectId: string,
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+  ) {
+    const csv = await this.exportService.exportEconomicReportCsv(projectId, user);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="reporte-economico.csv"');
+    res.send(csv);
+  }
 }

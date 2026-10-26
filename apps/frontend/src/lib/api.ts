@@ -353,4 +353,6 @@ export const api = {
   },
   exportStatusHistoryCsv: (projectId: string) => 
     downloadFile(`/projects/${projectId}/export/status-history`, 'historial-estados.csv'),
+  exportEconomicReportCsv: (projectId: string) =>
+    downloadFile(`/projects/${projectId}/export/economic-report`, 'reporte-economico.csv'),
 };

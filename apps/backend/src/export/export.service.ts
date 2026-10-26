@@ -5,6 +5,9 @@ import { TaskEntity } from '../tasks/task.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { ProjectSlugHistoryEntity } from '../projects/project-slug-history.entity';
 import { ProjectStatusHistoryEntity } from '../database/entities/project-status-history.entity';
+import { BudgetEntity } from '../database/entities/budget.entity';
+import { BudgetItemEntity } from '../database/entities/budget-item.entity';
+import { CostEntity } from '../database/entities/cost.entity';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { ProjectMemberRole, RoleName } from '../database/enums';
@@ -49,6 +52,12 @@ export class ExportService {
     private readonly projectRepo: Repository<ProjectEntity>,
     @InjectRepository(ProjectStatusHistoryEntity)
     private readonly statusHistoryRepo: Repository<ProjectStatusHistoryEntity>,
+    @InjectRepository(BudgetEntity)
+    private readonly budgetRepo: Repository<BudgetEntity>,
+    @InjectRepository(BudgetItemEntity)
+    private readonly budgetItemRepo: Repository<BudgetItemEntity>,
+    @InjectRepository(CostEntity)
+    private readonly costRepo: Repository<CostEntity>,
     private readonly permissions: PermissionsService,
   ) {}
 
@@ -186,6 +195,114 @@ export class ExportService {
     return this.buildCsv(project.name, user.name || user.email, headers, rows);
   }
 
+  /* Exportar reporte económico a CSV */
+
+async exportEconomicReportCsv(
+  projectIdOrSlug: string,
+  user: RequestUser,
+): Promise<string> {
+  const project = await this.findProjectOrThrow(projectIdOrSlug);
+  const access = await this.checkExportPermission(user, project);
+
+  // Info económica solo para roles con acceso completo
+  if (access === 'own-tasks') {
+    throw new ForbiddenException('Tu rol no permite acceder a la información económica del proyecto.');
+  }
+
+  // Presupuesto vigente con sus partidas
+  const budget = await this.budgetRepo.findOne({
+    where: { projectId: project.id, isCurrent: true },
+  });
+
+  let budgetItems: BudgetItemEntity[] = [];
+  if (budget) {
+    budgetItems = await this.budgetItemRepo.find({
+      where: { budgetId: budget.id },
+      relations: ['costCategory'],
+      order: { costCategory: { name: 'ASC' } },
+    });
+  }
+
+  // Costos del proyecto (no eliminados)
+  const costs = await this.costRepo
+    .createQueryBuilder('cost')
+    .leftJoinAndSelect('cost.costCategory', 'category')
+    .leftJoinAndSelect('cost.task', 'task')
+    .leftJoinAndSelect('cost.creator', 'creator')
+    .where('cost.projectId = :projectId', { projectId: project.id })
+    .andWhere('cost.deletedAt IS NULL')
+    .orderBy('cost.costDate', 'DESC')
+    .getMany();
+
+  // --- Sección 1: Resumen por rubro ---
+  const summaryHeaders = ['Rubro', 'Presupuestado', 'Incurrido', 'Disponible'];
+
+  // Agrupar costos incurridos por categoría
+  const incurredByCategory: Record<string, number> = {};
+  for (const cost of costs) {
+    const catId = cost.costCategoryId;
+    incurredByCategory[catId] = (incurredByCategory[catId] || 0) + parseFloat(cost.amount);
+  }
+
+  const summaryRows: string[][] = [];
+  let totalBudgeted = 0;
+  let totalIncurred = 0;
+
+  for (const item of budgetItems) {
+    const budgeted = parseFloat(item.amount);
+    const incurred = incurredByCategory[item.costCategoryId] || 0;
+    const available = budgeted - incurred;
+    totalBudgeted += budgeted;
+    totalIncurred += incurred;
+
+    summaryRows.push([
+      item.costCategory?.name ?? 'Sin rubro',
+      budgeted.toFixed(2),
+      incurred.toFixed(2),
+      available.toFixed(2),
+    ]);
+
+    // Marcar como ya incluido
+    delete incurredByCategory[item.costCategoryId];
+  }
+
+  // Costos en rubros que no están en el presupuesto
+  for (const [catId, incurred] of Object.entries(incurredByCategory)) {
+    const catCost = costs.find(c => c.costCategoryId === catId);
+    summaryRows.push([
+      catCost?.costCategory?.name ?? 'Sin rubro',
+      '0.00',
+      incurred.toFixed(2),
+      (-incurred).toFixed(2),
+    ]);
+    totalIncurred += incurred;
+  }
+
+  // Fila de totales
+  summaryRows.push([
+    'TOTAL',
+    totalBudgeted.toFixed(2),
+    totalIncurred.toFixed(2),
+    (totalBudgeted - totalIncurred).toFixed(2),
+  ]);
+
+  // --- Sección 2: Detalle de costos ---
+  const detailHeaders = ['Fecha', 'Rubro', 'Monto', 'Moneda', 'Descripción', 'Tarea', 'Registrado por'];
+  const detailRows = costs.map(c => [
+    c.costDate,
+    c.costCategory?.name ?? 'Sin rubro',
+    c.amount,
+    c.currency,
+    c.description,
+    c.task?.title ?? '—',
+    c.creator?.name ?? 'Usuario desconocido',
+  ]);
+
+  // Armar CSV completo
+  const currency = budget?.currency ?? project.economicCurrency ?? '';
+    return this.buildEconomicCsv(project.name, user.name || user.email, currency, summaryHeaders, summaryRows, detailHeaders, detailRows);
+  }
+
   /*  Generación de CSV */
 
   /** encabezado con proyecto, fecha/hora y usuario que genera. */
@@ -220,6 +337,45 @@ export class ExportService {
     ];
 
     return BOM + [...meta, ...dataLines].join('\r\n');
+  }
+
+  private buildEconomicCsv(
+  projectName: string,
+  userName: string,
+  currency: string,
+  summaryHeaders: string[],
+  summaryRows: string[][],
+  detailHeaders: string[],
+  detailRows: string[][],
+): string {
+  const now = new Date().toLocaleString('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  const BOM = '\uFEFF';
+
+  const lines: string[] = [
+    this.escapeCsv(`Proyecto: ${projectName}`),
+    this.escapeCsv(`Reporte económico`),
+    this.escapeCsv(`Moneda: ${currency}`),
+    this.escapeCsv(`Generado: ${now}`),
+    this.escapeCsv(`Usuario: ${userName}`),
+    '',
+    this.escapeCsv('RESUMEN POR RUBRO'),
+    summaryHeaders.map(h => this.escapeCsv(h)).join(','),
+    ...summaryRows.map(row => row.map(cell => this.escapeCsv(cell)).join(',')),
+    '',
+    this.escapeCsv('DETALLE DE COSTOS'),
+    detailHeaders.map(h => this.escapeCsv(h)).join(','),
+    ...detailRows.map(row => row.map(cell => this.escapeCsv(cell)).join(',')),
+  ];
+
+    return BOM + lines.join('\r\n');
   }
 
   private escapeCsv(val: string): string {
