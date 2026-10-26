@@ -2,7 +2,7 @@ import { MilestonesController } from './milestones.controller';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { RoleName } from '../database/enums';
 
-describe('MilestonesController (KAN-243..KAN-245)', () => {
+describe('MilestonesController (KAN-243..KAN-250)', () => {
   let controller: MilestonesController;
   let service: any;
 
@@ -25,6 +25,7 @@ describe('MilestonesController (KAN-243..KAN-245)', () => {
       update: jest.fn(),
       remove: jest.fn(),
       complete: jest.fn(),
+      completeWithTasks: jest.fn(),
       reopen: jest.fn(),
       associateTask: jest.fn(),
       disassociateTask: jest.fn(),
@@ -83,7 +84,7 @@ describe('MilestonesController (KAN-243..KAN-245)', () => {
     expect(service.remove).toHaveBeenCalledWith(MILESTONE_ID, mockUser);
   });
 
-  it('PATCH milestones/:id/complete delega al servicio complete (KAN-244 Fase 4)', async () => {
+  it('PATCH milestones/:id/complete delega al servicio complete (KAN-244 / KAN-250)', async () => {
     const expected = { id: MILESTONE_ID, status: 'COMPLETED' };
     service.complete.mockResolvedValue(expected);
 
@@ -93,7 +94,17 @@ describe('MilestonesController (KAN-243..KAN-245)', () => {
     expect(result).toBe(expected);
   });
 
-  it('PATCH milestones/:id/reopen delega al servicio reopen (KAN-244 Fase 4)', async () => {
+  it('PATCH milestones/:id/complete-with-tasks delega al servicio completeWithTasks (KAN-250)', async () => {
+    const expected = { id: MILESTONE_ID, status: 'COMPLETED', progress: 100 };
+    service.completeWithTasks.mockResolvedValue(expected);
+
+    const result = await controller.completeWithTasks(MILESTONE_ID, mockUser);
+
+    expect(service.completeWithTasks).toHaveBeenCalledWith(MILESTONE_ID, mockUser);
+    expect(result).toBe(expected);
+  });
+
+  it('PATCH milestones/:id/reopen delega al servicio reopen (KAN-244 / KAN-250)', async () => {
     const expected = { id: MILESTONE_ID, status: 'PENDING' };
     service.reopen.mockResolvedValue(expected);
 

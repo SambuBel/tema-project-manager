@@ -37,6 +37,10 @@ export class MilestoneTaskDto {
   dueDate!: string | null;
   parentTaskId!: string | null;
   assignedTo!: MilestoneUserDto | null;
+  assignedToId?: string | null;
+  createdBy?: string;
+  subtaskCount?: number;
+  completedSubtaskCount?: number;
 }
 
 export class MilestoneDetailDto extends MilestoneSummaryDto {

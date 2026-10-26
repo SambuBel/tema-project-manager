@@ -19,6 +19,7 @@ import { RequestUser } from '../auth/types/authenticated-request-user';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { UpdateTaskStatusDto } from './dto/update-task-status.dto';
+import { syncMilestoneAutoCompletionWithManager } from '../milestones/milestone-auto-completion.helper';
 import { FilterTasksDto } from './dto/filter-tasks.dto';
 import {
   isValidTransition,
@@ -468,8 +469,8 @@ export class TasksService {
       this.validateTransition(task.status, dto.status);
     }
 
-    // no se puede completar una tarea si tiene subtareas sin completar.
-    if (dto.status === TaskStatus.COMPLETED) {
+    // no se puede completar una tarea si tiene subtareas sin completar (salvo confirmación explícita completeSubtasks: true).
+    if (dto.status === TaskStatus.COMPLETED && !dto.completeSubtasks) {
       const pendingSubtasks = await this.subtaskRepo.count({
         where: { taskId: task.id, completed: false },
       });
@@ -482,6 +483,9 @@ export class TasksService {
     }
 
     return this.repo.manager.transaction(async (manager) => {
+      if (dto.status === TaskStatus.COMPLETED && dto.completeSubtasks) {
+        await this.completePendingSubtasksAtomically(task, user, manager);
+      }
       const changes: Record<string, { old: any; new: any }> = {};
 
       // Si cambió el título, actualizar el slug de la tarea y registrar el anterior en el histórico
@@ -542,6 +546,10 @@ export class TasksService {
           },
           manager,
         );
+      }
+
+      if (saved.milestoneId && !saved.parentTaskId && changes.status !== undefined) {
+        await syncMilestoneAutoCompletionWithManager(manager, saved.milestoneId);
       }
 
       return saved;
@@ -806,8 +814,77 @@ export class TasksService {
         manager,
       );
 
+      if (saved.milestoneId && !saved.parentTaskId) {
+        await syncMilestoneAutoCompletionWithManager(manager, saved.milestoneId);
+      }
+
       return saved;
     });
+  }
+
+  /**
+   * Valida permisos y transiciones en todas las subtareas pendientes de una tarea principal y
+   * las completa atómicamente antes de completar la tarea principal.
+   */
+  private async completePendingSubtasksAtomically(
+    task: TaskEntity,
+    user: RequestUser,
+    manager: EntityManager,
+    source?: ChangeSource,
+  ): Promise<void> {
+    let pendingChildTasks: TaskEntity[] = [];
+    if (typeof manager?.find === 'function') {
+      pendingChildTasks =
+        (await manager.find(TaskEntity, {
+          where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED), archivedAt: IsNull() } as any,
+          order: { createdAt: 'ASC' } as any,
+        })) ?? [];
+    } else if (typeof this.repo.find === 'function') {
+      pendingChildTasks =
+        (await this.repo.find({
+          where: { parentTaskId: task.id, status: Not(TaskStatus.COMPLETED), archivedAt: IsNull() },
+          order: { createdAt: 'ASC' },
+        })) ?? [];
+    }
+
+    // 1. Validar permisos y reglas de transición en cada subtarea antes de mutar registros
+    for (const child of pendingChildTasks) {
+      const canEditSub = await this.permissions.canEditTask(user, child, task.project);
+      if (!canEditSub) {
+        throw new ForbiddenException(`No podés cambiar el estado de la subtarea "${child.title}".`);
+      }
+      this.validateTransition(child.status, TaskStatus.COMPLETED);
+    }
+
+    // 2. Completar primero las subtareas pendientes
+    for (const child of pendingChildTasks) {
+      const oldSubStatus = child.status;
+      child.status = TaskStatus.COMPLETED;
+      const savedChild = await manager.save(TaskEntity, child);
+      await this.activityService.logEvent(
+        {
+          projectId: savedChild.projectId,
+          actorId: user.id,
+          actionType: ProjectActivityAction.TASK_UPDATED,
+          entityType: ProjectActivityEntityType.TASK,
+          entityId: savedChild.id,
+          metadata: withSourceMetadata(
+            { changes: { status: { old: oldSubStatus, new: TaskStatus.COMPLETED } } },
+            source,
+          ),
+          ...originOf(source),
+        },
+        manager,
+      );
+    }
+
+    // 3. Si existieran subtareas de la tabla legacy subtasks pendientes, completarlas también
+    const pendingLegacyCount = await this.subtaskRepo.count({
+      where: { taskId: task.id, completed: false },
+    });
+    if (pendingLegacyCount > 0 && typeof manager?.update === 'function') {
+      await manager.update(SubtaskEntity, { taskId: task.id, completed: false }, { completed: true });
+    }
   }
 
   /**
@@ -828,7 +905,7 @@ export class TasksService {
 
     this.validateTransition(task.status, dto.status);
 
-    if (dto.status === TaskStatus.COMPLETED) {
+    if (dto.status === TaskStatus.COMPLETED && !dto.completeSubtasks) {
       const pendingSubtasks = await this.subtaskRepo.count({
         where: { taskId: task.id, completed: false },
       });
@@ -841,6 +918,10 @@ export class TasksService {
     }
 
     return this.repo.manager.transaction(async (manager) => {
+      if (dto.status === TaskStatus.COMPLETED && dto.completeSubtasks) {
+        await this.completePendingSubtasksAtomically(task, user, manager, source);
+      }
+
       const oldStatus = task.status;
       task.status = dto.status;
       const saved = await manager.save(TaskEntity, task);
@@ -857,6 +938,10 @@ export class TasksService {
         },
         manager,
       );
+
+      if (saved.milestoneId && !saved.parentTaskId) {
+        await syncMilestoneAutoCompletionWithManager(manager, saved.milestoneId);
+      }
 
       return saved;
     });

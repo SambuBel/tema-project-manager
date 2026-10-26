@@ -1,4 +1,4 @@
-import { IsDateString, IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsDateString, IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { TaskPriority, TaskStatus } from '../../database/enums';
 
 export class UpdateTaskDto {
@@ -33,4 +33,12 @@ export class UpdateTaskDto {
   @IsOptional()
   @IsDateString({ strict: true }, { message: 'La fecha de vencimiento no es válida (formato AAAA-MM-DD)' })
   dueDate?: string | null;
+
+  /**
+   * Si es true y la tarea principal pasa a COMPLETED teniendo subtareas pendientes,
+   * completa primero las subtareas pendientes y luego la tarea principal en una transacción atómica.
+   */
+  @IsOptional()
+  @IsBoolean()
+  completeSubtasks?: boolean;
 }

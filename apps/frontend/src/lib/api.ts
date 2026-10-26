@@ -233,6 +233,7 @@ export const api = {
     request<MilestoneSummaryDto>(`/milestones/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
   deleteMilestone: (id: string) => request<void>(`/milestones/${id}`, { method: 'DELETE' }),
   completeMilestone: (id: string) => request<MilestoneSummaryDto>(`/milestones/${id}/complete`, { method: 'PATCH' }),
+  completeMilestoneWithTasks: (id: string) => request<MilestoneSummaryDto>(`/milestones/${id}/complete-with-tasks`, { method: 'PATCH' }),
   reopenMilestone: (id: string) => request<MilestoneSummaryDto>(`/milestones/${id}/reopen`, { method: 'PATCH' }),
   associateMilestoneTask: (milestoneId: string, taskId: string) =>
     request<MilestoneSummaryDto>(`/milestones/${milestoneId}/tasks/${taskId}`, { method: 'PUT' }),
@@ -269,8 +270,11 @@ export const api = {
     request<Task>(`/tasks/${encodeURIComponent(idOrSlug)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
   updateTask: (id: string, dto: UpdateTaskDto) =>
     request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
-  updateTaskStatus: (id: string, status: TaskStatus) =>
-    request<Task>(`/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  updateTaskStatus: (id: string, status: TaskStatus, options?: { completeSubtasks?: boolean }) =>
+    request<Task>(`/tasks/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(options?.completeSubtasks ? { status, completeSubtasks: true } : { status }),
+    }),
   archiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),
   getSubtasks: (taskId: string) => request<Task[]>(`/tasks/${taskId}/subtasks`),

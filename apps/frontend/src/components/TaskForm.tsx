@@ -3,10 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
-import { canManageTaskPlanningUI } from '../lib/permissions';
+import { canManageMilestonesUI, canManageTaskPlanningUI } from '../lib/permissions';
 import { formatLocalDate } from '../lib/dates';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
 import { ConfirmDialog } from './ConfirmDialog';
+import {
+  CompleteTaskWithSubtasksModal,
+  isPendingSubtasksCompletionError,
+} from './CompleteTaskWithSubtasksModal';
 import type { CreateTaskDto, Task, TaskPriority, TaskStatus, UpdateTaskDto, User } from '@tema/shared-types';
 
 interface TaskFormProps {
@@ -43,6 +47,7 @@ const EMPTY_FORM = {
   status: 'PENDING' as TaskStatus,
   priority: 'MEDIUM' as TaskPriority,
   assignedToId: '',
+  milestoneId: '',
   startDate: '',
   dueDate: '',
 };
@@ -61,6 +66,7 @@ function errorMessages(error: unknown, isEditing: boolean): string[] {
 
 export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: TaskFormProps) {
   const isEditing = !!initialData;
+  const isSubtask = Boolean(parentTaskId || initialData?.parentTaskId);
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [form, setForm] = useState(() =>
@@ -71,6 +77,7 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
           status: initialData.status,
           priority: initialData.priority,
           assignedToId: initialData.assignedToId ?? '',
+          milestoneId: initialData.milestoneId ?? '',
           startDate: initialData.startDate ?? '',
           dueDate: initialData.dueDate ?? '',
         }
@@ -78,6 +85,8 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
   );
   const [createdTask, setCreatedTask] = useState<Task | null>(null);
   const [showRn08Warning, setShowRn08Warning] = useState(false);
+  const [showCompleteSubtasksModal, setShowCompleteSubtasksModal] = useState(false);
+  const [subtasksModalError, setSubtasksModalError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!initialData) return;
@@ -87,11 +96,12 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
       status: initialData.status,
       priority: initialData.priority,
       assignedToId: initialData.assignedToId ?? '',
+      milestoneId: initialData.milestoneId ?? '',
       startDate: initialData.startDate ?? '',
       dueDate: initialData.dueDate ?? '',
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialData?.id]);
+  }, [initialData?.id, initialData?.milestoneId]);
 
   // Mismas query keys que ProjectDetail / ProjectMembers: comparten cache, no piden dos veces.
   const { data: project } = useQuery({
@@ -102,12 +112,19 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
     queryKey: ['project-members', projectId],
     queryFn: () => api.getProjectMembers(projectId),
   });
+  const { data: milestones } = useQuery({
+    queryKey: ['milestones', projectId],
+    queryFn: () => api.listMilestones(projectId),
+    enabled: !isSubtask,
+  });
 
   // Fechas = planificación: al EDITAR, solo ADMIN/PM/líder real (espejo de canManageTaskPlanning).
-  // Mientras carga el usuario o el proyecto queda bloqueado (falla cerrado). Al crear no cambia
-  // (ver gap documentado: ¿puede un COLLABORATOR definir fechas al crear?).
+  // Mientras carga el usuario o el proyecto queda bloqueado (falla cerrado).
   const { user } = useCurrentUser();
   const datesLocked = isEditing && !(user && project && canManageTaskPlanningUI(user, project));
+
+  // Asociación a Hito (KAN-247): solo para tareas principales (no subtareas) y con permiso canManageMilestonesUI.
+  const milestoneLocked = isSubtask || !(user && project && canManageMilestonesUI(user, project));
 
   // Responsables posibles: el lider del proyecto + sus miembros activos (sin repetidos).
   const assignees = new Map<string, User>();
@@ -117,7 +134,14 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
   }
 
   const create = useMutation({
-    mutationFn: (dto: CreateTaskDto) => api.createTask(dto),
+    mutationFn: async ({ dto, targetMilestoneId }: { dto: CreateTaskDto; targetMilestoneId: string }) => {
+      const task = await api.createTask(dto);
+      if (!isSubtask && !milestoneLocked && targetMilestoneId) {
+        await api.associateMilestoneTask(targetMilestoneId, task.id);
+        return { ...task, milestoneId: targetMilestoneId };
+      }
+      return task;
+    },
     onSuccess: (task) => {
       setCreatedTask(task);
       setForm(EMPTY_FORM);
@@ -142,13 +166,35 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
         void qc.invalidateQueries({ queryKey: ['subtasks', parentTaskId] });
       }
       void qc.invalidateQueries({ queryKey: ['tasks'] });
+      void qc.invalidateQueries({ queryKey: ['milestones', projectId] });
+      void qc.invalidateQueries({ queryKey: ['milestones-upcoming', projectId] });
+      void qc.invalidateQueries({ queryKey: ['milestone-detail'] });
+      void qc.invalidateQueries({ queryKey: ['gantt'] });
       onCreated?.(task);
     },
   });
 
   const update = useMutation({
-    mutationFn: (dto: UpdateTaskDto) => api.updateTask(initialData!.id, dto),
+    mutationFn: async ({ dto, targetMilestoneId }: { dto: UpdateTaskDto; targetMilestoneId: string }) => {
+      const taskId = initialData!.id;
+      const previousMilestoneId = initialData!.milestoneId ?? '';
+      const updated = await api.updateTask(taskId, dto);
+
+      if (!isSubtask && !milestoneLocked && targetMilestoneId !== previousMilestoneId) {
+        if (previousMilestoneId) {
+          await api.disassociateMilestoneTask(previousMilestoneId, taskId);
+        }
+        if (targetMilestoneId) {
+          await api.associateMilestoneTask(targetMilestoneId, taskId);
+        }
+        return { ...updated, milestoneId: targetMilestoneId || null };
+      }
+
+      return updated;
+    },
     onSuccess: () => {
+      setShowCompleteSubtasksModal(false);
+      setSubtasksModalError(null);
       void qc.invalidateQueries({ queryKey: ['tasks'] });
       void qc.invalidateQueries({ queryKey: ['task', initialData!.id] });
       if (initialData!.slug) {
@@ -159,12 +205,37 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
       } else {
         void qc.invalidateQueries({ queryKey: ['subtasks'] });
       }
+      void qc.invalidateQueries({ queryKey: ['milestones', projectId] });
+      void qc.invalidateQueries({ queryKey: ['milestones-upcoming', projectId] });
+      void qc.invalidateQueries({ queryKey: ['milestone-detail'] });
+      void qc.invalidateQueries({ queryKey: ['gantt'] });
       navigate(`/projects/${project?.slug || projectId}`);
+    },
+    onError: (err, variables) => {
+      if (
+        !variables.dto.completeSubtasks &&
+        variables.dto.status === 'COMPLETED' &&
+        isPendingSubtasksCompletionError(err)
+      ) {
+        update.reset();
+        setSubtasksModalError(null);
+        setShowCompleteSubtasksModal(true);
+      } else if (variables.dto.completeSubtasks) {
+        if (err instanceof ApiRequestError) {
+          setSubtasksModalError(
+            err.details && err.details.length > 0
+              ? err.details.join(' ')
+              : err.message || 'No se pudo completar la tarea ni sus subtareas.',
+          );
+        } else {
+          setSubtasksModalError('Error al completar las subtareas y la tarea principal.');
+        }
+      }
     },
   });
 
   const isPending = create.isPending || update.isPending;
-  const isError = create.isError || update.isError;
+  const isError = (create.isError || update.isError) && !showCompleteSubtasksModal;
   const currentError = create.error ?? update.error;
 
   const datesInvalid = !datesLocked && !!form.startDate && !!form.dueDate && form.dueDate < form.startDate;
@@ -173,31 +244,40 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
   const projectEstimatedEnd = project?.estimatedEndDate ? project.estimatedEndDate.split('T')[0] : '';
   const exceedsProjectEnd = isTaskExceedingProjectEnd(form.dueDate, projectEstimatedEnd);
 
+  const buildUpdateDto = (completeSubtasks?: boolean): UpdateTaskDto => ({
+    title: form.title.trim(),
+    description: form.description.trim() || null,
+    status: form.status,
+    priority: form.priority,
+    assignedToId: form.assignedToId || null,
+    // Sin permiso de planificación ni se envían: el backend rechaza (403) cualquier cambio de fechas.
+    ...(datesLocked ? {} : { startDate: form.startDate || null, dueDate: form.dueDate || null }),
+    ...(completeSubtasks ? { completeSubtasks: true } : {}),
+  });
+
   const executeSubmit = () => {
     if (isEditing) {
       update.mutate({
-        title: form.title.trim(),
-        description: form.description.trim() || null,
-        status: form.status,
-        priority: form.priority,
-        assignedToId: form.assignedToId || null,
-        // Sin permiso de planificación ni se envían: el backend rechaza (403) cualquier cambio de fechas.
-        ...(datesLocked ? {} : { startDate: form.startDate || null, dueDate: form.dueDate || null }),
+        dto: buildUpdateDto(),
+        targetMilestoneId: isSubtask ? '' : form.milestoneId,
       });
       return;
     }
 
     setCreatedTask(null);
     create.mutate({
-      projectId,
-      parentTaskId,
-      title: form.title.trim(),
-      description: form.description.trim() || undefined,
-      status: form.status,
-      priority: form.priority,
-      assignedToId: form.assignedToId || undefined,
-      startDate: form.startDate || undefined,
-      dueDate: form.dueDate || undefined,
+      dto: {
+        projectId,
+        parentTaskId,
+        title: form.title.trim(),
+        description: form.description.trim() || undefined,
+        status: form.status,
+        priority: form.priority,
+        assignedToId: form.assignedToId || undefined,
+        startDate: form.startDate || undefined,
+        dueDate: form.dueDate || undefined,
+      },
+      targetMilestoneId: isSubtask ? '' : form.milestoneId,
     });
   };
 
@@ -224,7 +304,17 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
     setShowRn08Warning(false);
   };
 
+  const handleConfirmCompleteSubtasks = () => {
+    if (!isEditing || isPending) return;
+    setSubtasksModalError(null);
+    update.mutate({
+      dto: buildUpdateDto(true),
+      targetMilestoneId: isSubtask ? '' : form.milestoneId,
+    });
+  };
+
   const createdAssignee = createdTask?.assignedToId ? assignees.get(createdTask.assignedToId) : undefined;
+  const activeMilestones = milestones ?? [];
 
   return (
     <div className="flex flex-col rounded-xl border border-[#DEE5EC] bg-white p-6 text-[#172B42]">
@@ -309,19 +399,41 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
           </div>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <label htmlFor="task-assignee" className={labelClass}>Responsable</label>
-          <select
-            id="task-assignee"
-            className={inputClass}
-            value={form.assignedToId}
-            onChange={(e) => setForm({ ...form, assignedToId: e.target.value })}
-          >
-            <option value="">Sin asignar</option>
-            {[...assignees.values()].map((u) => (
-              <option key={u.id} value={u.id}>{u.name}</option>
-            ))}
-          </select>
+        <div className={`grid grid-cols-1 gap-4 ${isSubtask ? '' : 'md:grid-cols-2'}`}>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="task-assignee" className={labelClass}>Responsable</label>
+            <select
+              id="task-assignee"
+              className={inputClass}
+              value={form.assignedToId}
+              onChange={(e) => setForm({ ...form, assignedToId: e.target.value })}
+            >
+              <option value="">Sin asignar</option>
+              {[...assignees.values()].map((u) => (
+                <option key={u.id} value={u.id}>{u.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {!isSubtask && (
+            <div className="flex flex-col gap-2">
+              <label htmlFor="task-milestone" className={labelClass}>Hito (Milestone)</label>
+              <select
+                id="task-milestone"
+                className={`${inputClass} disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500`}
+                value={form.milestoneId}
+                disabled={milestoneLocked || isPending}
+                onChange={(e) => setForm({ ...form, milestoneId: e.target.value })}
+              >
+                <option value="">Sin hito asignado</option>
+                {activeMilestones.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} ({formatLocalDate(m.dueDate)})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -354,6 +466,12 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
         {datesLocked && (
           <p className="text-sm text-[#607185]">
             Solo un administrador, el program manager o el líder del proyecto pueden cambiar las fechas.
+          </p>
+        )}
+
+        {!isSubtask && milestoneLocked && (
+          <p className="text-xs text-[#607185]">
+            Solo un administrador, el program manager o el líder del proyecto pueden asociar o modificar el hito.
           </p>
         )}
 
@@ -420,6 +538,19 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
           </p>
         </div>
       </ConfirmDialog>
+
+      <CompleteTaskWithSubtasksModal
+        open={showCompleteSubtasksModal}
+        taskTitle={form.title || initialData?.title}
+        isConfirming={update.isPending}
+        errorMessage={subtasksModalError}
+        onCancel={() => {
+          if (update.isPending) return;
+          setShowCompleteSubtasksModal(false);
+          setSubtasksModalError(null);
+        }}
+        onConfirm={handleConfirmCompleteSubtasks}
+      />
     </div>
   );
 }
