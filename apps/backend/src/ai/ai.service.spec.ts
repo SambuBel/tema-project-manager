@@ -14,6 +14,9 @@ const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
 const project = { id: PROJECT_ID, slug: 'proyecto-demo', name: 'Proyecto Demo' } as ProjectEntity;
 const currentUser = { id: '33333333-3333-4333-8333-333333333333', name: 'Gabi', roles: [] } as unknown as RequestUser;
 
+/** Forma de la respuesta paginada de TasksService.findAllByProject. */
+const taskPage = (data: unknown[]) => ({ data, total: data.length, page: 1, limit: 10000, totalPages: 1, counts: {} });
+
 const daysFromToday = (days: number) => {
   const date = new Date();
   date.setDate(date.getDate() + days);
@@ -27,7 +30,7 @@ describe('AiService', () => {
   let mockGemini: { isConfigured: jest.Mock; generate: jest.Mock };
 
   beforeEach(async () => {
-    mockTasksService = { findAllByProject: jest.fn().mockResolvedValue([]) };
+    mockTasksService = { findAllByProject: jest.fn().mockResolvedValue(taskPage([])) };
     mockProjectsService = {
       findOne: jest.fn().mockResolvedValue(project),
       findAll: jest.fn().mockResolvedValue([]),
@@ -71,7 +74,7 @@ describe('AiService', () => {
       await service.answer({ message: 'vencidas?', projectId: 'proyecto-demo' }, currentUser);
 
       expect(mockProjectsService.findOne).toHaveBeenCalledWith('proyecto-demo', currentUser);
-      expect(mockTasksService.findAllByProject).toHaveBeenCalledWith({ projectId: PROJECT_ID }, currentUser);
+      expect(mockTasksService.findAllByProject).toHaveBeenCalledWith({ projectId: PROJECT_ID, limit: 10000 }, currentUser);
     });
 
     it('si no tiene acceso al proyecto abierto, sigue como si no hubiera proyecto', async () => {
@@ -84,15 +87,15 @@ describe('AiService', () => {
     });
 
     it('usa TasksService.findAllByProject (no repite la logica de negocio) y filtra las vencidas', async () => {
-      mockTasksService.findAllByProject.mockResolvedValue([
+      mockTasksService.findAllByProject.mockResolvedValue(taskPage([
         { title: 'Tarea vieja', dueDate: daysFromToday(-1), status: TaskStatus.PENDING } as TaskEntity,
         { title: 'Tarea al dia', dueDate: daysFromToday(1), status: TaskStatus.PENDING } as TaskEntity,
         { title: 'Tarea vieja pero completa', dueDate: daysFromToday(-1), status: TaskStatus.COMPLETED } as TaskEntity,
-      ]);
+      ]));
 
       const reply = await service.answer({ message: 'qué tareas tengo vencidas?', projectId: PROJECT_ID }, currentUser);
 
-      expect(mockTasksService.findAllByProject).toHaveBeenCalledWith({ projectId: PROJECT_ID }, currentUser);
+      expect(mockTasksService.findAllByProject).toHaveBeenCalledWith({ projectId: PROJECT_ID, limit: 10000 }, currentUser);
       expect(reply).toContain('Tarea vieja');
       expect(reply).not.toContain('Tarea al dia');
       expect(reply).not.toContain('Tarea vieja pero completa');
@@ -105,9 +108,9 @@ describe('AiService', () => {
     });
 
     it('lista las bloqueadas filtrando por estado en el service', async () => {
-      mockTasksService.findAllByProject.mockResolvedValue([
+      mockTasksService.findAllByProject.mockResolvedValue(taskPage([
         { title: 'Esperando proveedor', status: TaskStatus.BLOCKED, dueDate: null, assignedTo: null } as TaskEntity,
-      ]);
+      ]));
 
       const reply = await service.answer({ message: 'hay tareas bloqueadas?', projectId: PROJECT_ID }, currentUser);
 
@@ -178,9 +181,9 @@ describe('AiService', () => {
     });
 
     it('ejecuta las tools que pide el modelo y le devuelve el resultado', async () => {
-      mockTasksService.findAllByProject.mockResolvedValue([
+      mockTasksService.findAllByProject.mockResolvedValue(taskPage([
         { id: 't1', title: 'Tarea vieja', dueDate: daysFromToday(-3), status: TaskStatus.PENDING } as TaskEntity,
-      ]);
+      ]));
       mockGemini.generate
         .mockResolvedValueOnce({
           functionCalls: [{ id: 'c1', name: 'list_overdue_tasks', args: {} }],
@@ -192,7 +195,7 @@ describe('AiService', () => {
       const reply = await service.answer({ message: 'vencidas?', projectId: PROJECT_ID }, currentUser);
 
       expect(reply).toBe('Tenés 1 tarea vencida: Tarea vieja');
-      expect(mockTasksService.findAllByProject).toHaveBeenCalledWith({ projectId: PROJECT_ID }, currentUser);
+      expect(mockTasksService.findAllByProject).toHaveBeenCalledWith({ projectId: PROJECT_ID, limit: 10000 }, currentUser);
       const secondCallContents = mockGemini.generate.mock.calls[1][0];
       const toolResponse = secondCallContents[secondCallContents.length - 1].parts[0].functionResponse;
       expect(toolResponse.name).toBe('list_overdue_tasks');
