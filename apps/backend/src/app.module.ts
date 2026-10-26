@@ -17,6 +17,7 @@ import { ResourceAllocationsModule } from './resource-allocations/resource-alloc
 import { AiModule } from './ai/ai.module';
 import { MilestonesModule } from './milestones/milestones.module';
 import { envValidationSchema } from './config/env.validation';
+import { ExportModule } from './export/export.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { envValidationSchema } from './config/env.validation';
     TasksModule,
     SubtasksModule,
     GanttModule,
+    ExportModule,
     BudgetsModule,
     CostCategoriesModule,
     CostsModule,

@@ -1,7 +1,7 @@
 import { useBlockedTasks } from '../hooks/useBlockedTasks';
 import { useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { api, ApiRequestError } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
 import { canCreateTaskUI } from '../lib/permissions';
@@ -470,6 +470,7 @@ export function TaskList({
   );
   const [subtaskParent, setSubtaskParent] = useState<Task | null>(null);
   const [creatingTask, setCreatingTask] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Record<string, boolean>>(
     () => initialRestoredState?.expandedTasks ?? {},
   );
@@ -603,6 +604,21 @@ export function TaskList({
     setFilters((prev) => ({ ...prev, assignedToId: value || undefined, page: 1 }));
   };
 
+  const handleExportCsv = async () => {
+    setIsExporting(true);
+    try {
+      await api.exportTasksCsv(projectId, filters);
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 403) {
+        alert(err.details[0] || 'No tenés permisos para exportar.');
+      } else {
+        alert('Error al exportar las tareas.')
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   const clearFilters = () => {
     setFilters({ projectId, page: 1, limit: 10 });
     setSearchInput('');
@@ -699,6 +715,15 @@ export function TaskList({
           onClick={() => { setViewFilter('AT_RISK'); setFilters((prev) => ({ ...prev, page: 1 })); }}
         >
           En riesgo ({counts.atRisk})
+        </button>
+
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          disabled={isExporting}
+          className="ml-auto rounded-lg border border-[#DEE5EC] px-3 py-1.5 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7] disabled:opacity-50"
+        >
+          {isExporting ? 'Exportando…' : 'Exportar CSV'}
         </button>
 
         {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}
