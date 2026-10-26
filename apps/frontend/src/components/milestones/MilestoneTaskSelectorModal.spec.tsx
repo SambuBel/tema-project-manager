@@ -113,6 +113,24 @@ const tasksList: Task[] = [
     updatedAt: '2026-09-10',
     archivedAt: '2026-09-15T00:00:00Z',
   },
+  {
+    id: 't-subtask',
+    projectId: 'proj-1',
+    parentTaskId: 't-1',
+    milestoneId: null,
+    title: 'Subtarea excluida del selector',
+    description: null,
+    status: 'PENDING',
+    priority: 'LOW',
+    assignedToId: 'u-1',
+    project: { id: 'proj-1', name: 'Proyecto 1', leaderId: 'u-1' },
+    startDate: '2026-10-01',
+    dueDate: '2026-10-10',
+    createdBy: 'u-1',
+    createdAt: '2026-10-01',
+    updatedAt: '2026-10-01',
+    archivedAt: null,
+  },
 ];
 
 function renderModal() {
@@ -135,7 +153,7 @@ function renderModal() {
 }
 
 describe('MilestoneTaskSelectorModal (KAN-245 & KAN-246)', () => {
-  it('identifica y muestra claramente los tres estados de tareas y excluye archivadas', () => {
+  it('identifica y muestra claramente los tres estados de tareas principales y excluye archivadas y subtareas', () => {
     const html = renderModal();
 
     // 1. Tarea ya asociada a este hito
@@ -153,5 +171,8 @@ describe('MilestoneTaskSelectorModal (KAN-245 & KAN-246)', () => {
 
     // 4. Tarea archivada excluida
     expect(html).not.toContain('Tarea archivada excluida');
+
+    // 5. Subtarea (parentTaskId !== null) excluida del selector de hitos
+    expect(html).not.toContain('Subtarea excluida del selector');
   });
 });

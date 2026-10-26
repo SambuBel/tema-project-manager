@@ -366,13 +366,13 @@ describe('MilestonesService (KAN-243..KAN-245)', () => {
 
       const task2: Partial<TaskEntity> = {
         id: 't2',
-        title: 'Subtarea 2',
-        slug: 'subtarea-2',
+        title: 'Tarea 2',
+        slug: 'tarea-2',
         status: TaskStatus.IN_PROGRESS,
         priority: TaskPriority.MEDIUM,
         startDate: '2026-10-10',
         dueDate: '2026-10-25',
-        parentTaskId: 't1',
+        parentTaskId: null,
         assignedTo: null,
       };
 
@@ -393,7 +393,7 @@ describe('MilestonesService (KAN-243..KAN-245)', () => {
       expect(detail.completedTaskCount).toBe(1);
       expect(detail.progress).toBe(50);
       expect(detail.tasks.length).toBe(2);
-      expect(detail.tasks[1]!.parentTaskId).toBe('t1');
+      expect(detail.tasks[1]!.parentTaskId).toBeNull();
     });
 
     it('12. Falla con 404 si el Milestone no existe o está eliminado lógicamente', async () => {
@@ -825,18 +825,14 @@ describe('MilestonesService (KAN-243..KAN-245)', () => {
       expect(transactionManagerMock.update).not.toHaveBeenCalled();
     });
 
-    it('39. Permite asociar una subtarea real (parentTaskId presente) sin modificar sus datos', async () => {
+    it('39. Rechaza con 400 BadRequestException si se intenta asociar una subtarea (parentTaskId !== null)', async () => {
       targetTask.parentTaskId = 'parent-task-uuid';
 
-      const result = await service.associateTask(MILESTONE_ID, TASK_ID, mockUser);
+      await expect(
+        service.associateTask(MILESTONE_ID, TASK_ID, mockUser),
+      ).rejects.toThrow(BadRequestException);
 
-      expect(transactionManagerMock.update).toHaveBeenCalledWith(
-        TaskEntity,
-        TASK_ID,
-        { milestoneId: MILESTONE_ID },
-      );
-      expect(targetTask.parentTaskId).toBe('parent-task-uuid');
-      expect(result.id).toBe(MILESTONE_ID);
+      expect(transactionManagerMock.update).not.toHaveBeenCalled();
     });
 
     it('40. Desasociación exitosa: establece milestoneId = null en la tarea y recalcula métricas', async () => {
@@ -928,6 +924,291 @@ describe('MilestonesService (KAN-243..KAN-245)', () => {
       await expect(
         service.associateTask(MILESTONE_ID, TASK_ID, mockUser),
       ).rejects.toThrow('Falla en la base de datos');
+    });
+  });
+
+  // =========================================================================
+  // KAN-248, KAN-250 y Auto-completado: Subtareas, Finalización Conjunta y Sincronización
+  // =========================================================================
+  describe('completeWithTasks y sincronización automática (KAN-248 / KAN-250)', () => {
+    let activeMilestone: MilestoneEntity;
+
+    beforeEach(() => {
+      activeMilestone = {
+        id: MILESTONE_ID,
+        projectId: PROJECT_ID,
+        project: mockProject,
+        name: 'Hito Cierre Conjunto',
+        description: 'Descripción',
+        dueDate: '2026-12-01',
+        completedAt: null,
+        completedById: null,
+        completedBy: null,
+        createdBy: USER_ID,
+        creator: { id: USER_ID, name: 'Leader', email: 'leader@example.com' } as any,
+        createdAt: new Date('2026-01-01'),
+        updatedAt: new Date('2026-01-01'),
+        deletedAt: null,
+      };
+      transactionManagerMock.save = jest.fn().mockImplementation((_entity, item) => Promise.resolve(item));
+      permissions.canEditTask = jest.fn().mockResolvedValue(true);
+    });
+
+    it('48. Completa primero las subtareas pendientes de las tareas del hito y luego las tareas principales en una única transacción', async () => {
+      const parentTask = {
+        id: 'parent-1',
+        projectId: PROJECT_ID,
+        milestoneId: MILESTONE_ID,
+        parentTaskId: null,
+        title: 'Tarea Principal',
+        status: TaskStatus.IN_PROGRESS,
+        priority: TaskPriority.HIGH,
+        archivedAt: null,
+      } as TaskEntity;
+
+      const childTask = {
+        id: 'sub-1',
+        projectId: PROJECT_ID,
+        milestoneId: null,
+        parentTaskId: 'parent-1',
+        title: 'Subtarea Pendiente',
+        status: TaskStatus.PENDING,
+        priority: TaskPriority.MEDIUM,
+        archivedAt: null,
+      } as TaskEntity;
+
+      transactionManagerMock.findOne.mockResolvedValue(activeMilestone);
+
+      let queryCall = 0;
+      taskRepo.createQueryBuilder.mockImplementation(() => {
+        queryCall++;
+        return {
+          select: jest.fn().mockReturnThis(),
+          addSelect: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          setParameter: jest.fn().mockReturnThis(),
+          groupBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue(queryCall === 1 ? [parentTask] : [childTask]),
+          getRawMany: jest.fn().mockResolvedValue([
+            { milestoneId: MILESTONE_ID, taskCount: '1', completedTaskCount: '1' },
+          ]),
+        };
+      });
+
+      const result = await service.completeWithTasks(MILESTONE_ID, mockUser);
+
+      expect(transactionManagerMock.update).toHaveBeenCalledTimes(2);
+      // Primera actualización: subtarea; segunda actualización: tarea principal
+      expect(transactionManagerMock.update.mock.calls[0]).toEqual([
+        TaskEntity,
+        'sub-1',
+        { status: TaskStatus.COMPLETED },
+      ]);
+      expect(transactionManagerMock.update.mock.calls[1]).toEqual([
+        TaskEntity,
+        'parent-1',
+        { status: TaskStatus.COMPLETED },
+      ]);
+      expect(result.status).toBe('COMPLETED');
+      expect(result.progress).toBe(100);
+      expect(result.completedTaskCount).toBe(1);
+    });
+
+    it('49. Rechaza con 403 ForbiddenException sin cambios parciales si el usuario no tiene permiso para completar una subtarea afectada', async () => {
+      const parentTask = {
+        id: 'parent-1',
+        projectId: PROJECT_ID,
+        milestoneId: MILESTONE_ID,
+        parentTaskId: null,
+        title: 'Tarea Principal',
+        status: TaskStatus.IN_PROGRESS,
+        priority: TaskPriority.HIGH,
+        archivedAt: null,
+      } as TaskEntity;
+
+      const childTask = {
+        id: 'sub-restringida',
+        projectId: PROJECT_ID,
+        milestoneId: null,
+        parentTaskId: 'parent-1',
+        title: 'Subtarea sin permiso',
+        status: TaskStatus.PENDING,
+        priority: TaskPriority.LOW,
+        archivedAt: null,
+      } as TaskEntity;
+
+      transactionManagerMock.findOne.mockResolvedValue(activeMilestone);
+      permissions.canEditTask = jest.fn().mockImplementation((_u: any, t: TaskEntity) =>
+        Promise.resolve(t.id !== 'sub-restringida'),
+      );
+
+      let queryCall = 0;
+      taskRepo.createQueryBuilder.mockImplementation(() => {
+        queryCall++;
+        return {
+          where: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          getMany: jest.fn().mockResolvedValue(queryCall === 1 ? [parentTask] : [childTask]),
+        };
+      });
+
+      await expect(service.completeWithTasks(MILESTONE_ID, mockUser)).rejects.toThrow(ForbiddenException);
+      expect(transactionManagerMock.update).not.toHaveBeenCalled();
+      expect(transactionManagerMock.save).not.toHaveBeenCalled();
+    });
+
+    it('50. Rechaza con 403 ForbiddenException si el usuario no tiene canManageMilestones', async () => {
+      transactionManagerMock.findOne.mockResolvedValue(activeMilestone);
+      permissions.canManageMilestones.mockReturnValue(false);
+
+      await expect(service.completeWithTasks(MILESTONE_ID, mockUser)).rejects.toThrow(ForbiddenException);
+      expect(transactionManagerMock.update).not.toHaveBeenCalled();
+    });
+
+    it('51. Rechaza con 404 NotFoundException si el hito no existe', async () => {
+      transactionManagerMock.findOne.mockResolvedValue(null);
+
+      await expect(service.completeWithTasks(MILESTONE_ID, mockUser)).rejects.toThrow(NotFoundException);
+    });
+
+    it('52. findOne incluye subtaskCount y completedSubtaskCount e ignora subtareas históricas en el listado de tareas principales (KAN-248)', async () => {
+      milestoneRepo.findOne.mockResolvedValue(activeMilestone);
+
+      taskRepo.createQueryBuilder.mockImplementation(() => ({
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        setParameter: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          {
+            id: 'parent-1',
+            title: 'Tarea Padre',
+            status: TaskStatus.IN_PROGRESS,
+            priority: TaskPriority.HIGH,
+            parentTaskId: null,
+            createdBy: USER_ID,
+            assignedToId: USER_ID,
+          },
+          {
+            id: 'legacy-subtask-1',
+            title: 'Subtarea histórica heredada',
+            status: TaskStatus.COMPLETED,
+            priority: TaskPriority.LOW,
+            parentTaskId: 'parent-1',
+            createdBy: USER_ID,
+            assignedToId: USER_ID,
+          },
+        ]),
+        getRawMany: jest.fn().mockResolvedValue([
+          { parentTaskId: 'parent-1', subtaskCount: '3', completedSubtaskCount: '2' },
+        ]),
+      }));
+
+      const detail = await service.findOne(MILESTONE_ID, mockUser);
+      expect(detail.tasks).toHaveLength(1);
+      expect(detail.tasks[0]?.id).toBe('parent-1');
+      expect(detail.tasks[0]?.subtaskCount).toBe(3);
+      expect(detail.tasks[0]?.completedSubtaskCount).toBe(2);
+      expect(detail.tasks[0]?.createdBy).toBe(USER_ID);
+    });
+
+    it('53. Marca automáticamente el hito como alcanzado (completedAt != null, completedById == null) cuando todas sus tareas principales alcanzan 100%', async () => {
+      const completedRootTask = {
+        id: TASK_ID,
+        projectId: PROJECT_ID,
+        milestoneId: null,
+        parentTaskId: null,
+        title: 'Tarea ya completada',
+        status: TaskStatus.COMPLETED,
+        archivedAt: null,
+      } as TaskEntity;
+
+      transactionManagerMock.findOne.mockImplementation((entity: any) =>
+        entity === MilestoneEntity ? Promise.resolve(activeMilestone) : Promise.resolve(completedRootTask),
+      );
+
+      taskRepo.createQueryBuilder.mockImplementation(() => ({
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        setParameter: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([
+          { milestoneId: MILESTONE_ID, taskCount: '1', completedTaskCount: '1' },
+        ]),
+      }));
+
+      const summary = await service.associateTask(MILESTONE_ID, TASK_ID, mockUser);
+
+      expect(summary.status).toBe('COMPLETED');
+      expect(summary.progress).toBe(100);
+      expect(summary.completedAt).toBeTruthy();
+      expect(summary.completedById).toBeNull();
+    });
+
+    it('54. Si se vincula una nueva tarea pendiente a un hito completado automáticamente, el hito vuelve a Pendiente; si fue completado manualmente, se preserva', async () => {
+      const pendingRootTask = {
+        id: TASK_ID,
+        projectId: PROJECT_ID,
+        milestoneId: null,
+        parentTaskId: null,
+        title: 'Nueva tarea pendiente',
+        status: TaskStatus.PENDING,
+        archivedAt: null,
+      } as TaskEntity;
+
+      // Caso A: Hito completado automáticamente (completedById === null)
+      const autoCompletedMilestone: MilestoneEntity = {
+        ...activeMilestone,
+        completedAt: new Date('2026-10-20T12:00:00Z'),
+        completedById: null,
+      };
+
+      transactionManagerMock.findOne.mockImplementation((entity: any) =>
+        entity === MilestoneEntity ? Promise.resolve(autoCompletedMilestone) : Promise.resolve(pendingRootTask),
+      );
+
+      taskRepo.createQueryBuilder.mockImplementation(() => ({
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        setParameter: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([
+          { milestoneId: MILESTONE_ID, taskCount: '2', completedTaskCount: '1' },
+        ]),
+      }));
+
+      const summaryAfterAuto = await service.associateTask(MILESTONE_ID, TASK_ID, mockUser);
+      expect(summaryAfterAuto.status).toBe('PENDING');
+      expect(summaryAfterAuto.completedAt).toBeNull();
+      expect(summaryAfterAuto.progress).toBe(50);
+
+      // Caso B: Hito confirmado manualmente (completedById !== null)
+      const manuallyCompletedMilestone: MilestoneEntity = {
+        ...activeMilestone,
+        completedAt: new Date('2026-10-20T12:00:00Z'),
+        completedById: USER_ID,
+      };
+
+      transactionManagerMock.findOne.mockImplementation((entity: any) =>
+        entity === MilestoneEntity ? Promise.resolve(manuallyCompletedMilestone) : Promise.resolve(pendingRootTask),
+      );
+
+      const summaryAfterManual = await service.associateTask(MILESTONE_ID, TASK_ID, mockUser);
+      expect(summaryAfterManual.status).toBe('COMPLETED');
+      expect(summaryAfterManual.completedAt).toBeTruthy();
+      expect(summaryAfterManual.completedById).toBe(USER_ID);
     });
   });
 });

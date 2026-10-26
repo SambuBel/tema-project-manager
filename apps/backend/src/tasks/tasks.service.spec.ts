@@ -2061,3 +2061,138 @@ describe('TasksService - findAllByProject: exclusión de subtareas en listado ge
     expect(listResult.data[0]!.parentTaskId).toBeNull();
   });
 });
+
+
+describe('TasksService - completeSubtasks y auto-completado de Milestone', () => {
+  const leaderUser = makeUser(LEADER_ID, [RoleName.PROJECT_LEADER]);
+  const strangerUser = makeUser('stranger-99', [RoleName.COLLABORATOR]);
+
+  it('updateStatus con completeSubtasks: true completa primero las subtareas pendientes y luego la tarea principal en una transacción atómica', async () => {
+    const { service, taskRepo, txManager } = makeService([]);
+    const parentTask = makeTask({
+      id: 'parent-100',
+      projectId: PROJECT_ID,
+      parentTaskId: null,
+      title: 'Tarea Principal con Subtareas',
+      status: TaskStatus.IN_PROGRESS,
+      project: makeProject(),
+    });
+    const pendingSub1 = makeTask({
+      id: 'sub-101',
+      projectId: PROJECT_ID,
+      parentTaskId: 'parent-100',
+      title: 'Subtarea Pendiente 1',
+      status: TaskStatus.PENDING,
+      project: makeProject(),
+    });
+    const pendingSub2 = makeTask({
+      id: 'sub-102',
+      projectId: PROJECT_ID,
+      parentTaskId: 'parent-100',
+      title: 'Subtarea En Curso 2',
+      status: TaskStatus.IN_PROGRESS,
+      project: makeProject(),
+    });
+
+    taskRepo.findOne.mockResolvedValueOnce(parentTask);
+    txManager.find = jest.fn().mockResolvedValueOnce([pendingSub1, pendingSub2]);
+
+    const result = await service.updateStatus(
+      'parent-100',
+      { status: TaskStatus.COMPLETED, completeSubtasks: true },
+      leaderUser,
+    );
+
+    expect(result.status).toBe(TaskStatus.COMPLETED);
+    expect(txManager.save).toHaveBeenCalledTimes(3);
+    // Orden estricto: primero subtareas, al final la tarea principal
+    expect(txManager.save.mock.calls[0][1].id).toBe('sub-101');
+    expect(txManager.save.mock.calls[0][1].status).toBe(TaskStatus.COMPLETED);
+    expect(txManager.save.mock.calls[1][1].id).toBe('sub-102');
+    expect(txManager.save.mock.calls[1][1].status).toBe(TaskStatus.COMPLETED);
+    expect(txManager.save.mock.calls[2][1].id).toBe('parent-100');
+    expect(txManager.save.mock.calls[2][1].status).toBe(TaskStatus.COMPLETED);
+  });
+
+  it('updateStatus con completeSubtasks: true rechaza con 403 sin cambios parciales si el usuario no puede editar una subtarea', async () => {
+    const { service, taskRepo, txManager, permissions } = makeService([]);
+    const parentTask = makeTask({
+      id: 'parent-200',
+      projectId: PROJECT_ID,
+      parentTaskId: null,
+      title: 'Tarea Principal',
+      status: TaskStatus.IN_PROGRESS,
+      assignedToId: strangerUser.id,
+      project: makeProject(),
+    });
+    const forbiddenSub = makeTask({
+      id: 'sub-201',
+      projectId: PROJECT_ID,
+      parentTaskId: 'parent-200',
+      title: 'Subtarea de otro miembro',
+      status: TaskStatus.PENDING,
+      createdBy: LEADER_ID,
+      assignedToId: LEADER_ID,
+      project: makeProject(),
+    });
+
+    taskRepo.findOne.mockResolvedValueOnce(parentTask);
+    txManager.find = jest.fn().mockResolvedValueOnce([forbiddenSub]);
+    jest
+      .spyOn(permissions, 'canEditTask')
+      .mockImplementation(async (_u, t) => t.id === 'parent-200');
+
+    await expect(
+      service.updateStatus(
+        'parent-200',
+        { status: TaskStatus.COMPLETED, completeSubtasks: true },
+        strangerUser,
+      ),
+    ).rejects.toThrow(ForbiddenException);
+
+    // Ninguna subtarea ni la tarea principal deben haberse guardado
+    expect(txManager.save).not.toHaveBeenCalled();
+  });
+
+  it('updateStatus sincroniza automáticamente el Milestone al completar o reabrir la última tarea principal', async () => {
+    const { service, taskRepo, txManager } = makeService([]);
+    const milestoneRecord: any = {
+      id: 'ms-auto-1',
+      projectId: PROJECT_ID,
+      name: 'Hito Auto',
+      dueDate: '2026-12-15',
+      completedAt: null,
+      completedById: null,
+      deletedAt: null,
+    };
+    const rootTask = makeTask({
+      id: 'root-ms-1',
+      projectId: PROJECT_ID,
+      parentTaskId: null,
+      milestoneId: 'ms-auto-1',
+      title: 'Única tarea del hito',
+      status: TaskStatus.IN_PROGRESS,
+      project: makeProject(),
+    });
+
+    taskRepo.findOne.mockResolvedValueOnce(rootTask);
+    (txManager as any).findOne = jest.fn().mockResolvedValueOnce(milestoneRecord);
+    txManager.find = jest.fn().mockResolvedValueOnce([{ ...rootTask, status: TaskStatus.COMPLETED }]);
+
+    await service.updateStatus('root-ms-1', { status: TaskStatus.COMPLETED }, leaderUser);
+
+    expect(milestoneRecord.completedAt).toBeInstanceOf(Date);
+    expect(milestoneRecord.completedById).toBeNull();
+
+    // Si ahora se reabre la tarea a PENDING, el hito auto-completado vuelve a Pendiente
+    const completedRootTask = { ...rootTask, status: TaskStatus.COMPLETED };
+    taskRepo.findOne.mockResolvedValueOnce(completedRootTask);
+    (txManager as any).findOne = jest.fn().mockResolvedValueOnce(milestoneRecord);
+    txManager.find = jest.fn().mockResolvedValueOnce([{ ...rootTask, status: TaskStatus.PENDING }]);
+
+    await service.updateStatus('root-ms-1', { status: TaskStatus.PENDING }, leaderUser);
+
+    expect(milestoneRecord.completedAt).toBeNull();
+    expect(milestoneRecord.completedById).toBeNull();
+  });
+});

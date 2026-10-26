@@ -1,15 +1,22 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { api, ApiRequestError } from '../lib/api';
 import { taskPriorityLabels } from '../types/task';
 import type { Task, TaskPriority } from '../types/task';
 import { SubtaskList } from './SubtaskList';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
-import { canCommentOnTaskUI, canCreateTaskUI, canDeleteTaskUI, canEditTaskUI } from '../lib/permissions';
+import {
+  canCommentOnTaskUI,
+  canCreateTaskUI,
+  canDeleteTaskUI,
+  canEditTaskUI,
+  canManageMilestonesUI,
+} from '../lib/permissions';
 import { SubtaskCreateModal } from './SubtaskCreateModal';
+import { MilestoneStatusBadge } from './milestones/MilestoneStatusBadge';
 
 import { TaskStatusDropdown } from './TaskStatusDropdown';
 import { TaskTimeline } from './TaskTimeline';
@@ -41,8 +48,6 @@ interface TaskDetailProps {
   onBack: () => void;
 }
 
-/* Componente */
-
 /**
  * Detalle de una tarea individual.
  */
@@ -51,6 +56,7 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
   const { user } = useCurrentUser();
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [showSubtaskModal, setShowSubtaskModal] = useState(false);
+  const [milestoneError, setMilestoneError] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: task, isLoading, isError } = useQuery({
@@ -59,6 +65,12 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
   });
 
   const { membership } = useMyMembership(task?.projectId);
+
+  const { data: projectMilestones, isLoading: loadingMilestones } = useQuery({
+    queryKey: ['milestones', task?.projectId],
+    queryFn: () => api.listMilestones(task!.projectId),
+    enabled: Boolean(task?.projectId && !task?.parentTaskId),
+  });
 
   // Reemplazo transparente en la barra de direcciones:
   // Si se ingresó con ?taskId=<UUID> o con un slug histórico anterior,
@@ -105,6 +117,50 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
       void qc.invalidateQueries({ queryKey: ['task'] });
       void qc.invalidateQueries({ queryKey: ['tasks'] });
       void qc.invalidateQueries({ queryKey: ['subtasks'] });
+      if (task?.projectId) {
+        void qc.invalidateQueries({ queryKey: ['milestones', task.projectId] });
+        void qc.invalidateQueries({ queryKey: ['milestones-upcoming', task.projectId] });
+      }
+      void qc.invalidateQueries({ queryKey: ['milestone-detail'] });
+      void qc.invalidateQueries({ queryKey: ['gantt'] });
+    },
+  });
+
+  const milestoneMutation = useMutation({
+    mutationFn: async (nextMilestoneId: string) => {
+      if (!task || task.parentTaskId) return;
+      const previousMilestoneId = task.milestoneId ?? '';
+      if (nextMilestoneId === previousMilestoneId) return;
+
+      if (previousMilestoneId) {
+        await api.disassociateMilestoneTask(previousMilestoneId, task.id);
+      }
+      if (nextMilestoneId) {
+        await api.associateMilestoneTask(nextMilestoneId, task.id);
+      }
+    },
+    onSuccess: (_data, nextMilestoneId) => {
+      setMilestoneError(null);
+      if (task) {
+        qc.setQueryData(['task', taskId], { ...task, milestoneId: nextMilestoneId || null });
+        if (task.slug) {
+          qc.setQueryData(['task', task.slug], { ...task, milestoneId: nextMilestoneId || null });
+        }
+        void qc.invalidateQueries({ queryKey: ['task', taskId] });
+        void qc.invalidateQueries({ queryKey: ['tasks'] });
+        void qc.invalidateQueries({ queryKey: ['subtasks'] });
+        void qc.invalidateQueries({ queryKey: ['milestones', task.projectId] });
+        void qc.invalidateQueries({ queryKey: ['milestones-upcoming', task.projectId] });
+        void qc.invalidateQueries({ queryKey: ['milestone-detail'] });
+        void qc.invalidateQueries({ queryKey: ['gantt'] });
+      }
+    },
+    onError: (err) => {
+      if (err instanceof ApiRequestError) {
+        setMilestoneError(err.details[0] || err.message || 'No se pudo actualizar el hito de la tarea.');
+      } else {
+        setMilestoneError('No se pudo actualizar el hito de la tarea.');
+      }
     },
   });
 
@@ -130,11 +186,17 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
     );
   }
 
+  const isSubtask = Boolean(task.parentTaskId);
   const canEdit = !!user && canEditTaskUI(user, task, task.project, membership);
   const canDelete = !!user && canDeleteTaskUI(user, task.project);
   const canComment = !!user && canCommentOnTaskUI(user, task.project, membership);
+  const canManageMilestone =
+    !isSubtask && !!user && !!task.project && canManageMilestonesUI(user, task.project) && !task.archivedAt;
   const canAddSubtask =
     !!user && canCreateTaskUI(user, task.project, membership) && !task.parentTaskId && !task.archivedAt;
+
+  const activeMilestones = projectMilestones ?? [];
+  const associatedMilestone = activeMilestones.find((m) => m.id === task.milestoneId) ?? null;
 
   return (
     <div className="flex flex-col gap-8 text-[#172B42]">
@@ -147,7 +209,12 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-4xl font-semibold">{task.title}</h1>
-          <TaskStatusDropdown taskId={task.id} currentStatus={task.status} canChange={canEdit} />
+          <TaskStatusDropdown
+            taskId={task.id}
+            currentStatus={task.status}
+            canChange={canEdit}
+            taskTitle={task.title}
+          />
           <span className={'rounded-full px-3 py-1 text-xs font-medium ' + priorityColors[task.priority]}>
             {taskPriorityLabels[task.priority]}
           </span>
@@ -217,6 +284,79 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
               <p className="mt-3 text-sm text-[#607185]">Sin asignar</p>
             )}
           </div>
+
+          {/* Hito asociado (KAN-247): solo para tareas principales (parentTaskId === null) */}
+          {!isSubtask && (
+            <div className="rounded-xl border border-[#DEE5EC] bg-white p-6" data-testid="task-detail-milestone-card">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-medium text-[#607185]">Hito (Milestone)</h3>
+                {associatedMilestone && <MilestoneStatusBadge status={associatedMilestone.status} />}
+              </div>
+
+              {associatedMilestone ? (
+                <div className="mt-3 space-y-1">
+                  <p className="text-sm font-semibold text-[#172B42]">{associatedMilestone.name}</p>
+                  <p className="text-xs text-[#607185]">
+                    Objetivo: {formatDate(associatedMilestone.dueDate)} · Avance: {associatedMilestone.progress}%
+                  </p>
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-[#607185]">
+                  {loadingMilestones && task.milestoneId ? 'Cargando hito…' : 'Sin hito asignado'}
+                </p>
+              )}
+
+              {canManageMilestone && (
+                <div className="mt-3 space-y-2 border-t border-[#DEE5EC] pt-3">
+                  <label htmlFor="task-detail-milestone-select" className="block text-xs font-medium text-[#607185]">
+                    Cambiar o asignar hito
+                  </label>
+                  <select
+                    id="task-detail-milestone-select"
+                    aria-label="Hito de la tarea"
+                    value={task.milestoneId ?? ''}
+                    disabled={milestoneMutation.isPending || loadingMilestones}
+                    onChange={(e) => {
+                      setMilestoneError(null);
+                      milestoneMutation.mutate(e.target.value);
+                    }}
+                    className="w-full rounded-lg border border-[#DEE5EC] bg-white px-3 py-2 text-xs text-[#172B42] focus:border-[#245B78] focus:outline-none disabled:opacity-50"
+                  >
+                    <option value="">Sin hito asignado</option>
+                    {activeMilestones.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} ({formatDate(m.dueDate)})
+                      </option>
+                    ))}
+                  </select>
+
+                  {task.milestoneId && (
+                    <button
+                      type="button"
+                      disabled={milestoneMutation.isPending}
+                      onClick={() => {
+                        setMilestoneError(null);
+                        milestoneMutation.mutate('');
+                      }}
+                      className="text-xs font-medium text-rose-700 hover:underline disabled:opacity-50"
+                    >
+                      {milestoneMutation.isPending ? 'Actualizando hito…' : 'Desasociar del hito'}
+                    </button>
+                  )}
+
+                  {milestoneMutation.isPending && !task.milestoneId && (
+                    <p className="text-xs text-[#607185]">Actualizando hito…</p>
+                  )}
+
+                  {milestoneError && (
+                    <p role="alert" className="text-xs font-medium text-red-600">
+                      {milestoneError}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
             <h3 className="text-sm font-medium text-[#607185]">Fechas</h3>

@@ -226,6 +226,7 @@ export interface UpdateTaskDto {
   assignedToId?: ID | null;
   startDate?: string | null;
   dueDate?: string | null;
+  completeSubtasks?: boolean;
 }
 
 export interface ListTasksQuery {
@@ -236,6 +237,7 @@ export interface ListTasksQuery {
 
 export interface UpdateTaskStatusDto {
   status: TaskStatus;
+  completeSubtasks?: boolean;
 }
 
 export interface Subtask {
@@ -278,6 +280,7 @@ export interface GanttAssignee {
 export interface GanttTask {
   id: ID;
   parentTaskId: ID | null;
+  milestoneId?: ID | null;
   title: string;
   status: TaskStatus;
   priority: TaskPriority;
@@ -298,6 +301,7 @@ export interface GanttResponse {
   project: GanttProject;
   tasks: GanttTask[];
   dependencies: GanttDependency[];
+  milestones?: MilestoneSummary[];
 }
 
 export interface CascadeImpact {
@@ -607,6 +611,10 @@ export interface MilestoneTask {
   dueDate: string | null;
   parentTaskId: string | null;
   assignedTo: MilestoneUser | null;
+  assignedToId?: ID | null;
+  createdBy?: ID;
+  subtaskCount?: number;
+  completedSubtaskCount?: number;
 }
 
 export interface MilestoneDetail extends MilestoneSummary {
