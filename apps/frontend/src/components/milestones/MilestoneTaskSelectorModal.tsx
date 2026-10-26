@@ -38,10 +38,10 @@ export function MilestoneTaskSelectorModal({
   const [actionError, setActionError] = useState<string | null>(null);
   const [associatingTaskId, setAssociatingTaskId] = useState<string | null>(null);
 
-  // Carga todas las tareas del proyecto recorriendo todas las páginas transparentemente
+  // Carga las tareas principales del proyecto recorriendo todas las páginas transparentemente
   const { data: allTasks, isLoading: loadingTasks, isError: errorTasks } = useQuery({
     queryKey: ['all-tasks-for-milestone', milestone.projectId],
-    queryFn: () => api.listAllTasks({ projectId: milestone.projectId, includeSubtasks: true }),
+    queryFn: () => api.listAllTasks({ projectId: milestone.projectId }),
     enabled: isOpen,
   });
 
@@ -60,11 +60,11 @@ export function MilestoneTaskSelectorModal({
     return map;
   }, [allMilestones]);
 
-  // Filtrar tareas: excluir archivadas, aplicar búsqueda por título o slug
+  // Filtrar tareas: mostrar únicamente tareas principales (parentTaskId === null), no archivadas, y aplicar búsqueda
   const visibleTasks = useMemo(() => {
     if (!allTasks) return [];
     return allTasks
-      .filter((t) => !t.archivedAt)
+      .filter((t) => !t.archivedAt && !t.parentTaskId)
       .filter((t) => {
         if (!searchTerm.trim()) return true;
         const q = searchTerm.toLowerCase();
@@ -87,6 +87,8 @@ export function MilestoneTaskSelectorModal({
         qc.invalidateQueries({ queryKey: ['milestones', milestone.projectId] }),
         qc.invalidateQueries({ queryKey: ['milestones-upcoming', milestone.projectId] }),
         qc.invalidateQueries({ queryKey: ['all-tasks-for-milestone', milestone.projectId] }),
+        qc.invalidateQueries({ queryKey: ['tasks'] }),
+        qc.invalidateQueries({ queryKey: ['gantt'] }),
       ]);
       onTaskAssociated();
     } catch (err) {
@@ -114,7 +116,6 @@ export function MilestoneTaskSelectorModal({
       setAssociatingTaskId(null);
     }
   };
-
 
   useEffect(() => {
     if (!isOpen) return;
@@ -145,7 +146,7 @@ export function MilestoneTaskSelectorModal({
               Asociar tareas al hito «{milestone.name}»
             </h2>
             <p className="text-xs text-[#607185] mt-0.5">
-              Selecciona tareas activas o subtareas reales del proyecto para vincularlas.
+              Seleccioná tareas principales activas del proyecto para vincularlas.
             </p>
           </div>
           <button
@@ -163,7 +164,7 @@ export function MilestoneTaskSelectorModal({
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Buscar tarea por título o código..."
+            placeholder="Buscar tarea principal por título o código..."
             className="w-full rounded-lg border border-[#DEE5EC] bg-white px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
             autoFocus
           />
@@ -191,7 +192,7 @@ export function MilestoneTaskSelectorModal({
 
           {!loadingTasks && !errorTasks && visibleTasks.length === 0 && (
             <div className="py-12 text-center text-sm text-[#607185]">
-              {searchTerm ? 'No se encontraron tareas que coincidan con la búsqueda.' : 'No hay tareas activas en este proyecto.'}
+              {searchTerm ? 'No se encontraron tareas principales que coincidan con la búsqueda.' : 'No hay tareas principales activas en este proyecto.'}
             </div>
           )}
 
@@ -223,11 +224,6 @@ export function MilestoneTaskSelectorModal({
                       <span className="text-sm font-medium text-[#172B42] truncate max-w-sm" title={task.title}>
                         {task.title}
                       </span>
-                      {task.parentTaskId && (
-                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
-                          Subtarea
-                        </span>
-                      )}
                       <span
                         className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
                           TASK_STATUS_COLORS[task.status] || 'bg-gray-100 text-gray-600'
@@ -253,7 +249,7 @@ export function MilestoneTaskSelectorModal({
                       <div className="flex flex-col items-end">
                         <span
                           className="rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800"
-                          title={`Vinculada al hito «${otherMilestoneName}». Cada tarea solo puede pertenecer a un único hito (D2).`}
+                          title={`Vinculada al hito «${otherMilestoneName}». Cada tarea principal solo puede pertenecer a un único hito (D2).`}
                         >
                           {`En: ${otherMilestoneName}`}
                         </span>
@@ -282,7 +278,7 @@ export function MilestoneTaskSelectorModal({
         {/* Footer */}
         <div className="flex justify-between items-center border-t border-[#DEE5EC] p-4 bg-gray-50">
           <span className="text-xs text-[#607185]">
-            Total mostradas: {visibleTasks.length} tareas
+            Total mostradas: {visibleTasks.length} tareas principales
           </span>
           <button
             type="button"

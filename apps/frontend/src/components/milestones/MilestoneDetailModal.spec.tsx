@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { MilestoneDetailDto } from '@tema/shared-types';
+import type { AuthenticatedUser, MilestoneDetailDto, Project, ProjectMember } from '@tema/shared-types';
 import { MilestoneDetailModal } from './MilestoneDetailModal';
 
 const samplePendingDetail: MilestoneDetailDto = {
@@ -31,6 +31,8 @@ const samplePendingDetail: MilestoneDetailDto = {
       dueDate: '2026-10-15',
       parentTaskId: null,
       assignedTo: { id: 'u-2', name: 'Dev Ops' },
+      assignedToId: 'u-2',
+      createdBy: 'u-1',
     },
     {
       id: 'task-102',
@@ -41,6 +43,10 @@ const samplePendingDetail: MilestoneDetailDto = {
       dueDate: '2026-10-25',
       parentTaskId: null,
       assignedTo: { id: 'u-3', name: 'QA Tester' },
+      assignedToId: 'u-3',
+      createdBy: 'u-1',
+      subtaskCount: 3,
+      completedSubtaskCount: 2,
     },
   ],
 };
@@ -56,9 +62,20 @@ const sampleCompletedDetail: MilestoneDetailDto = {
   progress: 100,
 };
 
-function renderModal(detail: MilestoneDetailDto, canManage: boolean) {
+function renderModal(
+  detail: MilestoneDetailDto,
+  canManage: boolean,
+  opts?: {
+    user?: AuthenticatedUser;
+    project?: Project;
+    members?: ProjectMember[];
+  },
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(['milestone-detail', detail.id], detail);
+  if (opts?.user) client.setQueryData(['auth', 'me'], opts.user);
+  if (opts?.project) client.setQueryData(['project', 'proj-1'], opts.project);
+  if (opts?.members) client.setQueryData(['project-members', 'proj-1'], opts.members);
 
   return renderToString(
     <QueryClientProvider client={client}>
@@ -72,12 +89,12 @@ function renderModal(detail: MilestoneDetailDto, canManage: boolean) {
           onMilestoneUpdated={vi.fn()}
         />
       </MemoryRouter>
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
 }
 
-describe('MilestoneDetailModal (Detalle y Administración de Hito)', () => {
-  it('renderiza datos del hito, tareas asociadas y progreso', () => {
+describe('MilestoneDetailModal (KAN-248, KAN-249 y KAN-250)', () => {
+  it('renderiza datos del hito, tareas asociadas, estados reales y progreso (KAN-248)', () => {
     const html = renderModal(samplePendingDetail, true);
     expect(html).toContain('Lanzamiento v1.0');
     expect(html).toContain('Entrega final con todas las funcionalidades.');
@@ -86,26 +103,122 @@ describe('MilestoneDetailModal (Detalle y Administración de Hito)', () => {
     expect(html).toContain('Dev Ops');
     expect(html).toContain('QA Tester');
     expect(html).toContain('50%');
+    // Estados reales legibles (KAN-248)
+    expect(html).toContain('Completada');
+    expect(html).toContain('En curso');
+    // Información de progreso de subtareas cuando corresponda (KAN-248)
+    expect(html).toContain('Subtareas: 2/3 (67%)');
   });
 
-  it('cuando canManage=true en hito pendiente: muestra "Marcar como alcanzado", "Vincular tareas", "Editar", "Eliminar" y "Desasociar"', () => {
+  it('muestra correctamente todos los estados reales de tareas principales (PENDING, IN_PROGRESS, IN_REVIEW, BLOCKED, COMPLETED) y excluye subtareas (parentTaskId !== null)', () => {
+    const allStatesDetail: MilestoneDetailDto = {
+      ...samplePendingDetail,
+      tasks: [
+        { id: 't1', title: 'T1', status: 'PENDING', priority: 'LOW', startDate: null, dueDate: null, parentTaskId: null, assignedTo: null },
+        { id: 't2', title: 'T2', status: 'IN_PROGRESS', priority: 'LOW', startDate: null, dueDate: null, parentTaskId: null, assignedTo: null },
+        { id: 't3', title: 'T3', status: 'IN_REVIEW', priority: 'LOW', startDate: null, dueDate: null, parentTaskId: null, assignedTo: null },
+        { id: 't4', title: 'T4', status: 'BLOCKED', priority: 'LOW', startDate: null, dueDate: null, parentTaskId: null, assignedTo: null },
+        { id: 't5', title: 'T5', status: 'COMPLETED', priority: 'LOW', startDate: null, dueDate: null, parentTaskId: null, assignedTo: null },
+        { id: 'sub-hist', title: 'Subtarea Histórica Excluida', status: 'PENDING', priority: 'LOW', startDate: null, dueDate: null, parentTaskId: 't1', assignedTo: null },
+      ],
+    };
+
+    const html = renderModal(allStatesDetail, true);
+    expect(html).toContain('Pendiente');
+    expect(html).toContain('En curso');
+    expect(html).toContain('En revisión');
+    expect(html).toContain('Bloqueada');
+    expect(html).toContain('Completada');
+    expect(html).not.toContain('Subtarea Histórica Excluida');
+  });
+
+  it('renderiza checkboxes sincronizados con el estado de cada tarea (KAN-249)', () => {
     const html = renderModal(samplePendingDetail, true);
-    expect(html).toContain('Marcar como alcanzado');
+    // task-101 está COMPLETED -> checkbox marcado (checked)
+    const cb101 = html.match(/<input[^>]*id="milestone-task-checkbox-task-101"[^>]*>/)?.[0] ?? '';
+    expect(cb101).toContain('type="checkbox"');
+    expect(cb101).toContain('checked=""');
+    expect(cb101).not.toContain('disabled=""');
+
+    // task-102 está IN_PROGRESS -> checkbox desmarcado
+    const cb102 = html.match(/<input[^>]*id="milestone-task-checkbox-task-102"[^>]*>/)?.[0] ?? '';
+    expect(cb102).toContain('type="checkbox"');
+    expect(cb102).not.toContain('checked=""');
+    expect(cb102).not.toContain('disabled=""');
+  });
+
+  it('respeta canEditTaskUI en los checkboxes: COLLABORATOR habilita solo su tarea asignada y deshabilita la ajena (KAN-249)', () => {
+    const collabUser: AuthenticatedUser = {
+      id: 'u-3',
+      email: 'qa@tema.com',
+      name: 'QA Tester',
+      avatarUrl: null,
+      roles: ['COLLABORATOR'],
+    };
+    const project: Project = {
+      id: 'proj-1',
+      name: 'Proyecto 1',
+      leaderId: 'u-1',
+    } as Project;
+    const members: ProjectMember[] = [
+      { id: 'pm-1', projectId: 'proj-1', userId: 'u-3', projectRole: 'COLLABORATOR', joinedAt: '' },
+    ];
+
+    const html = renderModal(samplePendingDetail, false, { user: collabUser, project, members });
+
+    // task-101 pertenece a u-2 -> deshabilitado para u-3
+    const cb101 = html.match(/<input[^>]*id="milestone-task-checkbox-task-101"[^>]*>/)?.[0] ?? '';
+    expect(cb101).toContain('disabled=""');
+
+    // task-102 está asignada a u-3 -> habilitado para u-3
+    const cb102 = html.match(/<input[^>]*id="milestone-task-checkbox-task-102"[^>]*>/)?.[0] ?? '';
+    expect(cb102).not.toContain('disabled=""');
+  });
+
+  it('cuando canManage=true en hito con tareas pendientes: muestra un único botón claro "Finalizar hito y tareas" sin botón redundante (KAN-250)', () => {
+    const html = renderModal(samplePendingDetail, true);
+    expect(html).toContain('Finalizar hito y tareas');
+    expect(html).not.toContain('Marcar como alcanzado');
     expect(html).toContain('Vincular tareas');
     expect(html).toContain('Editar hito');
     expect(html).toContain('Eliminar');
     expect(html).toContain('Desasociar');
   });
 
-  it('cuando canManage=true en hito completado: muestra "Reabrir hito"', () => {
+  it('cuando canManage=true en hito pendiente sin tareas pendientes (ej. vacío): muestra "Marcar como alcanzado"', () => {
+    const emptyDetail: MilestoneDetailDto = {
+      ...samplePendingDetail,
+      taskCount: 0,
+      completedTaskCount: 0,
+      progress: 0,
+      tasks: [],
+    };
+    const html = renderModal(emptyDetail, true);
+    expect(html).toContain('Marcar como alcanzado');
+    expect(html).not.toContain('Finalizar hito y tareas');
+  });
+
+  it('cuando canManage=true en hito completado: muestra "Reabrir hito" y oculta botones redundantes de finalización', () => {
     const html = renderModal(sampleCompletedDetail, true);
     expect(html).toContain('Reabrir hito');
     expect(html).not.toContain('Marcar como alcanzado');
+    expect(html).not.toContain('Finalizar hito y tareas');
+  });
+
+  it('diferencia visualmente el hito completado automáticamente (completedById === null) del confirmado manualmente', () => {
+    const autoCompletedDetail: MilestoneDetailDto = {
+      ...sampleCompletedDetail,
+      completedById: null,
+      completedBy: undefined,
+    };
+    const html = renderModal(autoCompletedDetail, true);
+    expect(html).toContain('Alcanzado automáticamente el');
   });
 
   it('cuando canManage=false (solo lectura): NO muestra botones de administración', () => {
     const html = renderModal(samplePendingDetail, false);
     expect(html).not.toContain('Marcar como alcanzado');
+    expect(html).not.toContain('Finalizar hito y tareas');
     expect(html).not.toContain('Vincular tareas');
     expect(html).not.toContain('Editar hito');
     expect(html).not.toContain('Eliminar');

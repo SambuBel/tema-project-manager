@@ -92,7 +92,7 @@ export class MilestonesController {
   }
 
   /**
-   * Confirma manualmente la finalización de un Milestone (KAN-244 - Fase 4).
+   * Confirma manualmente la finalización de un Milestone sin modificar sus tareas (KAN-244 / KAN-250).
    * Solo accesible por ADMIN, PROGRAM_MANAGER o el líder real del proyecto.
    */
   @Patch('milestones/:id/complete')
@@ -101,6 +101,20 @@ export class MilestonesController {
     @CurrentUser() user: RequestUser,
   ): Promise<MilestoneSummaryDto> {
     return this.milestonesService.complete(id, user);
+  }
+
+  /**
+   * Finalización conjunta de un Milestone junto con sus tareas asociadas pendientes (KAN-250).
+   * Criterio funcional provisional: completa en una única transacción las subtareas y tareas principales
+   * pendientes asociadas al hito y luego marca el hito como completado.
+   * Solo accesible por ADMIN, PROGRAM_MANAGER o el líder real del proyecto.
+   */
+  @Patch('milestones/:id/complete-with-tasks')
+  async completeWithTasks(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: RequestUser,
+  ): Promise<MilestoneSummaryDto> {
+    return this.milestonesService.completeWithTasks(id, user);
   }
 
   /**

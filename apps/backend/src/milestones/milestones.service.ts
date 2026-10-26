@@ -10,6 +10,7 @@ import { EntityManager, IsNull, Repository } from 'typeorm';
 import { MilestoneEntity } from './milestone.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { TaskEntity } from '../tasks/task.entity';
+import { isValidTransition, TASK_STATUS_LABELS } from '../tasks/task-transitions';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { CreateMilestoneDto } from './dto/create-milestone.dto';
@@ -23,6 +24,7 @@ import {
 } from './dto/milestone-response.dto';
 import { TaskStatus } from '../database/enums';
 import type { MilestoneStatus } from '@tema/shared-types';
+import { syncMilestoneAutoCompletionWithManager } from './milestone-auto-completion.helper';
 
 @Injectable()
 export class MilestonesService {
@@ -139,7 +141,7 @@ export class MilestonesService {
       return [];
     }
 
-    // Consulta agregada única para calcular contadores de tareas asociadas sin N+1
+    // Consulta agregada única para calcular contadores de tareas principales asociadas sin N+1
     const statsMap = await this.getTaskStatsForMilestones(milestones.map((m) => m.id));
 
     return milestones.map((m) => {
@@ -149,7 +151,7 @@ export class MilestonesService {
   }
 
   /**
-   * Consulta el detalle de un Milestone con sus tareas asociadas activas (KAN-243).
+   * Consulta el detalle de un Milestone con sus tareas principales asociadas activas (KAN-243 / KAN-248).
    */
   async findOne(id: string, user: RequestUser): Promise<MilestoneDetailDto> {
     const milestone = await this.milestoneRepo.findOne({
@@ -166,20 +168,25 @@ export class MilestonesService {
       throw new ForbiddenException('No tenés acceso a este proyecto');
     }
 
-    // Traer tareas asociadas activas (excluyendo archivadas)
+    // Traer tareas principales asociadas activas (excluyendo archivadas y subtareas históricas)
     const tasks = await this.taskRepo
       .createQueryBuilder('task')
       .leftJoinAndSelect('task.assignedTo', 'assignedTo')
       .where('task.milestoneId = :id', { id })
+      .andWhere('task.parentTaskId IS NULL')
       .andWhere('task.archivedAt IS NULL')
       .orderBy('task.dueDate', 'ASC', 'NULLS LAST')
       .addOrderBy('task.createdAt', 'ASC')
       .getMany();
 
-    const taskCount = tasks.length;
-    const completedTaskCount = tasks.filter((t) => t.status === TaskStatus.COMPLETED).length;
+    const rootTasks = tasks.filter((t) => !t.parentTaskId);
+    const taskCount = rootTasks.length;
+    const completedTaskCount = rootTasks.filter((t) => t.status === TaskStatus.COMPLETED).length;
 
-    return this.toDetailDto(milestone, tasks, taskCount, completedTaskCount);
+    const rootTaskIds = rootTasks.map((t) => t.id);
+    const subtaskStatsMap = await this.getSubtaskStatsForParentTasks(rootTaskIds);
+
+    return this.toDetailDto(milestone, rootTasks, taskCount, completedTaskCount, subtaskStatsMap);
   }
 
   /**
@@ -282,7 +289,7 @@ export class MilestonesService {
   }
 
   /**
-   * Marca manualmente un Milestone como completado (KAN-244 - Fase 4).
+   * Marca manualmente un Milestone como completado sin modificar sus tareas asociadas (KAN-244 / KAN-250).
    * - Registra completedAt y completedById (usuario autenticado).
    * - Idempotente ante llamadas sucesivas.
    */
@@ -300,8 +307,8 @@ export class MilestonesService {
       throw new ForbiddenException('No tenés permisos para confirmar la finalización de este hito');
     }
 
-    if (!milestone.completedAt) {
-      milestone.completedAt = new Date();
+    if (!milestone.completedAt || !milestone.completedById) {
+      milestone.completedAt = milestone.completedAt ?? new Date();
       milestone.completedById = user.id;
       await this.milestoneRepo.save(milestone);
       milestone.completedBy = { id: user.id, name: user.name, email: user.email } as any;
@@ -310,6 +317,121 @@ export class MilestonesService {
     const stats = await this.getTaskStatsForMilestones([milestone.id]);
     const stat = stats.get(milestone.id) ?? { taskCount: 0, completedTaskCount: 0 };
     return this.toSummaryDto(milestone, stat.taskCount, stat.completedTaskCount);
+  }
+
+  /**
+   * Finalización conjunta de un Milestone junto con sus tareas asociadas pendientes y sus subtareas (KAN-250).
+   * - Ejecuta toda la operación dentro de una única transacción atómica.
+   * - Valida existencia del hito, permisos (`canManageMilestones` y `canEditTask`) y transiciones de estado
+   *   tanto en las tareas principales pendientes como en sus subtareas pendientes.
+   * - Completa primero todas las subtareas pendientes de las tareas asociadas y luego las tareas principales.
+   * - Registra `completedAt` y `completedById` en el Milestone (confirmación manual/conjunta por el usuario).
+   */
+  async completeWithTasks(id: string, user: RequestUser): Promise<MilestoneSummaryDto> {
+    return this.milestoneRepo.manager.transaction(async (manager) => {
+      // 1. Validar existencia del Milestone activo
+      const milestone = await manager.findOne(MilestoneEntity, {
+        where: { id, deletedAt: IsNull() },
+        relations: ['project', 'creator', 'completedBy'],
+      });
+
+      if (!milestone) {
+        throw new NotFoundException(`Milestone con id ${id} no encontrado`);
+      }
+
+      // 2. Validar permisos sobre el Milestone
+      if (!this.permissions.canManageMilestones(user, milestone.project)) {
+        throw new ForbiddenException('No tenés permisos para confirmar la finalización conjunta de este hito');
+      }
+
+      // 3. Obtener tareas principales activas asociadas al hito
+      const repo = manager.getRepository ? manager.getRepository(TaskEntity) : this.taskRepo;
+      const tasks = await repo
+        .createQueryBuilder('task')
+        .where('task.milestoneId = :id', { id })
+        .andWhere('task.parentTaskId IS NULL')
+        .andWhere('task.archivedAt IS NULL')
+        .orderBy('task.createdAt', 'ASC')
+        .getMany();
+
+      const rootTasks = tasks.filter((t) => !t.parentTaskId);
+      const pendingRootTasks = rootTasks.filter((t) => t.status !== TaskStatus.COMPLETED);
+
+      // 4. Obtener subtareas pendientes de las tareas principales asociadas al hito
+      let pendingSubtasks: TaskEntity[] = [];
+      if (pendingRootTasks.length > 0) {
+        const rootPendingIds = pendingRootTasks.map((t) => t.id);
+        const childQb = repo.createQueryBuilder('subtask');
+        if (typeof childQb.where === 'function' && typeof childQb.getMany === 'function') {
+          pendingSubtasks =
+            (await childQb
+              .where('subtask.parentTaskId IN (:...rootPendingIds)', { rootPendingIds })
+              .andWhere('subtask.archivedAt IS NULL')
+              .andWhere('subtask.status != :completedStatus', { completedStatus: TaskStatus.COMPLETED })
+              .orderBy('subtask.createdAt', 'ASC')
+              .getMany()) ?? [];
+        }
+      }
+
+      // 5. Validar permisos de edición y transición de estado en cada subtarea pendiente y cada tarea principal pendiente
+      for (const subtask of pendingSubtasks) {
+        if (typeof (this.permissions as any).canEditTask === 'function') {
+          const canEditSub = await this.permissions.canEditTask(user, subtask, milestone.project);
+          if (!canEditSub) {
+            throw new ForbiddenException(`No tenés permisos para completar la subtarea "${subtask.title}"`);
+          }
+        }
+        if (!isValidTransition(subtask.status, TaskStatus.COMPLETED)) {
+          const fromLabel = TASK_STATUS_LABELS[subtask.status] ?? subtask.status;
+          throw new BadRequestException(
+            `La subtarea "${subtask.title}" está en estado "${fromLabel}" y no puede transicionar a Completada`,
+          );
+        }
+      }
+
+      for (const task of pendingRootTasks) {
+        if (typeof (this.permissions as any).canEditTask === 'function') {
+          const canEdit = await this.permissions.canEditTask(user, task, milestone.project);
+          if (!canEdit) {
+            throw new ForbiddenException(`No tenés permisos para completar la tarea "${task.title}"`);
+          }
+        }
+
+        if (!isValidTransition(task.status, TaskStatus.COMPLETED)) {
+          const fromLabel = TASK_STATUS_LABELS[task.status] ?? task.status;
+          throw new BadRequestException(
+            `La tarea "${task.title}" está en estado "${fromLabel}" y no puede transicionar a Completada`,
+          );
+        }
+      }
+
+      // 6. Completar primero las subtareas pendientes y luego las tareas principales pendientes
+      for (const subtask of pendingSubtasks) {
+        await manager.update(TaskEntity, subtask.id, { status: TaskStatus.COMPLETED });
+      }
+      for (const rootTask of pendingRootTasks) {
+        await manager.update(TaskEntity, rootTask.id, { status: TaskStatus.COMPLETED });
+      }
+
+      // 7. Marcar el Milestone como alcanzado con confirmación del usuario actual
+      if (!milestone.completedAt || !milestone.completedById) {
+        milestone.completedAt = milestone.completedAt ?? new Date();
+        milestone.completedById = user.id;
+        milestone.completedBy = { id: user.id, name: user.name, email: user.email } as any;
+        if (typeof (manager as any).save === 'function') {
+          await (manager as any).save(MilestoneEntity, milestone);
+        } else {
+          await this.milestoneRepo.save(milestone);
+        }
+      }
+
+      const stats = await this.getTaskStatsForMilestones([milestone.id], manager);
+      const stat = stats.get(milestone.id) ?? {
+        taskCount: rootTasks.length,
+        completedTaskCount: rootTasks.length,
+      };
+      return this.toSummaryDto(milestone, stat.taskCount, stat.completedTaskCount);
+    });
   }
 
   /**
@@ -344,13 +466,13 @@ export class MilestonesService {
   }
 
   /**
-   * Asocia una tarea a un Milestone de forma transaccional e idempotente (KAN-245).
+   * Asocia una tarea principal a un Milestone de forma transaccional e idempotente (KAN-245 / KAN-247).
    * - Valida existencia del hito (activo) y permisos de administración.
-   * - Valida existencia de la tarea, que no esté archivada y pertenezca al mismo proyecto.
+   * - Valida existencia de la tarea, que sea una tarea principal (parentTaskId === null),
+   *   que no esté archivada y que pertenezca al mismo proyecto.
    * - Si ya está asociada al mismo hito, es idempotente (retorna resumen sin cambios).
    * - Si está asociada a otro hito activo, responde 409 Conflict sin reasignar silenciosamente.
-   * - Preserva intactos todos los demás campos de la tarea.
-   * - Retorna el resumen del Milestone con métricas actualizadas.
+   * - Sincroniza el estado de finalización automática del hito tras asociar la tarea.
    */
   async associateTask(
     milestoneId: string,
@@ -393,15 +515,22 @@ export class MilestonesService {
         throw new BadRequestException('No se puede asociar una tarea archivada a un hito');
       }
 
-      // 6. Validar pertenencia previa
-      // Caso 6a: Idempotente si ya pertenece a este mismo hito
+      // 6. Validar que sea una tarea principal (parentTaskId === null)
+      if (task.parentTaskId) {
+        throw new BadRequestException(
+          'Solo se pueden asociar tareas principales a un hito. No se permite vincular subtareas individuales',
+        );
+      }
+
+      // 7. Validar pertenencia previa
+      // Caso 7a: Idempotente si ya pertenece a este mismo hito
       if (task.milestoneId === milestone.id) {
         const stats = await this.getTaskStatsForMilestones([milestone.id], manager);
         const stat = stats.get(milestone.id) ?? { taskCount: 0, completedTaskCount: 0 };
         return this.toSummaryDto(milestone, stat.taskCount, stat.completedTaskCount);
       }
 
-      // Caso 6b: Conflicto 409 si pertenece a otro hito activo
+      // Caso 7b: Conflicto 409 si pertenece a otro hito activo
       if (task.milestoneId) {
         const otherMilestone = await manager.findOne(MilestoneEntity, {
           where: { id: task.milestoneId, deletedAt: IsNull() },
@@ -414,23 +543,26 @@ export class MilestonesService {
         }
       }
 
-      // 7. Asociar la tarea de forma atómica (solo modifica milestoneId)
+      // 8. Asociar la tarea de forma atómica (solo modifica milestoneId)
       await manager.update(TaskEntity, taskId, { milestoneId: milestone.id });
 
       const stats = await this.getTaskStatsForMilestones([milestone.id], manager);
-      const stat = stats.get(milestone.id) ?? { taskCount: 0, completedTaskCount: 0 };
+      const stat = stats.get(milestone.id) ?? {
+        taskCount: 1,
+        completedTaskCount: task.status === TaskStatus.COMPLETED ? 1 : 0,
+      };
+
+      // 9. Sincronizar estado de finalización automática del hito
+      await syncMilestoneAutoCompletionWithManager(manager, milestone.id, stat, milestone);
+
       return this.toSummaryDto(milestone, stat.taskCount, stat.completedTaskCount);
     });
   }
 
   /**
    * Desasocia una tarea de un Milestone de forma transaccional e idempotente (KAN-245).
-   * - Valida existencia del hito (activo) y permisos.
-   * - Valida existencia de la tarea.
-   * - Si la tarea ya no está asociada a ningún hito, es idempotente.
-   * - Si la tarea está vinculada a OTRO hito, rechaza la operación para no desasociar por error.
-   * - Establece tasks.milestone_id = null sin borrar la tarea.
-   * - Retorna el resumen del Milestone con métricas actualizadas.
+   * - Permite también desvincular subtareas históricas si existieran en la BD.
+   * - Sincroniza el estado de finalización automática del hito tras desasociar la tarea.
    */
   async disassociateTask(
     milestoneId: string,
@@ -480,6 +612,10 @@ export class MilestonesService {
 
       const stats = await this.getTaskStatsForMilestones([milestone.id], manager);
       const stat = stats.get(milestone.id) ?? { taskCount: 0, completedTaskCount: 0 };
+
+      // 6. Sincronizar estado de finalización automática del hito
+      await syncMilestoneAutoCompletionWithManager(manager, milestone.id, stat, milestone);
+
       return this.toSummaryDto(milestone, stat.taskCount, stat.completedTaskCount);
     });
   }
@@ -498,6 +634,7 @@ export class MilestonesService {
         .addSelect('COUNT(t.id)', 'taskCount')
         .addSelect(`COUNT(CASE WHEN t.status = :completedStatus THEN 1 END)`, 'completedTaskCount')
         .where('t.milestoneId IN (:...milestoneIds)', { milestoneIds })
+        .andWhere('t.parentTaskId IS NULL')
         .andWhere('t.archivedAt IS NULL')
         .setParameter('completedStatus', TaskStatus.COMPLETED)
         .groupBy('t.milestoneId')
@@ -511,6 +648,39 @@ export class MilestonesService {
       });
     }
     return statsMap;
+  }
+
+  private async getSubtaskStatsForParentTasks(
+    parentTaskIds: string[],
+  ): Promise<Map<string, { subtaskCount: number; completedSubtaskCount: number }>> {
+    if (parentTaskIds.length === 0) return new Map();
+
+    const qb = this.taskRepo.createQueryBuilder('sub');
+    if (typeof qb?.select !== 'function' || typeof qb?.getRawMany !== 'function') {
+      return new Map();
+    }
+
+    const rows: Array<{ parentTaskId: string; subtaskCount: string; completedSubtaskCount: string }> =
+      (await qb
+        .select('sub.parentTaskId', 'parentTaskId')
+        .addSelect('COUNT(sub.id)', 'subtaskCount')
+        .addSelect(`COUNT(CASE WHEN sub.status = :completedStatus THEN 1 END)`, 'completedSubtaskCount')
+        .where('sub.parentTaskId IN (:...parentTaskIds)', { parentTaskIds })
+        .andWhere('sub.archivedAt IS NULL')
+        .setParameter('completedStatus', TaskStatus.COMPLETED)
+        .groupBy('sub.parentTaskId')
+        .getRawMany()) ?? [];
+
+    const map = new Map<string, { subtaskCount: number; completedSubtaskCount: number }>();
+    for (const row of rows) {
+      if (row.parentTaskId) {
+        map.set(row.parentTaskId, {
+          subtaskCount: parseInt(row.subtaskCount, 10) || 0,
+          completedSubtaskCount: parseInt(row.completedSubtaskCount, 10) || 0,
+        });
+      }
+    }
+    return map;
   }
 
   private computeStatus(dueDate: string, completedAt: Date | string | null): MilestoneStatus {
@@ -571,27 +741,39 @@ export class MilestonesService {
     tasks: TaskEntity[],
     taskCount: number,
     completedTaskCount: number,
+    subtaskStatsMap?: Map<string, { subtaskCount: number; completedSubtaskCount: number }>,
   ): MilestoneDetailDto {
     const summary = this.toSummaryDto(milestone, taskCount, completedTaskCount);
 
-    const taskDtos: MilestoneTaskDto[] = tasks.map((t) => ({
-      id: t.id,
-      title: t.title,
-      slug: t.slug,
-      status: t.status,
-      priority: t.priority,
-      startDate: t.startDate ?? null,
-      dueDate: t.dueDate ?? null,
-      parentTaskId: t.parentTaskId ?? null,
-      assignedTo: t.assignedTo
-        ? {
-            id: t.assignedTo.id,
-            name: t.assignedTo.name,
-            email: t.assignedTo.email,
-            avatarUrl: t.assignedTo.avatarUrl ?? null,
-          }
-        : null,
-    }));
+    const taskDtos: MilestoneTaskDto[] = tasks.map((t) => {
+      const subStats = subtaskStatsMap?.get(t.id);
+      return {
+        id: t.id,
+        title: t.title,
+        slug: t.slug,
+        status: t.status,
+        priority: t.priority,
+        startDate: t.startDate ?? null,
+        dueDate: t.dueDate ?? null,
+        parentTaskId: t.parentTaskId ?? null,
+        assignedTo: t.assignedTo
+          ? {
+              id: t.assignedTo.id,
+              name: t.assignedTo.name,
+              email: t.assignedTo.email,
+              avatarUrl: t.assignedTo.avatarUrl ?? null,
+            }
+          : null,
+        assignedToId: t.assignedToId ?? t.assignedTo?.id ?? null,
+        createdBy: t.createdBy,
+        ...(subStats
+          ? {
+              subtaskCount: subStats.subtaskCount,
+              completedSubtaskCount: subStats.completedSubtaskCount,
+            }
+          : {}),
+      };
+    });
 
     return {
       ...summary,

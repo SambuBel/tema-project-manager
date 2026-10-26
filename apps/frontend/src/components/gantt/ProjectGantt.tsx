@@ -6,11 +6,13 @@ import './gantt.css';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useGantt } from '../../hooks/useGantt';
 import { buildGanttView, SVAR_TO_DEPENDENCY_TYPE } from '../../lib/ganttAdapter';
+import { mergeGanttTasksWithMilestones } from '../../lib/ganttMilestonesAdapter';
 import { addDays, formatLocalDate, isSameDay, startOfToday, toISODate } from '../../lib/dates';
 import { api as temaApi } from '../../lib/api';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import { canManageTaskPlanningUI } from '../../lib/permissions';
 import { CascadeModal } from './CascadeModal';
+import { GanttMilestonesPanel } from './GanttMilestonesPanel';
 import type { CascadePreviewResponse } from '@tema/shared-types';
 import { Locale } from '@svar-ui/react-core';
 // @ts-ignore - @svar-ui/core-locales no trae declaraciones de tipo
@@ -76,18 +78,14 @@ const SCALE_CONFIG: Record<ZoomLevel, { scales: { unit: string; step: number; fo
 
 const ZOOM_LABELS: Record<ZoomLevel, string> = { day: 'Día', week: 'Semana', month: 'Mes' };
 
-function TaskBar({ data }: { data: ITask }) {
-  const blocked = data.blocked === true;
-  return (
-    <div title={blocked ? 'Bloqueada: tiene predecesoras sin completar' : undefined} className="truncate px-1">
-      {blocked && <span aria-label="Bloqueada">🔒 </span>}
-      {data.text}
-    </div>
-  );
-}
-
 export function ProjectGantt({ projectId }: ProjectGanttProps) {
   const { data, isPending, isError } = useGantt(projectId);
+  const { data: milestones } = useQuery({
+    queryKey: ['milestones', projectId],
+    queryFn: () => temaApi.listMilestones(projectId),
+    enabled: Boolean(projectId),
+  });
+  const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<ZoomLevel>('day');
 
   const { user } = useCurrentUser();
@@ -112,7 +110,7 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
   });
 
   const assignees = useMemo(() => {
-  if (!data) return [];
+    if (!data) return [];
     const map = new Map<string, string>();
     for (const task of data.tasks) {
       if (task.assignedTo) {
@@ -128,10 +126,10 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
   const canEdit = !!(user && project && canManageTaskPlanningUI(user, project));
 
   const filteredData = useMemo(() => {
-  if (!data) return null;
-  if (!selectedAssigneeId) return data;
-  if (selectedAssigneeId === '__unassigned__') {
-    return { ...data, tasks: data.tasks.filter((t) => !t.assignedTo) };
+    if (!data) return null;
+    if (!selectedAssigneeId) return data;
+    if (selectedAssigneeId === '__unassigned__') {
+      return { ...data, tasks: data.tasks.filter((t) => !t.assignedTo) };
     }
     return {
       ...data,
@@ -140,8 +138,49 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
   }, [data, selectedAssigneeId]);
 
   const view = useMemo(() => (filteredData ? buildGanttView(filteredData) : null), [filteredData]);
+  const ganttTasks = useMemo(
+    () => (view ? mergeGanttTasksWithMilestones(view.tasks, milestones) : []),
+    [view, milestones],
+  );
+
   const highlightToday = useCallback(
     (date: Date, unit: 'day' | 'hour') => (unit === 'day' && isSameDay(date, startOfToday()) ? 'tema-gantt-today' : ''),
+    [],
+  );
+
+  const TaskBar = useCallback(
+    ({ data: item }: { data: ITask }) => {
+      if (item.isMilestone) {
+        const isCompleted = item.milestoneStatus === 'COMPLETED';
+        const isOverdue = item.milestoneStatus === 'OVERDUE';
+        const statusText = isCompleted ? 'Alcanzado' : isOverdue ? 'Vencido' : 'Pendiente';
+        return (
+          <button
+            type="button"
+            onClick={() => setSelectedMilestoneId(String(item.milestoneId))}
+            title={`Hito: ${item.text} (${statusText}) — Avance: ${item.milestoneProgress ?? 0}%`}
+            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold ${
+              isCompleted
+                ? 'bg-emerald-100 text-emerald-900'
+                : isOverdue
+                  ? 'bg-rose-100 text-rose-900'
+                  : 'bg-[#EAF2F7] text-[#172B42]'
+            }`}
+          >
+            <span aria-hidden="true">{isCompleted ? '✓ ◆' : '◆'}</span>
+            <span className="truncate">{item.text}</span>
+          </button>
+        );
+      }
+
+      const blocked = item.blocked === true;
+      return (
+        <div title={blocked ? 'Bloqueada: tiene predecesoras sin completar' : undefined} className="truncate px-1">
+          {blocked && <span aria-label="Bloqueada">🔒 </span>}
+          {item.text}
+        </div>
+      );
+    },
     [],
   );
 
@@ -150,6 +189,11 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
     (ganttApi: any) => {
       ganttApi.on('update-task', async ({ id, task, inProgress }: any) => {
         if (inProgress) return;
+        // Los hitos (type: 'milestone') son marcadores del cronograma; no se editan como tareas.
+        if (String(id).startsWith('milestone:') || task?.isMilestone) {
+          setGanttKey((k) => k + 1);
+          return;
+        }
 
         const newStartDate = task.start ? toISODate(task.start) : null;
         const newDueDate = task.end ? toISODate(addDays(task.end, -1)) : null;
@@ -200,11 +244,18 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
           console.error('Error al actualizar fechas de tarea:', err);
         }
         queryClient.invalidateQueries({ queryKey: ['gantt', projectId] });
-        setGanttKey(k => k + 1);
+        setGanttKey((k) => k + 1);
       });
 
-            // RF-GA-04: crear dependencia (link drag)
+      // RF-GA-04: crear dependencia (link drag)
       ganttApi.on('add-link', async ({ link }: any) => {
+        if (
+          String(link?.source).startsWith('milestone:') ||
+          String(link?.target).startsWith('milestone:')
+        ) {
+          setGanttKey((k) => k + 1);
+          return;
+        }
         const depType = SVAR_TO_DEPENDENCY_TYPE[link.type] ?? 'FINISH_START';
         try {
           await temaApi.createDependency(projectId, {
@@ -236,7 +287,7 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
     },
     [projectId, queryClient],
   );
-  
+
   const handleCascadeApply = useCallback(async () => {
     if (!cascadePending) return;
     setIsApplyingCascade(true);
@@ -252,7 +303,7 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
     queryClient.invalidateQueries({ queryKey: ['gantt', projectId] });
     setIsApplyingCascade(false);
     setCascadePending(null);
-    setGanttKey(k => k + 1);
+    setGanttKey((k) => k + 1);
   }, [cascadePending, projectId, queryClient]);
 
   const handleSingleUpdate = useCallback(async () => {
@@ -269,14 +320,14 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
     queryClient.invalidateQueries({ queryKey: ['gantt', projectId] });
     setIsApplyingCascade(false);
     setCascadePending(null);
-    setGanttKey(k => k + 1);
+    setGanttKey((k) => k + 1);
   }, [cascadePending, projectId, queryClient]);
 
   const handleCascadeCancel = useCallback(() => {
     // Revertir: invalidar para que SVAR vuelva al estado del servidor.
     queryClient.invalidateQueries({ queryKey: ['gantt', projectId] });
     setCascadePending(null);
-    setGanttKey(k => k + 1);
+    setGanttKey((k) => k + 1);
   }, [projectId, queryClient]);
 
   if (isPending) {
@@ -289,17 +340,25 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
 
   const unscheduledCount = view.unscheduled.length;
 
-  const ganttHeight = Math.max(300, Math.min(view.tasks.length * 38 + 86, 600));
+  const ganttHeight = Math.max(300, Math.min(ganttTasks.length * 38 + 86, 600));
 
   return (
     <div className="flex flex-col gap-4">
+      {milestones && milestones.length > 0 && (
+        <GanttMilestonesPanel
+          milestones={milestones}
+          selectedMilestoneId={selectedMilestoneId}
+          onSelectMilestone={setSelectedMilestoneId}
+        />
+      )}
+
       {unscheduledCount > 0 && (
         <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           {`Hay ${unscheduledCount} ${unscheduledCount === 1 ? 'tarea' : 'tareas'} sin fechas de planificación.`}
         </div>
       )}
 
-      {view.tasks.length === 0 ? (
+      {ganttTasks.length === 0 ? (
         <p className="rounded-xl border border-[#DEE5EC] bg-white p-6 text-sm text-[#607185]">
           {unscheduledCount === 0
             ? 'Este proyecto todavía no tiene tareas.'
@@ -308,42 +367,42 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
       ) : (
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-              <select
-                value={selectedAssigneeId ?? ''}
-                onChange={(e) => setSelectedAssigneeId(e.target.value || null)}
-                className="rounded-md border border-[#DEE5EC] bg-white px-3 py-1.5 text-xs text-[#172B42]"
-              >
-                <option value="">Todos los responsables</option>
-                <option value="__unassigned__">Sin asignar</option>
-                {assignees.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-              <div className="flex items-center gap-1">
-                {(['day', 'week', 'month'] as ZoomLevel[]).map((level) => (
-              <button
-                key={level}
-                onClick={() => setZoom(level)}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                  zoom === level
-                    ? 'bg-[#245B78] text-white'
-                    : 'bg-[#EAF2F7] text-[#172B42] hover:bg-[#DEE5EC]'
-                }`}
-              >
-                {ZOOM_LABELS[level]}
-              </button>
-            ))}
+            <select
+              value={selectedAssigneeId ?? ''}
+              onChange={(e) => setSelectedAssigneeId(e.target.value || null)}
+              className="rounded-md border border-[#DEE5EC] bg-white px-3 py-1.5 text-xs text-[#172B42]"
+            >
+              <option value="">Todos los responsables</option>
+              <option value="__unassigned__">Sin asignar</option>
+              {assignees.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <div className="flex items-center gap-1">
+              {(['day', 'week', 'month'] as ZoomLevel[]).map((level) => (
+                <button
+                  key={level}
+                  onClick={() => setZoom(level)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    zoom === level
+                      ? 'bg-[#245B78] text-white'
+                      : 'bg-[#EAF2F7] text-[#172B42] hover:bg-[#DEE5EC]'
+                  }`}
+                >
+                  {ZOOM_LABELS[level]}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-        
-          <div className="overflow-auto rounded-xl border border-[#DEE5EC] bg-white" style={{ height: ganttHeight}}>
+
+          <div className="overflow-auto rounded-xl border border-[#DEE5EC] bg-white" style={{ height: ganttHeight }}>
             <Locale words={{ ...esCore, ...esGantt }}>
               <Willow>
                 <Gantt
                   key={ganttKey}
-                  tasks={view.tasks}
+                  tasks={ganttTasks}
                   links={view.links}
                   columns={COLUMNS}
                   scales={SCALE_CONFIG[zoom].scales}
