@@ -45,8 +45,6 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         </SidebarSection>
       </div>
 
-       <SidebarNavLink to="/notifications" icon={<BellIcon />} label="Notificaciones" badge={unreadNotifications} onNavigate={onNavigate} />
-
       {projectMatch && (
         <div className="mt-6 max-h-24 overflow-hidden transition-[max-height,opacity,margin] duration-300 ease-in-out lg:group-data-[collapsed=true]/sb:mt-0 lg:group-data-[collapsed=true]/sb:max-h-0 lg:group-data-[collapsed=true]/sb:opacity-0">
           <SidebarSection title="Proyecto actual">
@@ -67,7 +65,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
               <SidebarNavLink to="/resource-profiles" icon={<ProfilesIcon />} label="Perfiles de recurso" onNavigate={onNavigate} />
             )}
             <SidebarNavLink to="/roles" icon={<InfoIcon />} label="Roles y permisos" onNavigate={onNavigate} />
-            <SidebarNavLink to="/notifications" icon={<BellIcon />} label="Notificaciones" onNavigate={onNavigate} />
+            <SidebarNavLink to="/notifications" icon={<BellIcon />} label="Notificaciones" badge={unreadNotifications} onNavigate={onNavigate} />
           </SidebarSection>
         )}
       </div>
