@@ -8,13 +8,13 @@ import { UserRoleEntity } from '../database/entities/user-role.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { TaskEntity } from '../tasks/task.entity';
 import { AuthModule } from '../auth/auth.module';
+import { UsersModule } from '../users/users.module';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { NotificationEventsService } from './notification-events.service';
 import { ProjectAlertsService } from './project-alerts.service';
 import { NotificationJobsService } from './notification-jobs.service';
-import { UsersModule } from 'src/users/users.module';
-
+import { TaskDueSoonService } from './task-due-soon.service';
 
 /**
  * Módulo de notificaciones. Exporta NotificationEventsService (eventos de dominio) y
@@ -33,11 +33,13 @@ import { UsersModule } from 'src/users/users.module';
       TaskEntity,
     ]),
     AuthModule,
+    UsersModule,
   ],
   controllers: [NotificationsController],
   providers: [
     NotificationsService,
     NotificationEventsService,
+    TaskDueSoonService,
     ProjectAlertsService,
     NotificationJobsService,
   ],
