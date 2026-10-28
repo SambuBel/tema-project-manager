@@ -12,9 +12,10 @@ import { UsersModule } from '../users/users.module';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { NotificationEventsService } from './notification-events.service';
-import { TaskDueSoonService } from './task-due-soon.service';
 import { ProjectAlertsService } from './project-alerts.service';
 import { NotificationJobsService } from './notification-jobs.service';
+import { UsersModule } from 'src/users/users.module';
+
 
 /**
  * Módulo de notificaciones. Exporta NotificationEventsService (eventos de dominio) y
@@ -39,7 +40,6 @@ import { NotificationJobsService } from './notification-jobs.service';
   providers: [
     NotificationsService,
     NotificationEventsService,
-    TaskDueSoonService,
     ProjectAlertsService,
     NotificationJobsService,
   ],
