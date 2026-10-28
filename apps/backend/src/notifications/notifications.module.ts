@@ -8,6 +8,7 @@ import { UserRoleEntity } from '../database/entities/user-role.entity';
 import { ProjectEntity } from '../projects/project.entity';
 import { TaskEntity } from '../tasks/task.entity';
 import { AuthModule } from '../auth/auth.module';
+import { UsersModule } from '../users/users.module';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { NotificationEventsService } from './notification-events.service';
@@ -32,6 +33,7 @@ import { NotificationJobsService } from './notification-jobs.service';
       TaskEntity,
     ]),
     AuthModule,
+    UsersModule,
   ],
   controllers: [NotificationsController],
   providers: [
