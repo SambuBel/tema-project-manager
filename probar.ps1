@@ -43,11 +43,18 @@ try {
     }
 
     # Solo este proyecto de Compose: otro contenedor, puerto y volumen.
+    Write-Host '[1/5] Comprobando PostgreSQL independiente...'
     Invoke-Checked 'docker' @('compose', '-p', 'tema-prueba-ultimos-cambios', '-f', 'infra/docker-compose.yml', 'up', '-d', '--wait')
-    Invoke-Checked 'npx.cmd' @('--yes', 'pnpm@9.12.0', 'exec', 'turbo', 'run', 'build', '--cache-dir=.turbo/cache')
+    # pnpm respeta el orden de dependencias del workspace. Evita el cierre de
+    # Turbo que puede quedar esperando despues de "Finishing writing to cache".
+    Write-Host '[2/5] Compilando los paquetes en orden, sin Turbo...'
+    Invoke-Checked 'npx.cmd' @('--yes', 'pnpm@9.12.0', '--recursive', '--workspace-concurrency=1', 'run', 'build')
+    Write-Host '[3/5] Verificando migraciones en la base de prueba...'
     Invoke-Checked 'npx.cmd' @('--yes', 'pnpm@9.12.0', '--filter', '@tema/backend', 'migration:run')
+    Write-Host '[4/5] Verificando catalogos; los usuarios existentes se conservan...'
     Invoke-Checked 'npx.cmd' @('--yes', 'pnpm@9.12.0', '--filter', '@tema/backend', 'seed')
 
+    Write-Host '[5/5] Iniciando API y frontend de prueba...'
     $taskNode = (Get-Command node.exe).Source
     $taskProcesses += Start-Process -FilePath $taskNode -ArgumentList 'dist/main.js' -WorkingDirectory (Join-Path $taskRoot 'apps/backend') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $taskRoot 'prueba-backend.log') -RedirectStandardError (Join-Path $taskRoot 'prueba-backend-error.log')
     $taskProcesses += Start-Process -FilePath $taskNode -ArgumentList 'node_modules/vite/bin/vite.js', '--port', '5174', '--strictPort' -WorkingDirectory (Join-Path $taskRoot 'apps/frontend') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $taskRoot 'prueba-frontend.log') -RedirectStandardError (Join-Path $taskRoot 'prueba-frontend-error.log')

@@ -40,6 +40,11 @@ Desde esta carpeta, en PowerShell:
 ```
 
 El script compila, aplica migraciones y carga los catálogos en una base separada.
+La compilación usa `pnpm --recursive --workspace-concurrency=1 run build`,
+respetando el orden de dependencias. Se evita Turbo en este lanzador porque
+una ejecución interactiva quedó retenida al finalizar la caché, aun después
+de completar las tres tareas. Los mensajes `[1/5]` a `[5/5]` identifican
+PostgreSQL, compilación, migraciones, catálogos y arranque respectivamente.
 Inicia el frontend en http://localhost:5174 y la API en
 http://localhost:3001/api/health. El backend usa la compilación: para probar
 modificaciones del backend, detener el script y ejecutarlo nuevamente.
