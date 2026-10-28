@@ -25,6 +25,8 @@ import { AuditLogEntity } from './audit-log.entity';
 import { NotificationEntity } from './notification.entity';
 import { AiConversationEntity } from './ai-conversation.entity';
 import { AiMessageEntity } from './ai-message.entity';
+import { NotificationPreferenceEntity } from './notification-preference.entity';
+
 
 export * from './user.entity';
 export * from './role.entity';
@@ -51,6 +53,8 @@ export * from './audit-log.entity';
 export * from './notification.entity';
 export * from './ai-conversation.entity';
 export * from './ai-message.entity';
+export * from './notification-preference.entity';
+
 
 import { ProjectActivityEntity } from './project-activity.entity';
 import { ProjectInvitationEntity } from '../../projects/project-invitation.entity';
@@ -91,6 +95,7 @@ export const ALL_ENTITIES = [
   ProgressMetricEntity,
   AuditLogEntity,
   NotificationEntity,
+  NotificationPreferenceEntity,
   AiConversationEntity,
   AiMessageEntity,
 ];
