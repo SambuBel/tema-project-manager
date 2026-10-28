@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository, EntityManager } from 'typeorm';
 import { TaskEntity } from './task.entity';
@@ -21,6 +21,8 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { UpdateTaskStatusDto } from './dto/update-task-status.dto';
 import { syncMilestoneAutoCompletionWithManager } from '../milestones/milestone-auto-completion.helper';
 import { FilterTasksDto } from './dto/filter-tasks.dto';
+import { NotificationEventsService } from '../notifications/notification-events.service';
+
 import {
   isValidTransition,
   TASK_STATUS_LABELS,
@@ -66,6 +68,8 @@ export class TasksService {
     private readonly subtaskRepo: Repository<SubtaskEntity>,
     @InjectRepository(TaskSlugHistoryEntity)
     private readonly taskSlugHistoryRepo: Repository<TaskSlugHistoryEntity>,
+    @Optional() private readonly notificationEvents?: NotificationEventsService,
+
   ) {}
 
   /**
