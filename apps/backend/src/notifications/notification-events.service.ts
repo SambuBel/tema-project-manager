@@ -77,4 +77,26 @@ export class NotificationEventsService {
       this.logger.warn('No se pudo generar la notificación de comentario: ' + String(err));
     }
   }
+
+  /** Menciones nuevas al EDITAR un comentario (RF-CO-02): no avisa a owners ni repite a los ya mencionados. */
+  async mentionsAdded(p: {
+    task: TaskRef;
+    authorId: string;
+    authorName: string;
+    mentionedUserIds: string[];
+  }): Promise<void> {
+    const mentioned = [...new Set(p.mentionedUserIds)].filter((id) => id !== p.authorId);
+    if (mentioned.length === 0) return;
+    try {
+      await this.notifications.createForUsers(mentioned, {
+        type: NotificationType.COMMENT_MENTION,
+        title: 'Te mencionaron en un comentario',
+        message: p.authorName + ' te mencionó en un comentario de la tarea "' + p.task.title + '".',
+        projectId: p.task.projectId,
+        taskId: p.task.id,
+      });
+    } catch (err) {
+      this.logger.warn('No se pudo generar la notificación de mención: ' + String(err));
+    }
+  }
 }
