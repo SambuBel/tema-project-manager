@@ -1,7 +1,24 @@
 # Prueba aislada de los cambios remotos
 
-Base remota: `origin/main`, commit `74408d05bdbd525089b34df020abe864d424cc91`.
+Base remota actualizada: `origin/main`, commit `d6cbb8c1502f38e52c373012df767c3c6388a1e6` (PR #79).
 Rama: `prueba-ultimos-cambios`.
+
+Los cambios locales anteriores se preservaron en `2364fa7`; la integración
+se realizó mediante merge en `490bdcc`, sin conflictos de Git.
+Se corrigieron errores del código integrado: se recuperó el encabezado
+truncado del cliente API conservando el contenido remoto, se agregaron las
+operaciones de notificaciones requeridas por los hooks, se corrigieron los
+nombres `NotificationsPage.tsx` y `useNotifications.ts`, y se restauró el
+proveedor `TaskDueSoonService`, conservando el import local de `UsersModule`.
+
+Validación posterior al merge: compilación completa correcta; 15 pruebas de
+frontend (API de notificaciones, paginación y login) y 155 de TasksService
+pasaron. Se comprobó el arranque con la configuración de `probar.ps1`, sin
+migraciones pendientes y conservando el usuario administrador. Login, sesión,
+usuarios, listado de notificaciones, preferencias y contador respondieron
+HTTP 200 a través del proxy; notificaciones sin sesión respondió HTTP 401.
+Los servidores de verificación se detuvieron al finalizar para dejar libres
+los puertos. La base independiente y sus datos quedaron conservados.
 
 Corrección local: `NotificationsModule` ahora importa `UsersModule`. Sin ese
 import, Nest no podía resolver `UsersService` para `JwtAuthGuard` y el backend
@@ -14,7 +31,7 @@ respondieron HTTP 401 sin sesión, como corresponde. Se creó el administrador
 local `admin.prueba@example.com` usando `hashPassword` del proyecto (argon2id).
 Se verificaron login por contraseña, sesión `/api/auth/me` y acceso ADMIN a
 `/api/users` (HTTP 200), y rechazo de contraseña incorrecta (HTTP 401).
-Google no se verificó. Los servidores que ya estaban ejecutándose se conservaron.
+Google no se verificó.
 
 Desde esta carpeta, en PowerShell:
 
