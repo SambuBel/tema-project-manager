@@ -14,6 +14,7 @@ import { AdminUsersPage } from './pages/AdminUsersPage';
 import { RequireRole } from './components/auth/RequireRole';
 import { ResourceProfilesPage } from './pages/ResourceProfilesPage';
 import { canViewResourceProfilesUI, canViewUsersUI } from './lib/permissions';
+import { NotificationsPage } from './pages/NotificationsPage';
 
 export function App() {
   return (
@@ -31,6 +32,7 @@ export function App() {
           <Route path="projects/:projectId/edit" element={<EditProjectPage />} />
           <Route path="tasks/:taskId/edit" element={<EditTaskPage />} />
           <Route path="projects/:projectId/*" element={<ProjectPage />} />
+          <Route path="notifications" element={<NotificationsPage />} />
           <Route path="roles" element={<RolesMatrixPage />} />
           {/* "No alcanza con ocultar el link": la ruta queda protegida acá, no solo en el Sidebar. */}
           <Route element={<RequireRole allow={canViewUsersUI} />}>

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository, EntityManager } from 'typeorm';
 import { TaskEntity } from './task.entity';
@@ -52,6 +52,8 @@ function withSourceMetadata<T extends object>(metadata: T, source?: ChangeSource
 
 @Injectable()
 export class TasksService {
+  private readonly logger = new Logger(TasksService.name);
+
   constructor(
     @InjectRepository(TaskEntity)
     private readonly repo: Repository<TaskEntity>,
@@ -69,7 +71,6 @@ export class TasksService {
     @InjectRepository(TaskSlugHistoryEntity)
     private readonly taskSlugHistoryRepo: Repository<TaskSlugHistoryEntity>,
     @Optional() private readonly notificationEvents?: NotificationEventsService,
-
   ) {}
 
   /**
@@ -211,6 +212,29 @@ export class TasksService {
     return task;
   }
 
+  /**
+   * RF-NO-01: se llama SIEMPRE fuera de la transacción. Un fallo de notificación
+   * se loguea pero nunca rompe la creación/edición de la tarea.
+   */
+  private async notifyTaskAssigned(task: TaskEntity, user: RequestUser): Promise<void> {
+    if (!this.notificationEvents || !task.assignedToId) return;
+
+    try {
+      const actorName =
+        (user as any).name ?? (await this.usersService.findById(user.id))?.name ?? '';
+
+      await this.notificationEvents.taskAssigned({
+        task: { id: task.id, title: task.title, projectId: task.projectId },
+        assigneeId: task.assignedToId,
+        actorId: user.id,
+        actorName,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `No se pudo enviar la notificación de asignación de la tarea ${task.id}: ${(err as Error)?.message ?? err}`,
+      );
+    }
+  }
 
   private async assertAssigneeIsProjectMember(project: ProjectEntity, assigneeId: string): Promise<void> {
     const assignee = await this.usersService.findById(assigneeId);
@@ -259,7 +283,7 @@ export class TasksService {
       await this.assertValidParentTask(dto.projectId, dto.parentTaskId);
     }
 
-    return this.repo.manager.transaction(async (manager) => {
+    const created = await this.repo.manager.transaction(async (manager) => {
       const slug = await this.generateUniqueSlug(dto.title, project.id, manager);
 
       const task = new TaskEntity();
@@ -292,6 +316,10 @@ export class TasksService {
 
       return saved;
     });
+
+    await this.notifyTaskAssigned(created, user);
+
+    return created;
   }
 
   private async getSubtaskCountsByParentIds(
@@ -486,7 +514,10 @@ export class TasksService {
       }
     }
 
-    return this.repo.manager.transaction(async (manager) => {
+    // Se guarda antes de la transacción porque `task` se muta adentro.
+    const previousAssigneeId = task.assignedToId;
+
+    const updated = await this.repo.manager.transaction(async (manager) => {
       if (dto.status === TaskStatus.COMPLETED && dto.completeSubtasks) {
         await this.completePendingSubtasksAtomically(task, user, manager, source);
       }
@@ -559,6 +590,13 @@ export class TasksService {
 
       return saved;
     });
+
+    // Notificar solo si la tarea se reasignó a otra persona (fuera de la transacción).
+    if (updated.assignedToId && updated.assignedToId !== previousAssigneeId) {
+      await this.notifyTaskAssigned(updated, user);
+    }
+
+    return updated;
   }
 
   private async validateMentions(
