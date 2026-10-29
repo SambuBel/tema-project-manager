@@ -275,6 +275,7 @@ export function MilestoneDetailModal({
         refetch(),
         qc.invalidateQueries({ queryKey: ['milestones', projectId] }),
         qc.invalidateQueries({ queryKey: ['milestones-upcoming', projectId] }),
+        qc.invalidateQueries({ queryKey: ['subtasks'] }),
         qc.invalidateQueries({ queryKey: ['all-tasks-for-milestone', projectId] }),
         qc.invalidateQueries({ queryKey: ['tasks'] }),
         qc.invalidateQueries({ queryKey: ['task', taskId] }),
@@ -324,13 +325,17 @@ export function MilestoneDetailModal({
 
   if (!isOpen) return null;
 
-  const associatedTasks = (milestone?.tasks ?? []).filter((t) => !t.parentTaskId);
+  const associatedTasks = milestone?.tasks ?? [];
   const pendingTasks = associatedTasks.filter((t) => t.status !== 'COMPLETED');
-  const pendingRootTasksCount = pendingTasks.length;
-  const pendingSubtasksCount = pendingTasks.reduce(
-    (acc, t) => acc + Math.max(0, (t.subtaskCount ?? 0) - (t.completedSubtaskCount ?? 0)),
-    0,
-  );
+  const pendingRootTasks = pendingTasks.filter((task) => !task.parentTaskId);
+  const pendingRootTasksCount = pendingRootTasks.length;
+  const pendingRootTaskIds = new Set(pendingRootTasks.map((task) => task.id));
+  const pendingSubtasksCount =
+    pendingTasks.filter((task) => task.parentTaskId && !pendingRootTaskIds.has(task.parentTaskId)).length +
+    pendingRootTasks.reduce(
+      (acc, task) => acc + Math.max(0, (task.subtaskCount ?? 0) - (task.completedSubtaskCount ?? 0)),
+      0,
+    );
   const isAlreadyCompleted =
     milestone?.status === 'COMPLETED' ||
     Boolean(milestone?.completedAt) ||
@@ -447,7 +452,7 @@ export function MilestoneDetailModal({
                       </span>
                     ) : (
                       <span className="text-xs text-[#607185]">
-                        Se completa automáticamente al alcanzar el 100% de sus tareas principales
+                        Se completa automáticamente al alcanzar el 100% de sus tareas y subtareas vinculadas, sin duplicar las representadas por su tarea principal
                       </span>
                     )}
                   </div>
@@ -538,7 +543,7 @@ export function MilestoneDetailModal({
                   {associatedTasks.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-[#DEE5EC] p-8 text-center space-y-2">
                       <p className="text-sm text-[#607185]">
-                        No hay tareas principales asociadas a este hito todavía.
+                        No hay tareas ni subtareas asociadas a este hito todavía.
                       </p>
                       {canManage && (
                         <button
@@ -603,6 +608,16 @@ export function MilestoneDetailModal({
                                     {task.title}
                                   </label>
 
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${task.parentTaskId ? 'bg-purple-50 text-purple-700' : 'bg-[#EAF2F7] text-[#245B78]'}`}>
+                                    {task.parentTaskId ? 'Subtarea' : 'Tarea'}
+                                  </span>
+                                  <a
+                                    href={`/projects/${encodeURIComponent(projectId)}?taskId=${encodeURIComponent(task.id)}`}
+                                    className="text-xs text-[#245B78] hover:underline"
+                                    aria-label={`Abrir ${task.parentTaskId ? 'subtarea' : 'tarea'} ${task.title}`}
+                                  >
+                                    Abrir
+                                  </a>
                                   {/* Badge de estado real legible (KAN-248) */}
                                   <span
                                     data-task-status={task.status}
@@ -628,6 +643,9 @@ export function MilestoneDetailModal({
                                   )}
                                 </div>
 
+                                {task.parentTaskId && (
+                                  <p className="text-xs text-[#607185]">Tarea principal: {task.parentTaskTitle ?? task.parentTaskId}</p>
+                                )}
                                 <div className="flex flex-wrap items-center gap-3 text-xs text-[#607185]">
                                   {task.dueDate && <span>Vencimiento: {formatDate(task.dueDate)}</span>}
                                   {task.assignedTo && <span>Responsable: {task.assignedTo.name}</span>}

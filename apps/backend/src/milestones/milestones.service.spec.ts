@@ -825,13 +825,36 @@ describe('MilestonesService (KAN-243..KAN-245)', () => {
       expect(transactionManagerMock.update).not.toHaveBeenCalled();
     });
 
-    it('39. Rechaza con 400 BadRequestException si se intenta asociar una subtarea (parentTaskId !== null)', async () => {
+    it('39. Asocia una subtarea de forma independiente de su tarea principal', async () => {
       targetTask.parentTaskId = 'parent-task-uuid';
+      await service.associateTask(MILESTONE_ID, TASK_ID, mockUser);
+      expect(transactionManagerMock.update).toHaveBeenCalledWith(TaskEntity, TASK_ID, { milestoneId: MILESTONE_ID });
+      expect(transactionManagerMock.update).not.toHaveBeenCalledWith(TaskEntity, 'parent-task-uuid', expect.anything());
+    });
 
-      await expect(
-        service.associateTask(MILESTONE_ID, TASK_ID, mockUser),
-      ).rejects.toThrow(BadRequestException);
 
+    it('mantiene la idempotencia al vincular y desvincular una subtarea', async () => {
+      targetTask.parentTaskId = 'parent-task-uuid';
+      targetTask.milestoneId = MILESTONE_ID;
+      await service.associateTask(MILESTONE_ID, TASK_ID, mockUser);
+      expect(transactionManagerMock.update).not.toHaveBeenCalled();
+      await service.disassociateTask(MILESTONE_ID, TASK_ID, mockUser);
+      expect(transactionManagerMock.update).toHaveBeenCalledWith(TaskEntity, TASK_ID, { milestoneId: null });
+      targetTask.milestoneId = null;
+      transactionManagerMock.update.mockClear();
+      await service.disassociateTask(MILESTONE_ID, TASK_ID, mockUser);
+      expect(transactionManagerMock.update).not.toHaveBeenCalled();
+    });
+
+    it.each(['project', 'archived', 'conflict', 'permission'])('valida las subtareas: %s', async (rule) => {
+      targetTask.parentTaskId = 'parent-task-uuid';
+      if (rule === 'project') targetTask.projectId = OTHER_PROJECT_ID;
+      if (rule === 'archived') targetTask.archivedAt = new Date();
+      if (rule === 'conflict') targetTask.milestoneId = OTHER_MILESTONE_ID;
+      if (rule === 'permission') permissions.canManageMilestones.mockReturnValue(false);
+      await expect(service.associateTask(MILESTONE_ID, TASK_ID, mockUser)).rejects.toThrow(
+        rule === 'conflict' ? ConflictException : rule === 'permission' ? ForbiddenException : BadRequestException,
+      );
       expect(transactionManagerMock.update).not.toHaveBeenCalled();
     });
 
@@ -1016,6 +1039,20 @@ describe('MilestonesService (KAN-243..KAN-245)', () => {
       expect(result.completedTaskCount).toBe(1);
     });
 
+
+    it.each([false, true])('finalización conjunta contempla subtareas explícitas sin repetirlas (padre vinculado: %s)', async (withParent) => {
+      const parent = { id: 'parent', parentTaskId: null, status: TaskStatus.IN_PROGRESS } as TaskEntity;
+      const child = { id: 'child', parentTaskId: 'parent', milestoneId: MILESTONE_ID, status: TaskStatus.PENDING } as TaskEntity;
+      const qb = taskRepo.createQueryBuilder();
+      qb.getMany.mockResolvedValueOnce(withParent ? [parent, child] : [child]).mockResolvedValueOnce([child]);
+      qb.getRawMany.mockResolvedValue([{ milestoneId: MILESTONE_ID, taskCount: '1', completedTaskCount: '1' }]);
+      transactionManagerMock.findOne.mockResolvedValue(activeMilestone);
+      const result = await service.completeWithTasks(MILESTONE_ID, mockUser);
+      expect(transactionManagerMock.update.mock.calls.filter((call: unknown[]) => call[1] === 'child')).toHaveLength(1);
+      expect(transactionManagerMock.update.mock.calls.filter((call: unknown[]) => call[1] === 'parent')).toHaveLength(withParent ? 1 : 0);
+      expect(result.progress).toBe(100);
+    });
+
     it('49. Rechaza con 403 ForbiddenException sin cambios parciales si el usuario no tiene permiso para completar una subtarea afectada', async () => {
       const parentTask = {
         id: 'parent-1',
@@ -1074,7 +1111,7 @@ describe('MilestonesService (KAN-243..KAN-245)', () => {
       await expect(service.completeWithTasks(MILESTONE_ID, mockUser)).rejects.toThrow(NotFoundException);
     });
 
-    it('52. findOne incluye subtaskCount y completedSubtaskCount e ignora subtareas históricas en el listado de tareas principales (KAN-248)', async () => {
+    it('52. findOne incluye subtaskCount y completedSubtaskCount y devuelve las subtareas vinculadas sin duplicar el progreso (KAN-248)', async () => {
       milestoneRepo.findOne.mockResolvedValue(activeMilestone);
 
       taskRepo.createQueryBuilder.mockImplementation(() => ({
@@ -1113,7 +1150,9 @@ describe('MilestonesService (KAN-243..KAN-245)', () => {
       }));
 
       const detail = await service.findOne(MILESTONE_ID, mockUser);
-      expect(detail.tasks).toHaveLength(1);
+      expect(detail.tasks).toHaveLength(2);
+      expect(detail.taskCount).toBe(1);
+      expect(detail.completedTaskCount).toBe(0);
       expect(detail.tasks[0]?.id).toBe('parent-1');
       expect(detail.tasks[0]?.subtaskCount).toBe(3);
       expect(detail.tasks[0]?.completedSubtaskCount).toBe(2);

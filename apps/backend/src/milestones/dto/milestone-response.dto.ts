@@ -36,6 +36,7 @@ export class MilestoneTaskDto {
   startDate!: string | null;
   dueDate!: string | null;
   parentTaskId!: string | null;
+  parentTaskTitle?: string | null;
   assignedTo!: MilestoneUserDto | null;
   assignedToId?: string | null;
   createdBy?: string;

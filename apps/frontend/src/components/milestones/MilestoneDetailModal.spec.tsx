@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { api } from '../../lib/api';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -110,7 +113,7 @@ describe('MilestoneDetailModal (KAN-248, KAN-249 y KAN-250)', () => {
     expect(html).toContain('Subtareas: 2/3 (67%)');
   });
 
-  it('muestra correctamente todos los estados reales de tareas principales (PENDING, IN_PROGRESS, IN_REVIEW, BLOCKED, COMPLETED) y excluye subtareas (parentTaskId !== null)', () => {
+  it('muestra correctamente todos los estados reales de tareas principales (PENDING, IN_PROGRESS, IN_REVIEW, BLOCKED, COMPLETED) y muestra subtareas con acceso a su detalle', () => {
     const allStatesDetail: MilestoneDetailDto = {
       ...samplePendingDetail,
       tasks: [
@@ -129,7 +132,9 @@ describe('MilestoneDetailModal (KAN-248, KAN-249 y KAN-250)', () => {
     expect(html).toContain('En revisión');
     expect(html).toContain('Bloqueada');
     expect(html).toContain('Completada');
-    expect(html).not.toContain('Subtarea Histórica Excluida');
+    expect(html).toContain('Subtarea Histórica Excluida');
+    expect(html).toContain('/projects/proj-1?taskId=sub-hist');
+    expect(html).toContain('Tarea principal:');
   });
 
   it('renderiza checkboxes sincronizados con el estado de cada tarea (KAN-249)', () => {
@@ -226,4 +231,32 @@ describe('MilestoneDetailModal (KAN-248, KAN-249 y KAN-250)', () => {
     // Pero sí muestra la información y las tareas
     expect(html).toContain('Configurar servidor');
   });
+});
+
+
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it.each([false, true])('desvincula el elemento sin modificar otros vínculos (es subtarea: %s)', async (isSubtask) => {
+  const task = { ...samplePendingDetail.tasks[0]!, id: 'linked-item', title: 'Elemento vinculado',
+    parentTaskId: isSubtask ? 'parent-task' : null, parentTaskTitle: isSubtask ? 'Tarea principal de prueba' : null };
+  let detail = { ...samplePendingDetail, tasks: [task] };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  client.setQueryData(['milestone-detail', detail.id], detail);
+  client.setQueryData(['auth', 'me'], { id: 'u-1', roles: ['PROJECT_LEADER'] });
+  client.setQueryData(['project', 'proj-1'], { id: 'proj-1', leaderId: 'u-1' });
+  client.setQueryData(['project-members', 'proj-1'], []);
+  vi.spyOn(api, 'getMilestone').mockImplementation(async () => detail);
+  const unlink = vi.spyOn(api, 'disassociateMilestoneTask').mockImplementation(async () => {
+    detail = { ...detail, tasks: [] };
+    return samplePendingDetail;
+  });
+  render(<QueryClientProvider client={client}>
+    <MilestoneDetailModal isOpen onClose={vi.fn()} milestoneId={detail.id} projectId="proj-1" canManage onMilestoneUpdated={vi.fn()} />
+  </QueryClientProvider>);
+  expect(screen.getByRole('link', { name: /Abrir/ }).getAttribute('href')).toBe('/projects/proj-1?taskId=linked-item');
+  if (isSubtask) expect(screen.getByText('Tarea principal: Tarea principal de prueba')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Desasociar' }));
+  await waitFor(() => expect(unlink).toHaveBeenCalledWith(detail.id, 'linked-item'));
+  await waitFor(() => expect(screen.queryByText('Elemento vinculado')).toBeNull());
+  expect(unlink).toHaveBeenCalledTimes(1);
 });

@@ -3,9 +3,22 @@ import { MilestoneEntity } from './milestone.entity';
 import { TaskEntity } from '../tasks/task.entity';
 import { TaskStatus } from '../database/enums';
 
+/** Una subtarea representada por su tarea principal no suma otra unidad de progreso. */
+export const MILESTONE_PROGRESS_TASK_PREDICATE = `NOT EXISTS (
+  SELECT 1 FROM tasks milestone_parent
+  WHERE milestone_parent.id = t.parent_task_id
+    AND milestone_parent.milestone_id = t.milestone_id
+    AND milestone_parent.archived_at IS NULL
+)`;
+
+export function milestoneProgressTasks<T extends { id: string; parentTaskId: string | null }>(tasks: T[]): T[] {
+  const linkedIds = new Set(tasks.map((task) => task.id));
+  return tasks.filter((task) => !task.parentTaskId || !linkedIds.has(task.parentTaskId));
+}
+
 /**
  * Sincroniza de forma transaccional el estado de finalización automática de un Milestone:
- * - Solo contabiliza tareas principales activas (`parentTaskId IS NULL` y `archivedAt IS NULL`).
+ * - Contabiliza elementos vinculados activos sin duplicar subtareas representadas por su tarea principal.
  * - Si `taskCount > 0` y `completedTaskCount === taskCount`:
  *   - Si el hito estaba pendiente (`completedAt === null`), lo marca automáticamente como alcanzado
  *     estableciendo `completedAt = new Date()` y `completedById = null` (diferenciándolo de la
@@ -49,7 +62,7 @@ export async function syncMilestoneAutoCompletionWithManager(
             .addSelect('COUNT(t.id)', 'taskCount')
             .addSelect(`COUNT(CASE WHEN t.status = :completedStatus THEN 1 END)`, 'completedTaskCount')
             .where('t.milestoneId IN (:...milestoneIds)', { milestoneIds: [milestoneId] })
-            .andWhere('t.parentTaskId IS NULL')
+            .andWhere(MILESTONE_PROGRESS_TASK_PREDICATE)
             .andWhere('t.archivedAt IS NULL')
             .setParameter('completedStatus', TaskStatus.COMPLETED)
             .groupBy('t.milestoneId')
@@ -63,11 +76,11 @@ export async function syncMilestoneAutoCompletionWithManager(
     if ((taskCount === undefined || completedTaskCount === undefined) && typeof manager.find === 'function') {
       const tasks =
         (await manager.find(TaskEntity, {
-          where: { milestoneId, parentTaskId: IsNull(), archivedAt: IsNull() } as any,
+          where: { milestoneId, archivedAt: IsNull() } as any,
         })) ?? [];
-      const rootTasks = tasks.filter((t) => !t.parentTaskId && !t.archivedAt);
-      taskCount = rootTasks.length;
-      completedTaskCount = rootTasks.filter((t) => t.status === TaskStatus.COMPLETED).length;
+      const progressTasks = milestoneProgressTasks(tasks.filter((t) => !t.archivedAt));
+      taskCount = progressTasks.length;
+      completedTaskCount = progressTasks.filter((t) => t.status === TaskStatus.COMPLETED).length;
     }
   }
 
@@ -75,9 +88,9 @@ export async function syncMilestoneAutoCompletionWithManager(
     return milestone;
   }
 
-  const allRootTasksCompleted = taskCount > 0 && completedTaskCount === taskCount;
+  const allTasksCompleted = taskCount > 0 && completedTaskCount === taskCount;
 
-  if (allRootTasksCompleted) {
+  if (allTasksCompleted) {
     if (!milestone.completedAt) {
       milestone.completedAt = new Date();
       milestone.completedById = null;
