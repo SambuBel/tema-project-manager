@@ -602,6 +602,7 @@ export interface MilestoneSummary {
 }
 
 export interface MilestoneTask {
+  parentTaskTitle?: string | null;
   id: ID;
   title: string;
   slug?: string;

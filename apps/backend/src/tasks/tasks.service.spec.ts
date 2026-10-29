@@ -2154,7 +2154,7 @@ describe('TasksService - completeSubtasks y auto-completado de Milestone', () =>
     expect(txManager.save).not.toHaveBeenCalled();
   });
 
-  it('updateStatus sincroniza automáticamente el Milestone al completar o reabrir la última tarea principal', async () => {
+  it.each([null, 'parent-outside-milestone'])('updateStatus sincroniza el hito al completar o reabrir un elemento vinculado (parentTaskId: %s)', async (parentTaskId) => {
     const { service, taskRepo, txManager } = makeService([]);
     const milestoneRecord: any = {
       id: 'ms-auto-1',
@@ -2168,7 +2168,7 @@ describe('TasksService - completeSubtasks y auto-completado de Milestone', () =>
     const rootTask = makeTask({
       id: 'root-ms-1',
       projectId: PROJECT_ID,
-      parentTaskId: null,
+      parentTaskId,
       milestoneId: 'ms-auto-1',
       title: 'Única tarea del hito',
       status: TaskStatus.IN_PROGRESS,

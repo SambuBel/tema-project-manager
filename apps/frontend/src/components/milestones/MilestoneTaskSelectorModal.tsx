@@ -35,13 +35,14 @@ export function MilestoneTaskSelectorModal({
 }: MilestoneTaskSelectorModalProps) {
   const qc = useQueryClient();
   const [searchTerm, setSearchTerm] = useState('');
+  const [taskType, setTaskType] = useState('all');
   const [actionError, setActionError] = useState<string | null>(null);
   const [associatingTaskId, setAssociatingTaskId] = useState<string | null>(null);
 
-  // Carga las tareas principales del proyecto recorriendo todas las páginas transparentemente
+  // Carga tareas y subtareas del proyecto recorriendo todas las páginas transparentemente
   const { data: allTasks, isLoading: loadingTasks, isError: errorTasks } = useQuery({
     queryKey: ['all-tasks-for-milestone', milestone.projectId],
-    queryFn: () => api.listAllTasks({ projectId: milestone.projectId }),
+    queryFn: () => api.listAllTasks({ projectId: milestone.projectId, includeSubtasks: true }),
     enabled: isOpen,
   });
 
@@ -60,20 +61,24 @@ export function MilestoneTaskSelectorModal({
     return map;
   }, [allMilestones]);
 
-  // Filtrar tareas: mostrar únicamente tareas principales (parentTaskId === null), no archivadas, y aplicar búsqueda
+  // Filtrar elementos activos por tipo y búsqueda, incluyendo el nombre de su tarea principal.
+  const tasksMap = useMemo(() => new Map((allTasks ?? []).map((task) => [task.id, task])), [allTasks]);
+
   const visibleTasks = useMemo(() => {
     if (!allTasks) return [];
     return allTasks
-      .filter((t) => !t.archivedAt && !t.parentTaskId)
+      .filter((t) => !t.archivedAt)
+      .filter((t) => taskType === 'all' || (taskType === 'tasks' ? !t.parentTaskId : Boolean(t.parentTaskId)))
       .filter((t) => {
         if (!searchTerm.trim()) return true;
         const q = searchTerm.toLowerCase();
         return (
           t.title.toLowerCase().includes(q) ||
-          (t.slug && t.slug.toLowerCase().includes(q))
+          (t.slug && t.slug.toLowerCase().includes(q)) ||
+          (t.parentTaskId && tasksMap.get(t.parentTaskId)?.title.toLowerCase().includes(q))
         );
       });
-  }, [allTasks, searchTerm]);
+  }, [allTasks, searchTerm, taskType, tasksMap]);
 
   const handleAssociate = async (task: Task) => {
     setActionError(null);
@@ -86,8 +91,10 @@ export function MilestoneTaskSelectorModal({
         qc.invalidateQueries({ queryKey: ['milestone-detail', milestone.id] }),
         qc.invalidateQueries({ queryKey: ['milestones', milestone.projectId] }),
         qc.invalidateQueries({ queryKey: ['milestones-upcoming', milestone.projectId] }),
+        qc.invalidateQueries({ queryKey: ['subtasks'] }),
         qc.invalidateQueries({ queryKey: ['all-tasks-for-milestone', milestone.projectId] }),
         qc.invalidateQueries({ queryKey: ['tasks'] }),
+        qc.invalidateQueries({ queryKey: ['task', task.id] }),
         qc.invalidateQueries({ queryKey: ['gantt'] }),
       ]);
       onTaskAssociated();
@@ -146,7 +153,7 @@ export function MilestoneTaskSelectorModal({
               Asociar tareas al hito «{milestone.name}»
             </h2>
             <p className="text-xs text-[#607185] mt-0.5">
-              Seleccioná tareas principales activas del proyecto para vincularlas.
+              Seleccioná tareas y subtareas activas del proyecto para vincularlas de forma independiente.
             </p>
           </div>
           <button
@@ -164,10 +171,21 @@ export function MilestoneTaskSelectorModal({
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Buscar tarea principal por título o código..."
+            placeholder="Buscar por título, código o tarea principal..."
             className="w-full rounded-lg border border-[#DEE5EC] bg-white px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
             autoFocus
           />
+
+          <select
+            aria-label="Tipo de elemento"
+            value={taskType}
+            onChange={(e) => setTaskType(e.target.value)}
+            className="w-full rounded-lg border border-[#DEE5EC] bg-white px-3 py-2 text-sm text-[#172B42] focus:border-[#245B78] focus:outline-none"
+          >
+            <option value="all">Todas</option>
+            <option value="tasks">Solo tareas</option>
+            <option value="subtasks">Solo subtareas</option>
+          </select>
 
           {actionError && (
             <div className="rounded-lg bg-red-50 p-3 text-xs text-red-700 border border-red-200">
@@ -192,7 +210,7 @@ export function MilestoneTaskSelectorModal({
 
           {!loadingTasks && !errorTasks && visibleTasks.length === 0 && (
             <div className="py-12 text-center text-sm text-[#607185]">
-              {searchTerm ? 'No se encontraron tareas principales que coincidan con la búsqueda.' : 'No hay tareas principales activas en este proyecto.'}
+              {searchTerm ? 'No se encontraron tareas o subtareas con estos filtros.' : 'No hay tareas o subtareas disponibles con estos filtros.'}
             </div>
           )}
 
@@ -221,6 +239,9 @@ export function MilestoneTaskSelectorModal({
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${task.parentTaskId ? 'bg-purple-50 text-purple-700' : 'bg-[#EAF2F7] text-[#245B78]'}`}>
+                        {task.parentTaskId ? 'Subtarea' : 'Tarea'}
+                      </span>
                       <span className="text-sm font-medium text-[#172B42] truncate max-w-sm" title={task.title}>
                         {task.title}
                       </span>
@@ -233,6 +254,9 @@ export function MilestoneTaskSelectorModal({
                       </span>
                     </div>
 
+                    {task.parentTaskId && (
+                      <p className="mt-1 text-xs text-[#607185]">Tarea principal: {tasksMap.get(task.parentTaskId)?.title ?? task.parentTaskId}</p>
+                    )}
                     <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-[#607185]">
                       {task.dueDate && <span>Vence: {task.dueDate.slice(0, 10)}</span>}
                       {task.assignedTo && <span>Responsable: {task.assignedTo.name}</span>}
@@ -249,7 +273,7 @@ export function MilestoneTaskSelectorModal({
                       <div className="flex flex-col items-end">
                         <span
                           className="rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800"
-                          title={`Vinculada al hito «${otherMilestoneName}». Cada tarea principal solo puede pertenecer a un único hito (D2).`}
+                          title={`Vinculada al hito «${otherMilestoneName}». Cada tarea o subtarea solo puede pertenecer a un único hito (D2).`}
                         >
                           {`En: ${otherMilestoneName}`}
                         </span>
@@ -278,7 +302,7 @@ export function MilestoneTaskSelectorModal({
         {/* Footer */}
         <div className="flex justify-between items-center border-t border-[#DEE5EC] p-4 bg-gray-50">
           <span className="text-xs text-[#607185]">
-            Total mostradas: {visibleTasks.length} tareas principales
+            Total mostradas: {visibleTasks.length} tareas y subtareas
           </span>
           <button
             type="button"

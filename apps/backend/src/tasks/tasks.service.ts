@@ -584,7 +584,7 @@ export class TasksService {
         );
       }
 
-      if (saved.milestoneId && !saved.parentTaskId && changes.status !== undefined) {
+      if (saved.milestoneId && changes.status !== undefined) {
         await syncMilestoneAutoCompletionWithManager(manager, saved.milestoneId);
       }
 
@@ -857,7 +857,7 @@ export class TasksService {
         manager,
       );
 
-      if (saved.milestoneId && !saved.parentTaskId) {
+      if (saved.milestoneId) {
         await syncMilestoneAutoCompletionWithManager(manager, saved.milestoneId);
       }
 
@@ -921,6 +921,11 @@ export class TasksService {
       );
     }
 
+    // Las subtareas completadas en cascada pueden pertenecer a otros hitos.
+    for (const milestoneId of new Set(pendingChildTasks.map((child) => child.milestoneId).filter(Boolean))) {
+      await syncMilestoneAutoCompletionWithManager(manager, milestoneId);
+    }
+
     // 3. Si existieran subtareas de la tabla legacy subtasks pendientes, completarlas también
     const pendingLegacyCount = await this.subtaskRepo.count({
       where: { taskId: task.id, completed: false },
@@ -982,7 +987,7 @@ export class TasksService {
         manager,
       );
 
-      if (saved.milestoneId && !saved.parentTaskId) {
+      if (saved.milestoneId) {
         await syncMilestoneAutoCompletionWithManager(manager, saved.milestoneId);
       }
 
