@@ -397,4 +397,18 @@ export const api = {
 
   exportPortfolioCsv: () =>
     downloadFile('/projects/export/portfolio', 'portafolio.csv'),
+
+  exportTasksPdf: (projectId: string, filters?: TaskFilters) => {
+  const params = new URLSearchParams();
+  if (filters?.status) params.set('status', filters.status);
+  if (filters?.priority) params.set('priority', filters.priority);
+  if (filters?.assignedToId) params.set('assignedToId', filters.assignedToId);
+  if (filters?.search) params.set('search', filters.search);
+  const query = params.toString();
+  return downloadFile(`/projects/${projectId}/export/tasks/pdf${query ? `?${query}` : ''}`, 'tareas.pdf');
+  },
+  exportEconomicReportPdf: (projectId: string) =>
+    downloadFile(`/projects/${projectId}/export/economic-report/pdf`, 'informe-economico.pdf'),
+  exportPortfolioPdf: () =>
+    downloadFile('/projects/export/portfolio/pdf', 'portafolio.pdf'),
 };

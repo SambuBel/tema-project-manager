@@ -12,6 +12,10 @@ import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { ProjectMemberRole, RoleName } from '../database/enums';
 import { ProjectsService } from '../projects/projects.service';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const PdfPrinter = require('pdfmake');
+import type { TDocumentDefinitions, Content } from 'pdfmake/interfaces';
+import * as path from 'path';
 
 const TASK_STATUS_LABELS: Record<string, string> = {
   PENDING: 'Pendiente',
@@ -36,6 +40,17 @@ const PROJECT_STATUS_LABELS: Record<string, string> = {
   FINISHED: 'Finalizado',
   CANCELLED: 'Cancelado',
 };
+
+const fontsDir = path.join(process.cwd(), 'assets', 'fonts');
+
+const pdfPrinter = new PdfPrinter({
+  Roboto: {
+    normal: path.join(fontsDir, 'Roboto-Regular.ttf'),
+    bold: path.join(fontsDir, 'Roboto-Medium.ttf'),
+    italics: path.join(fontsDir, 'Roboto-Italic.ttf'),
+    bolditalics: path.join(fontsDir, 'Roboto-MediumItalic.ttf'),
+  },
+});
 
 export interface ExportTaskFilters {
   status?: string;
@@ -336,6 +351,176 @@ async exportEconomicReportCsv(
     return this.buildCsv('Portafolio de proyectos', user.name || user.email, headers, rows);
   }
 
+    /* ========== Exportaciones a PDF ========== */
+
+  async exportTasksPdf(
+    projectIdOrSlug: string,
+    filters: ExportTaskFilters,
+    user: RequestUser,
+  ): Promise<Buffer> {
+    const project = await this.findProjectOrThrow(projectIdOrSlug);
+    const access = await this.checkExportPermission(user, project);
+
+    const qb = this.taskRepo
+      .createQueryBuilder('task')
+      .leftJoinAndSelect('task.assignedTo', 'assignedTo')
+      .where('task.projectId = :projectId', { projectId: project.id })
+      .andWhere('task.archivedAt IS NULL');
+
+    if (filters.status) qb.andWhere('task.status = :status', { status: filters.status });
+    if (filters.priority) qb.andWhere('task.priority = :priority', { priority: filters.priority });
+    if (filters.assignedToId) qb.andWhere('task.assignedToId = :assignedToId', { assignedToId: filters.assignedToId });
+    if (filters.search) qb.andWhere('(task.title ILIKE :search OR task.description ILIKE :search)', { search: `%${filters.search}%` });
+    if (access === 'own-tasks') qb.andWhere('(task.assignedToId = :userId OR task.createdBy = :userId)', { userId: user.id });
+
+    const tasks = await qb.orderBy('task.createdAt', 'DESC').getMany();
+
+    const tableBody: any[][] = [
+      ['Título', 'Estado', 'Prioridad', 'Responsable', 'Fecha inicio', 'Vencimiento'].map(h => ({ text: h, bold: true, fillColor: '#245B78', color: '#FFFFFF', fontSize: 9 })),
+      ...tasks.map(t => [
+        { text: t.title, fontSize: 8 },
+        { text: TASK_STATUS_LABELS[t.status] ?? t.status, fontSize: 8 },
+        { text: TASK_PRIORITY_LABELS[t.priority] ?? t.priority, fontSize: 8 },
+        { text: t.assignedTo?.name ?? 'Sin asignar', fontSize: 8 },
+        { text: t.startDate ?? '—', fontSize: 8 },
+        { text: t.dueDate ?? '—', fontSize: 8 },
+      ]),
+    ];
+
+    return this.buildPdf(project.name, 'Listado de tareas', user.name || user.email, [
+      {
+        table: { headerRows: 1, widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto'], body: tableBody },
+        layout: 'lightHorizontalLines',
+      },
+      { text: `Total: ${tasks.length} tarea(s)`, fontSize: 9, margin: [0, 8, 0, 0], italics: true },
+    ]);
+  }
+
+  async exportEconomicReportPdf(
+    projectIdOrSlug: string,
+    user: RequestUser,
+  ): Promise<Buffer> {
+    const project = await this.findProjectOrThrow(projectIdOrSlug);
+    const access = await this.checkExportPermission(user, project);
+    if (access === 'own-tasks') {
+      throw new ForbiddenException('Tu rol no permite acceder a la información económica del proyecto.');
+    }
+
+    const budget = await this.budgetRepo.findOne({ where: { projectId: project.id, isCurrent: true } });
+    let budgetItems: BudgetItemEntity[] = [];
+    if (budget) {
+      budgetItems = await this.budgetItemRepo.find({ where: { budgetId: budget.id }, relations: ['costCategory'], order: { costCategory: { name: 'ASC' } } });
+    }
+
+    const costs = await this.costRepo
+      .createQueryBuilder('cost')
+      .leftJoinAndSelect('cost.costCategory', 'category')
+      .leftJoinAndSelect('cost.task', 'task')
+      .leftJoinAndSelect('cost.creator', 'creator')
+      .where('cost.projectId = :projectId', { projectId: project.id })
+      .andWhere('cost.deletedAt IS NULL')
+      .orderBy('cost.costDate', 'DESC')
+      .getMany();
+
+    const incurredByCategory: Record<string, number> = {};
+    for (const cost of costs) {
+      incurredByCategory[cost.costCategoryId] = (incurredByCategory[cost.costCategoryId] || 0) + parseFloat(cost.amount);
+    }
+
+    const summaryBody: any[][] = [
+      ['Rubro', 'Presupuestado', 'Incurrido', 'Disponible'].map(h => ({ text: h, bold: true, fillColor: '#245B78', color: '#FFFFFF', fontSize: 9 })),
+    ];
+    let totalBudgeted = 0;
+    let totalIncurred = 0;
+
+    for (const item of budgetItems) {
+      const budgeted = parseFloat(item.amount);
+      const incurred = incurredByCategory[item.costCategoryId] || 0;
+      totalBudgeted += budgeted;
+      totalIncurred += incurred;
+      summaryBody.push([
+        { text: item.costCategory?.name ?? 'Sin rubro', fontSize: 8 },
+        { text: budgeted.toFixed(2), fontSize: 8, alignment: 'right' },
+        { text: incurred.toFixed(2), fontSize: 8, alignment: 'right' },
+        { text: (budgeted - incurred).toFixed(2), fontSize: 8, alignment: 'right' },
+      ]);
+      delete incurredByCategory[item.costCategoryId];
+    }
+
+    for (const [catId, incurred] of Object.entries(incurredByCategory)) {
+      const catCost = costs.find(c => c.costCategoryId === catId);
+      summaryBody.push([
+        { text: catCost?.costCategory?.name ?? 'Sin rubro', fontSize: 8 },
+        { text: '0.00', fontSize: 8, alignment: 'right' },
+        { text: incurred.toFixed(2), fontSize: 8, alignment: 'right' },
+        { text: (-incurred).toFixed(2), fontSize: 8, alignment: 'right' },
+      ]);
+      totalIncurred += incurred;
+    }
+
+    summaryBody.push([
+      { text: 'TOTAL', bold: true, fontSize: 9 },
+      { text: totalBudgeted.toFixed(2), bold: true, fontSize: 9, alignment: 'right' },
+      { text: totalIncurred.toFixed(2), bold: true, fontSize: 9, alignment: 'right' },
+      { text: (totalBudgeted - totalIncurred).toFixed(2), bold: true, fontSize: 9, alignment: 'right' },
+    ]);
+
+    const currency = budget?.currency ?? project.economicCurrency ?? '';
+
+    const content: Content[] = [
+      { text: `Moneda: ${currency}`, fontSize: 10, margin: [0, 0, 0, 10] },
+      { text: 'Resumen por rubro', style: 'sectionHeader' },
+      { table: { headerRows: 1, widths: ['*', 'auto', 'auto', 'auto'], body: summaryBody }, layout: 'lightHorizontalLines' },
+    ];
+
+    if (costs.length > 0) {
+      const detailBody: any[][] = [
+        ['Fecha', 'Rubro', 'Monto', 'Descripción', 'Tarea', 'Registrado por'].map(h => ({ text: h, bold: true, fillColor: '#245B78', color: '#FFFFFF', fontSize: 9 })),
+        ...costs.map(c => [
+          { text: c.costDate, fontSize: 8 },
+          { text: c.costCategory?.name ?? 'Sin rubro', fontSize: 8 },
+          { text: `${c.currency} ${c.amount}`, fontSize: 8, alignment: 'right' },
+          { text: c.description, fontSize: 8 },
+          { text: c.task?.title ?? '—', fontSize: 8 },
+          { text: c.creator?.name ?? 'Usuario desconocido', fontSize: 8 },
+        ]),
+      ];
+
+      content.push(
+        { text: '', margin: [0, 15, 0, 0] },
+        { text: 'Detalle de costos', style: 'sectionHeader' },
+        { table: { headerRows: 1, widths: ['auto', 'auto', 'auto', '*', 'auto', 'auto'], body: detailBody }, layout: 'lightHorizontalLines' },
+      );
+    }
+
+    return this.buildPdf(project.name, 'Reporte económico', user.name || user.email, content);
+  }
+
+  async exportPortfolioPdf(user: RequestUser): Promise<Buffer> {
+    const projects = await this.projectsService.findAll({}, user);
+
+    const tableBody: any[][] = [
+      ['Nombre', 'Estado', 'Líder', 'Avance', 'Miembros', 'Fecha inicio', 'Entrega est.'].map(h => ({ text: h, bold: true, fillColor: '#245B78', color: '#FFFFFF', fontSize: 9 })),
+      ...projects.map(p => [
+        { text: p.name, fontSize: 8 },
+        { text: PROJECT_STATUS_LABELS[p.status] ?? p.status, fontSize: 8 },
+        { text: p.leader?.name ?? 'Sin asignar', fontSize: 8 },
+        { text: `${p.progress ?? 0}%`, fontSize: 8, alignment: 'right' },
+        { text: String(p.memberCount ?? 0), fontSize: 8, alignment: 'center' },
+        { text: p.startDate ?? '—', fontSize: 8 },
+        { text: p.estimatedEndDate ?? '—', fontSize: 8 },
+      ]),
+    ];
+
+    return this.buildPdf('Portafolio de proyectos', 'Vista general', user.name || user.email, [
+      {
+        table: { headerRows: 1, widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'], body: tableBody },
+        layout: 'lightHorizontalLines',
+      },
+      { text: `Total: ${projects.length} proyecto(s)`, fontSize: 9, margin: [0, 8, 0, 0], italics: true },
+    ]);
+  }
+
   /*  Generación de CSV */
 
   /** encabezado con proyecto, fecha/hora y usuario que genera. */
@@ -409,6 +594,54 @@ async exportEconomicReportCsv(
   ];
 
     return BOM + lines.join('\r\n');
+  }
+
+    private buildPdf(
+    title: string,
+    subtitle: string,
+    userName: string,
+    content: Content[],
+  ): Promise<Buffer> {
+    const now = new Date().toLocaleString('es-AR', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const docDefinition: TDocumentDefinitions = {
+      pageSize: 'A4',
+      pageOrientation: 'landscape',
+      pageMargins: [30, 60, 30, 40],
+      header: {
+        columns: [
+          { text: title, fontSize: 14, bold: true, color: '#172B42', margin: [30, 15, 0, 0] },
+          { text: subtitle, fontSize: 10, color: '#607185', alignment: 'right', margin: [0, 18, 30, 0] },
+        ],
+      },
+      footer: (currentPage: number, pageCount: number) => ({
+        columns: [
+          { text: `Generado: ${now} — ${userName}`, fontSize: 7, color: '#607185', margin: [30, 0, 0, 0] },
+          { text: `Página ${currentPage} de ${pageCount}`, fontSize: 7, color: '#607185', alignment: 'right', margin: [0, 0, 30, 0] },
+        ],
+      }),
+      content,
+      styles: {
+        sectionHeader: { fontSize: 11, bold: true, color: '#172B42', margin: [0, 0, 0, 6] },
+      },
+      defaultStyle: { font: 'Roboto' },
+    };
+
+    const pdfDoc = pdfPrinter.createPdfKitDocument(docDefinition);
+    return new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      pdfDoc.on('data', (chunk: Buffer) => chunks.push(chunk));
+      pdfDoc.on('end', () => resolve(Buffer.concat(chunks)));
+      pdfDoc.on('error', reject);
+      pdfDoc.end();
+    });
   }
 
   private escapeCsv(val: string): string {

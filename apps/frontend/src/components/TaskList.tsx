@@ -619,6 +619,21 @@ export function TaskList({
     }
   }
 
+  const handleExportPdf = async () => {
+    setIsExporting(true);
+    try {
+      await api.exportTasksPdf(projectId, filters);
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 403) {
+        alert(err.details[0] || 'No tenés permisos para exportar.');
+      } else {
+        alert('Error al exportar las tareas.');
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const clearFilters = () => {
     setFilters({ projectId, page: 1, limit: 10 });
     setSearchInput('');
@@ -724,6 +739,15 @@ export function TaskList({
           className="ml-auto rounded-lg border border-[#DEE5EC] px-3 py-1.5 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7] disabled:opacity-50"
         >
           {isExporting ? 'Exportando…' : 'Exportar CSV'}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleExportPdf}
+          disabled={isExporting}
+          className="rounded-lg border border-[#DEE5EC] px-3 py-1.5 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7] disabled:opacity-50"
+        >
+          {isExporting ? 'Exportando…' : 'Exportar PDF'}
         </button>
 
         {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}

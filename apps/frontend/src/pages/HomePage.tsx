@@ -22,6 +22,18 @@ export function HomePage() {
         setIsExporting(false);
       }
     };
+
+    const handleExportPortfolioPdf = async () => {
+    setIsExporting(true);
+    try {
+      await api.exportPortfolioPdf();
+    } catch (e) {
+      console.error('Error al exportar portafolio PDF:', e);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full max-w-6xl mx-auto py-8 px-4">
       <div className="flex items-center justify-between mb-2">
@@ -43,6 +55,21 @@ export function HomePage() {
             onMouseLeave={(e) => { if (!isExporting) (e.target as HTMLElement).style.backgroundColor = 'transparent'; }}
           >
             {isExporting ? 'Exportando...' : 'Exportar CSV'}
+          </button>
+
+          <button
+            onClick={handleExportPortfolioPdf}
+            disabled={isExporting}
+            className="rounded-md border px-4 py-2.5 text-sm font-medium transition-colors"
+            style={{
+              color: '#245B78',
+              borderColor: '#DEE5EC',
+              backgroundColor: isExporting ? '#EAF2F7' : 'transparent',
+            }}
+            onMouseEnter={(e) => { if (!isExporting) (e.target as HTMLElement).style.backgroundColor = '#EAF2F7'; }}
+            onMouseLeave={(e) => { if (!isExporting) (e.target as HTMLElement).style.backgroundColor = 'transparent'; }}
+          >
+            {isExporting ? 'Exportando...' : 'Exportar PDF'}
           </button>
         {canCreateProject && (
           <button
