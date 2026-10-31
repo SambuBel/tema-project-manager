@@ -10,6 +10,7 @@ import { getMutationOptions } from './mutationLogic';
 import { useBlockedTasks } from '../../hooks/useBlockedTasks';
 import { applyBoardFilters } from './TaskBoardFilters';
 import { CompleteTaskWithSubtasksModal } from '../CompleteTaskWithSubtasksModal';
+import { MoveTaskWithSubtasksModal } from '../MoveTaskWithSubtasksModal';
 
 interface TaskBoardProps {
   projectId: string;
@@ -35,6 +36,9 @@ export function TaskBoard({
   const [pendingSubtasksTaskId, setPendingSubtasksTaskId] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [isConfirmingSubtasks, setIsConfirmingSubtasks] = useState(false);
+  const [pendingMove, setPendingMove] = useState<{ taskId: string; status: TaskStatus } | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const [isConfirmingMove, setIsConfirmingMove] = useState(false);
 
   useEffect(() => {
     if (toast) {
@@ -75,6 +79,13 @@ export function TaskBoard({
           if (pendingSubs > 0) {
             setModalError(null);
             setPendingSubtasksTaskId(taskId);
+            return;
+          }
+        } else {
+          const movedTask = tasks?.find((t) => t.id === taskId);
+          if ((movedTask?.subtaskCount ?? 0) > 0) {
+            setMoveError(null);
+            setPendingMove({ taskId, status: destStatus });
             return;
           }
         }
@@ -118,6 +129,38 @@ export function TaskBoard({
     }
   };
 
+  const handleConfirmMoveSubtasks = async () => {
+    if (!pendingMove || isConfirmingMove) return;
+    setIsConfirmingMove(true);
+    setMoveError(null);
+
+    try {
+      await api.updateTaskStatus(pendingMove.taskId, pendingMove.status, { moveSubtasks: true });
+      setPendingMove(null);
+      setSuccessToast('Se movieron la tarea principal y sus subtareas.');
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['tasks', projectId] }),
+        qc.invalidateQueries({ queryKey: ['subtasks'] }),
+        qc.invalidateQueries({ queryKey: ['milestones', projectId] }),
+        qc.invalidateQueries({ queryKey: ['milestones-upcoming', projectId] }),
+        qc.invalidateQueries({ queryKey: ['milestone-detail'] }),
+        qc.invalidateQueries({ queryKey: ['gantt'] }),
+      ]);
+    } catch (err) {
+      if (err instanceof ApiRequestError) {
+        setMoveError(
+          err.details && err.details.length > 0
+            ? err.details.join(' ')
+            : err.message || 'No se pudo mover la tarea ni sus subtareas.',
+        );
+      } else {
+        setMoveError('Error al mover la tarea principal y sus subtareas.');
+      }
+    } finally {
+      setIsConfirmingMove(false);
+    }
+  };
+
   if (isLoading) {
     return <p className="text-sm text-[#607185]">Cargando tablero...</p>;
   }
@@ -136,6 +179,8 @@ export function TaskBoard({
   const pendingModalTask = pendingSubtasksTaskId
     ? tasks?.find((t) => t.id === pendingSubtasksTaskId)
     : undefined;
+
+  const pendingMoveTask = pendingMove ? tasks?.find((t) => t.id === pendingMove.taskId) : undefined;
 
   return (
     <div className="relative w-full min-w-0">
@@ -187,6 +232,21 @@ export function TaskBoard({
           setModalError(null);
         }}
         onConfirm={() => void handleConfirmCompleteSubtasks()}
+      />
+
+      <MoveTaskWithSubtasksModal
+        open={Boolean(pendingMove)}
+        taskTitle={pendingMoveTask?.title}
+        subtaskCount={pendingMoveTask?.subtaskCount}
+        targetStatusLabel={pendingMove ? taskStatusLabels[pendingMove.status] : undefined}
+        isConfirming={isConfirmingMove}
+        errorMessage={moveError}
+        onCancel={() => {
+          if (isConfirmingMove) return;
+          setPendingMove(null);
+          setMoveError(null);
+        }}
+        onConfirm={() => void handleConfirmMoveSubtasks()}
       />
     </div>
   );
