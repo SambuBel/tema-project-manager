@@ -411,4 +411,8 @@ export const api = {
     downloadFile(`/projects/${projectId}/export/economic-report/pdf`, 'informe-economico.pdf'),
   exportPortfolioPdf: () =>
     downloadFile('/projects/export/portfolio/pdf', 'portafolio.pdf'),
+  exportGanttPng: (projectId: string) =>
+    downloadFile(`/projects/${projectId}/export/gantt/png`, 'gantt.png'),
+  exportGanttPdf: (projectId: string) =>
+    downloadFile(`/projects/${projectId}/export/gantt/pdf`, 'gantt.pdf'),
 };

@@ -14,5 +14,6 @@ import { DependenciesService } from './dependencies.service';
   imports: [TypeOrmModule.forFeature([TaskEntity, ProjectEntity, TaskDependencyEntity]), AuthModule, UsersModule],
   controllers: [GanttController, DependenciesController],
   providers: [GanttService, DependenciesService],
+  exports: [GanttService],
 })
 export class GanttModule {}

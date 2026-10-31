@@ -102,6 +102,23 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
   const [isApplyingCascade, setIsApplyingCascade] = useState(false);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState<string | null>(null);
 
+  const [isExporting, setIsExporting] = useState(false);
+
+    const handleExportGantt = async (format: 'png' | 'pdf') => {
+    setIsExporting(true);
+    try {
+      if (format === 'png') {
+        await temaApi.exportGanttPng(projectId);
+      } else {
+        await temaApi.exportGanttPdf(projectId);
+      }
+    } catch (err) {
+      console.error('Error al exportar Gantt:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Reutiliza el cache de ProjectPage (misma queryKey, sin fetch adicional).
   const { data: project } = useQuery({
     queryKey: ['project', projectId],
@@ -394,6 +411,22 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
                   {ZOOM_LABELS[level]}
                 </button>
               ))}
+
+              <span className="mx-1 h-5 w-px bg-[#DEE5EC]" />
+              <button
+                onClick={() => handleExportGantt('png')}
+                disabled={isExporting}
+                className="rounded-md px-3 py-1.5 text-xs font-medium bg-[#EAF2F7] text-[#172B42] hover:bg-[#DEE5EC] disabled:opacity-50"
+              >
+                {isExporting ? 'Exportando…' : 'Exportar PNG'}
+              </button>
+              <button
+                onClick={() => handleExportGantt('pdf')}
+                disabled={isExporting}
+                className="rounded-md px-3 py-1.5 text-xs font-medium bg-[#EAF2F7] text-[#172B42] hover:bg-[#DEE5EC] disabled:opacity-50"
+              >
+                {isExporting ? 'Exportando…' : 'Exportar PDF'}
+              </button>
             </div>
           </div>
 

@@ -114,4 +114,34 @@ export class ExportController {
     });
     res.end(buffer);
   }
+
+    @Get(':projectId/export/gantt/png')
+  async exportGanttPng(
+    @Param('projectId') projectId: string,
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.exportService.exportGanttPng(projectId, user);
+    const filename = `gantt_${new Date().toISOString().slice(0, 10)}.png`;
+    res.set({
+      'Content-Type': 'image/png',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.end(buffer);
+  }
+
+  @Get(':projectId/export/gantt/pdf')
+  async exportGanttPdf(
+    @Param('projectId') projectId: string,
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.exportService.exportGanttPdf(projectId, user);
+    const filename = `gantt_${new Date().toISOString().slice(0, 10)}.pdf`;
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.end(buffer);
+  }
 }

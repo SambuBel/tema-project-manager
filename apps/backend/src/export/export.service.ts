@@ -16,6 +16,10 @@ import { ProjectsService } from '../projects/projects.service';
 const PdfPrinter = require('pdfmake');
 import type { TDocumentDefinitions, Content } from 'pdfmake/interfaces';
 import * as path from 'path';
+import { GanttService } from '../gantt/gantt.service';
+import type { GanttTaskDto, GanttDependencyDto } from '../gantt/dto/gantt-response.dto';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const sharp = require('sharp');
 
 const TASK_STATUS_LABELS: Record<string, string> = {
   PENDING: 'Pendiente',
@@ -39,6 +43,14 @@ const PROJECT_STATUS_LABELS: Record<string, string> = {
   PAUSED: 'En pausa',
   FINISHED: 'Finalizado',
   CANCELLED: 'Cancelado',
+};
+
+const STATUS_BAR_COLORS: Record<string, string> = {
+  PENDING: '#94A3B8',
+  IN_PROGRESS: '#245B78',
+  IN_REVIEW: '#7C3AED',
+  BLOCKED: '#DC2626',
+  COMPLETED: '#16A34A',
 };
 
 const fontsDir = path.join(process.cwd(), 'assets', 'fonts');
@@ -76,6 +88,7 @@ export class ExportService {
     private readonly costRepo: Repository<CostEntity>,
     private readonly permissions: PermissionsService,
     private readonly projectsService: ProjectsService,
+    private readonly ganttService: GanttService,
   ) {}
 
   /* Helpers internos */
@@ -519,6 +532,259 @@ async exportEconomicReportCsv(
       },
       { text: `Total: ${projects.length} proyecto(s)`, fontSize: 9, margin: [0, 8, 0, 0], italics: true },
     ]);
+  }
+
+    /* ========== Exportaciones del Gantt ========== */
+
+  async exportGanttPng(projectIdOrSlug: string, user: RequestUser): Promise<Buffer> {
+    const ganttData = await this.ganttService.getGantt(projectIdOrSlug, user);
+    const svg = this.buildGanttSvg(
+      ganttData.project.name,
+      ganttData.tasks,
+      ganttData.dependencies,
+    );
+    return sharp(Buffer.from(svg)).png().toBuffer();
+  }
+
+  async exportGanttPdf(projectIdOrSlug: string, user: RequestUser): Promise<Buffer> {
+    const ganttData = await this.ganttService.getGantt(projectIdOrSlug, user);
+    const svg = this.buildGanttSvg(
+      ganttData.project.name,
+      ganttData.tasks,
+      ganttData.dependencies,
+    );
+    const pngBuffer = await sharp(Buffer.from(svg)).png().toBuffer();
+    const base64 = pngBuffer.toString('base64');
+
+    return this.buildPdf(ganttData.project.name, 'Diagrama de Gantt', user.name || user.email, [
+      {
+        image: `data:image/png;base64,${base64}`,
+        width: 770,
+      },
+    ]);
+  }
+
+  /* ---------- SVG builder del Gantt ---------- */
+
+  private escapeXml(str: string): string {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  private truncateText(str: string, max: number): string {
+    return str.length > max ? str.slice(0, max - 1) + '…' : str;
+  }
+
+  private orderTasksForGantt(tasks: GanttTaskDto[]): GanttTaskDto[] {
+    const roots = tasks.filter((t) => !t.parentTaskId);
+    const childrenMap = new Map<string, GanttTaskDto[]>();
+    for (const t of tasks) {
+      if (t.parentTaskId) {
+        const siblings = childrenMap.get(t.parentTaskId) ?? [];
+        siblings.push(t);
+        childrenMap.set(t.parentTaskId, siblings);
+      }
+    }
+    const result: GanttTaskDto[] = [];
+    for (const root of roots) {
+      result.push(root);
+      const children = childrenMap.get(root.id) ?? [];
+      result.push(...children);
+    }
+    return result;
+  }
+
+  private buildGanttSvg(
+    projectName: string,
+    tasks: GanttTaskDto[],
+    dependencies: GanttDependencyDto[],
+  ): string {
+    const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const MS_PER_DAY = 86_400_000;
+
+    // Solo tareas que tienen ambas fechas
+    const datedTasks = tasks.filter((t) => t.startDate && t.dueDate);
+    const undatedCount = tasks.length - datedTasks.length;
+
+    if (datedTasks.length === 0) {
+      return [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="80">',
+        '<rect width="600" height="80" fill="#FFFFFF"/>',
+        '<text x="300" y="45" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#607185">',
+        'No hay tareas con fechas para mostrar en el diagrama.',
+        '</text>',
+        '</svg>',
+      ].join('\n');
+    }
+
+    const ordered = this.orderTasksForGantt(datedTasks);
+
+    // Rango de fechas con margen
+    const allStarts = datedTasks.map((t) => new Date(t.startDate!).getTime());
+    const allEnds = datedTasks.map((t) => new Date(t.dueDate!).getTime());
+    const rangeStart = new Date(Math.min(...allStarts));
+    const rangeEnd = new Date(Math.max(...allEnds));
+    rangeStart.setDate(rangeStart.getDate() - 3);
+    rangeEnd.setDate(rangeEnd.getDate() + 3);
+    rangeStart.setHours(0, 0, 0, 0);
+    rangeEnd.setHours(0, 0, 0, 0);
+
+    const totalDays = Math.ceil((rangeEnd.getTime() - rangeStart.getTime()) / MS_PER_DAY);
+
+    // Dimensiones
+    const LEFT_W = 200;
+    const ROW_H = 28;
+    const HEADER_H = 40;
+    const BAR_H = 16;
+    const BAR_MARGIN = (ROW_H - BAR_H) / 2;
+    const PX_PER_DAY = Math.min(28, Math.max(6, Math.floor(950 / totalDays)));
+    const TIMELINE_W = totalDays * PX_PER_DAY;
+    const W = LEFT_W + TIMELINE_W;
+    const CONTENT_H = ordered.length * ROW_H;
+    const NOTE_H = undatedCount > 0 ? 24 : 0;
+    const H = HEADER_H + CONTENT_H + NOTE_H;
+
+    const dayX = (date: Date): number => {
+      const diff = (date.getTime() - rangeStart.getTime()) / MS_PER_DAY;
+      return LEFT_W + diff * PX_PER_DAY;
+    };
+
+    const svg: string[] = [];
+    svg.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`);
+
+    // Marcador de flecha para dependencias
+    svg.push('<defs>');
+    svg.push('<marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">');
+    svg.push('<path d="M0,0 L6,3 L0,6 Z" fill="#607185"/>');
+    svg.push('</marker>');
+    svg.push('</defs>');
+
+    // Fondo blanco
+    svg.push(`<rect width="${W}" height="${H}" fill="#FFFFFF"/>`);
+    // Panel izquierdo
+    svg.push(`<rect x="0" y="0" width="${LEFT_W}" height="${H}" fill="#F8FAFC"/>`);
+    // Encabezado oscuro
+    svg.push(`<rect x="0" y="0" width="${W}" height="${HEADER_H}" fill="#172B42"/>`);
+    // Nombre del proyecto
+    svg.push(`<text x="10" y="26" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">${this.escapeXml(this.truncateText(projectName, 28))}</text>`);
+
+    // Etiquetas de meses
+    const cursor = new Date(rangeStart);
+    while (cursor <= rangeEnd) {
+      const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+      const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+      const visStart = new Date(Math.max(monthStart.getTime(), rangeStart.getTime()));
+      const visEnd = new Date(Math.min(monthEnd.getTime(), rangeEnd.getTime()));
+      const x1 = dayX(visStart);
+      const x2 = dayX(visEnd) + PX_PER_DAY;
+      const midX = (x1 + x2) / 2;
+      const label = `${MONTHS[cursor.getMonth()]} ${cursor.getFullYear()}`;
+      svg.push(`<text x="${midX}" y="16" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#FFFFFF" opacity="0.9">${label}</text>`);
+      if (x1 > LEFT_W) {
+        svg.push(`<line x1="${x1}" y1="0" x2="${x1}" y2="${H}" stroke="#DEE5EC" stroke-width="0.5"/>`);
+      }
+      cursor.setMonth(cursor.getMonth() + 1);
+      cursor.setDate(1);
+    }
+
+    // Números de día (solo si caben)
+    if (PX_PER_DAY >= 14) {
+      const d = new Date(rangeStart);
+      while (d <= rangeEnd) {
+        const x = dayX(d) + PX_PER_DAY / 2;
+        svg.push(`<text x="${x}" y="34" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#FFFFFF" opacity="0.6">${d.getDate()}</text>`);
+        d.setDate(d.getDate() + 1);
+      }
+    }
+
+    // Separador panel izquierdo
+    svg.push(`<line x1="${LEFT_W}" y1="0" x2="${LEFT_W}" y2="${H}" stroke="#DEE5EC" stroke-width="1"/>`);
+
+    // Línea de "hoy"
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (today >= rangeStart && today <= rangeEnd) {
+      const tx = dayX(today);
+      svg.push(`<line x1="${tx}" y1="${HEADER_H}" x2="${tx}" y2="${HEADER_H + CONTENT_H}" stroke="#DC2626" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.7"/>`);
+    }
+
+    // Índice de tareas (para dibujar dependencias después)
+    const taskIndexMap = new Map<string, number>();
+    ordered.forEach((t, i) => taskIndexMap.set(t.id, i));
+
+    // Filas de tareas
+    for (let i = 0; i < ordered.length; i++) {
+      const task = ordered[i];
+      if (!task) continue;
+      const y = HEADER_H + i * ROW_H;
+
+      // Fondo alternado
+      if (i % 2 === 0) {
+        svg.push(`<rect x="${LEFT_W}" y="${y}" width="${TIMELINE_W}" height="${ROW_H}" fill="#F8FAFC"/>`);
+      }
+      // Línea horizontal
+      svg.push(`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#EAF2F7" stroke-width="0.5"/>`);
+
+      // Nombre de la tarea
+      const isSubtask = !!task.parentTaskId;
+      const textX = isSubtask ? 24 : 10;
+      const prefix = isSubtask ? '› ' : '';
+      const maxChars = isSubtask ? 22 : 25;
+      const name = prefix + this.truncateText(task.title, maxChars);
+      const textY = y + ROW_H / 2 + 4;
+      const fontSize = isSubtask ? '8' : '9';
+      const fontWeight = isSubtask ? 'normal' : '600';
+      svg.push(`<text x="${textX}" y="${textY}" font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="${fontWeight}" fill="#172B42">${this.escapeXml(name)}</text>`);
+
+      // Barra de la tarea
+      if (task.startDate && task.dueDate) {
+        const barStart = dayX(new Date(task.startDate));
+        const barEnd = dayX(new Date(task.dueDate)) + PX_PER_DAY;
+        const barW = Math.max(barEnd - barStart, 4);
+        const barY = y + BAR_MARGIN;
+        const color = STATUS_BAR_COLORS[task.status] ?? '#94A3B8';
+        svg.push(`<rect x="${barStart}" y="${barY}" width="${barW}" height="${BAR_H}" rx="3" ry="3" fill="${color}"/>`);
+
+        // Título dentro de la barra si entra
+        if (barW > 60) {
+          const barLabel = this.truncateText(task.title, Math.floor(barW / 5));
+          svg.push(`<text x="${barStart + 5}" y="${barY + BAR_H / 2 + 3}" font-family="Arial, sans-serif" font-size="7" fill="#FFFFFF">${this.escapeXml(barLabel)}</text>`);
+        }
+      }
+    }
+
+    // Línea inferior
+    svg.push(`<line x1="0" y1="${HEADER_H + CONTENT_H}" x2="${W}" y2="${HEADER_H + CONTENT_H}" stroke="#DEE5EC" stroke-width="1"/>`);
+
+    // Flechas de dependencias
+    for (const dep of dependencies) {
+      const predIdx = taskIndexMap.get(dep.predecessorTaskId);
+      const succIdx = taskIndexMap.get(dep.successorTaskId);
+      if (predIdx === undefined || succIdx === undefined) continue;
+      const pred = ordered[predIdx];
+      const succ = ordered[succIdx];
+      if (!pred?.dueDate || !succ?.startDate) continue;
+
+      const x1 = dayX(new Date(pred.dueDate)) + PX_PER_DAY;
+      const y1 = HEADER_H + predIdx * ROW_H + ROW_H / 2;
+      const x2 = dayX(new Date(succ.startDate));
+      const y2 = HEADER_H + succIdx * ROW_H + ROW_H / 2;
+      const midX = x1 + 6;
+      svg.push(`<path d="M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}" fill="none" stroke="#607185" stroke-width="1" marker-end="url(#arr)"/>`);
+    }
+
+    // Nota de tareas sin fechas
+    if (undatedCount > 0) {
+      const noteY = HEADER_H + CONTENT_H + 16;
+      svg.push(`<text x="10" y="${noteY}" font-family="Arial, sans-serif" font-size="8" fill="#607185" font-style="italic">${undatedCount} tarea(s) sin fechas asignadas no se muestran.</text>`);
+    }
+
+    svg.push('</svg>');
+    return svg.join('\n');
   }
 
   /*  Generación de CSV */
