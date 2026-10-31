@@ -12,6 +12,7 @@ import { ExportController } from './export.controller';
 import { ExportService } from './export.service';
 import { UsersModule } from '../users/users.module';
 import { ProjectsModule } from '../projects/projects.module'
+import { GanttModule } from '../gantt/gantt.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ProjectsModule } from '../projects/projects.module'
     AuthModule,
     UsersModule,
     ProjectsModule,
+    GanttModule,
   ],
   controllers: [ExportController],
   providers: [ExportService],

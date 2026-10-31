@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { ProjectList } from '../components/ProjectList';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { canCreateProjectUI } from '../lib/permissions';
+import ExportDropdown from '../components/ExportDropdown';
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -22,6 +23,18 @@ export function HomePage() {
         setIsExporting(false);
       }
     };
+
+    const handleExportPortfolioPdf = async () => {
+    setIsExporting(true);
+    try {
+      await api.exportPortfolioPdf();
+    } catch (e) {
+      console.error('Error al exportar portafolio PDF:', e);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full max-w-6xl mx-auto py-8 px-4">
       <div className="flex items-center justify-between mb-2">
@@ -30,20 +43,13 @@ export function HomePage() {
           <p className="text-gray-500 mt-1">Todos los proyectos del espacio de trabajo.</p>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleExportPortfolio}
+          <ExportDropdown
             disabled={isExporting}
-            className="rounded-md border px-4 py-2.5 text-sm font-medium transition-colors"
-            style={{
-              color: '#245B78',
-              borderColor: '#DEE5EC',
-              backgroundColor: isExporting ? '#EAF2F7' : 'transparent',
-            }}
-            onMouseEnter={(e) => { if (!isExporting) (e.target as HTMLElement).style.backgroundColor = '#EAF2F7'; }}
-            onMouseLeave={(e) => { if (!isExporting) (e.target as HTMLElement).style.backgroundColor = 'transparent'; }}
-          >
-            {isExporting ? 'Exportando...' : 'Exportar CSV'}
-          </button>
+            options={[
+              { label: 'Exportar CSV', onClick: handleExportPortfolio },
+              { label: 'Exportar PDF', onClick: handleExportPortfolioPdf },
+            ]}
+          />
         {canCreateProject && (
           <button
             className="bg-sidebar-card hover:bg-sidebar-hover text-white px-5 py-2.5 rounded-md font-medium text-sm transition-colors"

@@ -17,6 +17,7 @@ import type { CascadePreviewResponse } from '@tema/shared-types';
 import { Locale } from '@svar-ui/react-core';
 // @ts-ignore - @svar-ui/core-locales no trae declaraciones de tipo
 import { es as esCore } from '@svar-ui/core-locales';
+import ExportDropdown from '../ExportDropdown';
 
 const esGantt = {
   gantt: {
@@ -101,6 +102,23 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
   const [ganttKey, setGanttKey] = useState(0);
   const [isApplyingCascade, setIsApplyingCascade] = useState(false);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState<string | null>(null);
+
+  const [isExporting, setIsExporting] = useState(false);
+
+    const handleExportGantt = async (format: 'png' | 'pdf') => {
+    setIsExporting(true);
+    try {
+      if (format === 'png') {
+        await temaApi.exportGanttPng(projectId);
+      } else {
+        await temaApi.exportGanttPdf(projectId);
+      }
+    } catch (err) {
+      console.error('Error al exportar Gantt:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   // Reutiliza el cache de ProjectPage (misma queryKey, sin fetch adicional).
   const { data: project } = useQuery({
@@ -394,6 +412,15 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
                   {ZOOM_LABELS[level]}
                 </button>
               ))}
+
+              <span className="mx-1 h-5 w-px bg-[#DEE5EC]" />
+              <ExportDropdown
+                disabled={isExporting}
+                options={[
+                  { label: 'Exportar PNG', onClick: () => handleExportGantt('png') },
+                  { label: 'Exportar PDF', onClick: () => handleExportGantt('pdf') },
+                ]}
+              />
             </div>
           </div>
 

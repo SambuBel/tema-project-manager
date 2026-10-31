@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import { BudgetSection } from './BudgetSection';
 import { CostsSection } from './CostsSection';
 import { ResourcesSection } from './ResourcesSection';
+import ExportDropdown from '../ExportDropdown';
 
 /**
  * Secciones de la pestaña Economía. Agregar Resumen es sumar una entrada acá; la sección activa viene de la URL
@@ -39,6 +40,18 @@ export function EconomyTab({ project, section, onSectionChange }: EconomyTabProp
       setIsExporting(false);
     }
   };
+
+  const handleExportEconomicPdf = async () => {
+    setIsExporting(true);
+    try {
+      await api.exportEconomicReportPdf(project.id);
+    } catch (err) {
+      console.error('Error al exportar reporte económico PDF:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <nav aria-label="Secciones de Economía" className="flex flex-wrap gap-2">
@@ -57,14 +70,13 @@ export function EconomyTab({ project, section, onSectionChange }: EconomyTabProp
         ))}
       </nav>
         <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={handleExportEconomic}
+          <ExportDropdown
             disabled={isExporting}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[#DEE5EC] bg-white px-3 py-1.5 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7] transition-colors disabled:opacity-50"
-          >
-            {isExporting ? 'Exportando…' : 'Exportar reporte CSV'}
-          </button>
+            options={[
+              { label: 'Exportar CSV', onClick: handleExportEconomic },
+              { label: 'Exportar PDF', onClick: handleExportEconomicPdf },
+            ]}
+          />
         </div>
       <Component project={project} />
     </div>

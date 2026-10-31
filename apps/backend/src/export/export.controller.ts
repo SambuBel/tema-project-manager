@@ -1,5 +1,5 @@
-import { Controller, Get, Param, Query, Res, UseGuards } from '@nestjs/common';
-import { Response } from 'express';
+import { Controller, Get, Param, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Response, Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequestUser } from '../auth/types/authenticated-request-user';
@@ -26,6 +26,19 @@ export class ExportController {
       'Content-Disposition': `attachment; filename="${filename}"`,
     });
     res.send(csv);
+  }
+
+  @Get('export/portfolio/pdf')
+  async exportPortfolioPdf(
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.exportService.exportPortfolioPdf(req.user as RequestUser);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="portafolio.pdf"',
+    });
+    res.end(buffer);
   }
 
   /** exportar listado de tareas a CSV, respetando filtros de pantalla. */
@@ -71,5 +84,64 @@ export class ExportController {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="reporte-economico.csv"');
     res.send(csv);
+  }
+
+  @Get(':projectId/export/tasks/pdf')
+  async exportTasksPdf(
+    @Param('projectId') projectId: string,
+    @Query() filters: any,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.exportService.exportTasksPdf(projectId, filters, req.user as RequestUser);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="tareas.pdf"',
+    });
+    res.end(buffer);
+  }
+
+  @Get(':projectId/export/economic-report/pdf')
+  async exportEconomicReportPdf(
+    @Param('projectId') projectId: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.exportService.exportEconomicReportPdf(projectId, req.user as RequestUser);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="informe-economico.pdf"',
+    });
+    res.end(buffer);
+  }
+
+    @Get(':projectId/export/gantt/png')
+  async exportGanttPng(
+    @Param('projectId') projectId: string,
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.exportService.exportGanttPng(projectId, user);
+    const filename = `gantt_${new Date().toISOString().slice(0, 10)}.png`;
+    res.set({
+      'Content-Type': 'image/png',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.end(buffer);
+  }
+
+  @Get(':projectId/export/gantt/pdf')
+  async exportGanttPdf(
+    @Param('projectId') projectId: string,
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.exportService.exportGanttPdf(projectId, user);
+    const filename = `gantt_${new Date().toISOString().slice(0, 10)}.pdf`;
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.end(buffer);
   }
 }
