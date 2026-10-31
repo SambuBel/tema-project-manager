@@ -17,6 +17,7 @@ import type { CascadePreviewResponse } from '@tema/shared-types';
 import { Locale } from '@svar-ui/react-core';
 // @ts-ignore - @svar-ui/core-locales no trae declaraciones de tipo
 import { es as esCore } from '@svar-ui/core-locales';
+import ExportDropdown from '../ExportDropdown';
 
 const esGantt = {
   gantt: {
@@ -413,20 +414,13 @@ export function ProjectGantt({ projectId }: ProjectGanttProps) {
               ))}
 
               <span className="mx-1 h-5 w-px bg-[#DEE5EC]" />
-              <button
-                onClick={() => handleExportGantt('png')}
+              <ExportDropdown
                 disabled={isExporting}
-                className="rounded-md px-3 py-1.5 text-xs font-medium bg-[#EAF2F7] text-[#172B42] hover:bg-[#DEE5EC] disabled:opacity-50"
-              >
-                {isExporting ? 'Exportando…' : 'Exportar PNG'}
-              </button>
-              <button
-                onClick={() => handleExportGantt('pdf')}
-                disabled={isExporting}
-                className="rounded-md px-3 py-1.5 text-xs font-medium bg-[#EAF2F7] text-[#172B42] hover:bg-[#DEE5EC] disabled:opacity-50"
-              >
-                {isExporting ? 'Exportando…' : 'Exportar PDF'}
-              </button>
+                options={[
+                  { label: 'Exportar PNG', onClick: () => handleExportGantt('png') },
+                  { label: 'Exportar PDF', onClick: () => handleExportGantt('pdf') },
+                ]}
+              />
             </div>
           </div>
 

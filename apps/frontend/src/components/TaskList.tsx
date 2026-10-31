@@ -11,6 +11,7 @@ import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task'
 import { taskStatusLabels, taskPriorityLabels } from '../types/task';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
 import { Pagination } from './Pagination';
+import ExportDropdown from './ExportDropdown';
 
 const statusColors: Record<TaskStatus, string> = {
   PENDING: 'bg-gray-100 text-gray-700',
@@ -732,23 +733,13 @@ export function TaskList({
           En riesgo ({counts.atRisk})
         </button>
 
-        <button
-          type="button"
-          onClick={handleExportCsv}
+        <ExportDropdown
           disabled={isExporting}
-          className="ml-auto rounded-lg border border-[#DEE5EC] px-3 py-1.5 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7] disabled:opacity-50"
-        >
-          {isExporting ? 'Exportando…' : 'Exportar CSV'}
-        </button>
-
-        <button
-          type="button"
-          onClick={handleExportPdf}
-          disabled={isExporting}
-          className="rounded-lg border border-[#DEE5EC] px-3 py-1.5 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7] disabled:opacity-50"
-        >
-          {isExporting ? 'Exportando…' : 'Exportar PDF'}
-        </button>
+          options={[
+            { label: 'Exportar CSV', onClick: handleExportCsv },
+            { label: 'Exportar PDF', onClick: handleExportPdf },
+          ]}
+        />
 
         {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}
         {canCreateSubtask && (
