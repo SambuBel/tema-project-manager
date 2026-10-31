@@ -2154,6 +2154,89 @@ describe('TasksService - completeSubtasks y auto-completado de Milestone', () =>
     expect(txManager.save).not.toHaveBeenCalled();
   });
 
+  it('updateStatus con moveSubtasks: true pasa las subtareas activas al mismo estado y registra cada cambio', async () => {
+    const { service, taskRepo, txManager, activityService } = makeService([]);
+    const parentTask = makeTask({
+      id: 'parent-300',
+      projectId: PROJECT_ID,
+      parentTaskId: null,
+      status: TaskStatus.PENDING,
+      project: makeProject(),
+    });
+    const subA = makeTask({ id: 'sub-301', projectId: PROJECT_ID, parentTaskId: 'parent-300', status: TaskStatus.PENDING, project: makeProject() });
+    const subB = makeTask({ id: 'sub-302', projectId: PROJECT_ID, parentTaskId: 'parent-300', status: TaskStatus.COMPLETED, project: makeProject() });
+
+    taskRepo.findOne.mockResolvedValueOnce(parentTask);
+    txManager.find = jest.fn().mockResolvedValueOnce([subA, subB]);
+
+    const result = await service.updateStatus(
+      'parent-300',
+      { status: TaskStatus.IN_PROGRESS, moveSubtasks: true },
+      leaderUser,
+    );
+
+    expect(result.status).toBe(TaskStatus.IN_PROGRESS);
+    expect(txManager.save).toHaveBeenCalledTimes(3);
+    expect(txManager.save.mock.calls[0][1]).toMatchObject({ id: 'sub-301', status: TaskStatus.IN_PROGRESS });
+    expect(txManager.save.mock.calls[1][1]).toMatchObject({ id: 'sub-302', status: TaskStatus.IN_PROGRESS });
+    expect(txManager.save.mock.calls[2][1]).toMatchObject({ id: 'parent-300', status: TaskStatus.IN_PROGRESS });
+    expect(activityService.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityId: 'sub-302',
+        metadata: { changes: { status: { old: TaskStatus.COMPLETED, new: TaskStatus.IN_PROGRESS } } },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('updateStatus sin moveSubtasks no toca las subtareas', async () => {
+    const { service, taskRepo, txManager } = makeService([]);
+    const parentTask = makeTask({
+      id: 'parent-310',
+      projectId: PROJECT_ID,
+      parentTaskId: null,
+      status: TaskStatus.PENDING,
+      project: makeProject(),
+    });
+    taskRepo.findOne.mockResolvedValueOnce(parentTask);
+    txManager.find = jest.fn();
+
+    await service.updateStatus('parent-310', { status: TaskStatus.IN_PROGRESS }, leaderUser);
+
+    expect(txManager.find).not.toHaveBeenCalled();
+    expect(txManager.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('updateStatus con moveSubtasks: true rechaza con 403 sin cambios parciales si no puede editar una subtarea', async () => {
+    const { service, taskRepo, txManager, permissions } = makeService([]);
+    const parentTask = makeTask({
+      id: 'parent-320',
+      projectId: PROJECT_ID,
+      parentTaskId: null,
+      status: TaskStatus.PENDING,
+      assignedToId: strangerUser.id,
+      project: makeProject(),
+    });
+    const forbiddenSub = makeTask({
+      id: 'sub-321',
+      projectId: PROJECT_ID,
+      parentTaskId: 'parent-320',
+      status: TaskStatus.PENDING,
+      createdBy: LEADER_ID,
+      assignedToId: LEADER_ID,
+      project: makeProject(),
+    });
+    taskRepo.findOne.mockResolvedValueOnce(parentTask);
+    txManager.find = jest.fn().mockResolvedValueOnce([forbiddenSub]);
+    jest.spyOn(permissions, 'canEditTask').mockImplementation(async (_u, t) => t.id === 'parent-320');
+
+    await expect(
+      service.updateStatus('parent-320', { status: TaskStatus.IN_PROGRESS, moveSubtasks: true }, strangerUser),
+    ).rejects.toThrow(ForbiddenException);
+
+    expect(txManager.save).not.toHaveBeenCalled();
+  });
+
   it.each([null, 'parent-outside-milestone'])('updateStatus sincroniza el hito al completar o reabrir un elemento vinculado (parentTaskId: %s)', async (parentTaskId) => {
     const { service, taskRepo, txManager } = makeService([]);
     const milestoneRecord: any = {

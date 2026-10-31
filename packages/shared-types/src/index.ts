@@ -238,6 +238,7 @@ export interface ListTasksQuery {
 export interface UpdateTaskStatusDto {
   status: TaskStatus;
   completeSubtasks?: boolean;
+  moveSubtasks?: boolean;
 }
 
 export interface Subtask {

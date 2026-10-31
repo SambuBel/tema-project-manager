@@ -866,6 +866,53 @@ export class TasksService {
   }
 
   /**
+   * Pasa las subtareas activas de una tarea principal al estado indicado (distinto de COMPLETED,
+   * que tiene su propio flujo). Valida permisos en todas antes de modificar alguna.
+   */
+  private async moveChildTasksAtomically(
+    task: TaskEntity,
+    status: TaskStatus,
+    user: RequestUser,
+    manager: EntityManager,
+    source?: ChangeSource,
+  ): Promise<void> {
+    const children = await manager.find(TaskEntity, {
+      where: { parentTaskId: task.id, status: Not(status), archivedAt: IsNull() },
+      order: { createdAt: 'ASC' },
+    });
+
+    for (const child of children) {
+      const canEditChild = await this.permissions.canEditTask(user, child, task.project);
+      if (!canEditChild) {
+        throw new ForbiddenException(`No podés cambiar el estado de la subtarea "${child.title}".`);
+      }
+      this.validateTransition(child.status, status);
+    }
+
+    for (const child of children) {
+      const oldChildStatus = child.status;
+      child.status = status;
+      const savedChild = await manager.save(TaskEntity, child);
+      await this.activityService.logEvent(
+        {
+          projectId: savedChild.projectId,
+          actorId: user.id,
+          actionType: ProjectActivityAction.TASK_UPDATED,
+          entityType: ProjectActivityEntityType.TASK,
+          entityId: savedChild.id,
+          metadata: withSourceMetadata({ changes: { status: { old: oldChildStatus, new: status } } }, source),
+          ...originOf(source),
+        },
+        manager,
+      );
+    }
+
+    for (const milestoneId of new Set(children.map((child) => child.milestoneId).filter(Boolean))) {
+      await syncMilestoneAutoCompletionWithManager(manager, milestoneId);
+    }
+  }
+
+  /**
    * Valida permisos y transiciones en todas las subtareas pendientes de una tarea principal y
    * las completa atómicamente antes de completar la tarea principal.
    */
@@ -968,6 +1015,9 @@ export class TasksService {
     return this.repo.manager.transaction(async (manager) => {
       if (dto.status === TaskStatus.COMPLETED && dto.completeSubtasks) {
         await this.completePendingSubtasksAtomically(task, user, manager, source);
+      }
+      if (dto.status !== TaskStatus.COMPLETED && dto.moveSubtasks) {
+        await this.moveChildTasksAtomically(task, dto.status, user, manager, source);
       }
 
       const oldStatus = task.status;

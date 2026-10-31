@@ -333,10 +333,14 @@ export const api = {
     request<Task>(`/tasks/${encodeURIComponent(idOrSlug)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
   updateTask: (id: string, dto: UpdateTaskDto) =>
     request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(dto) }),
-  updateTaskStatus: (id: string, status: TaskStatus, options?: { completeSubtasks?: boolean }) =>
+  updateTaskStatus: (id: string, status: TaskStatus, options?: { completeSubtasks?: boolean; moveSubtasks?: boolean }) =>
     request<Task>(`/tasks/${id}/status`, {
       method: 'PATCH',
-      body: JSON.stringify(options?.completeSubtasks ? { status, completeSubtasks: true } : { status }),
+      body: JSON.stringify({
+        status,
+        ...(options?.completeSubtasks ? { completeSubtasks: true } : {}),
+        ...(options?.moveSubtasks ? { moveSubtasks: true } : {}),
+      }),
     }),
   archiveTask: (id: string) =>
     request<Task>(`/tasks/${id}/archive`, { method: 'PATCH' }),

@@ -15,4 +15,12 @@ export class UpdateTaskStatusDto {
   @IsOptional()
   @IsBoolean()
   completeSubtasks?: boolean;
+
+  /**
+   * Si es true y el nuevo estado no es COMPLETED, las subtareas activas de la tarea principal
+   * pasan al mismo estado dentro de la misma transacción. Con COMPLETED se usa completeSubtasks.
+   */
+  @IsOptional()
+  @IsBoolean()
+  moveSubtasks?: boolean;
 }
