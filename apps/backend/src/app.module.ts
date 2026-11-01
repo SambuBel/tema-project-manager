@@ -19,6 +19,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { MilestonesModule } from './milestones/milestones.module';
 import { envValidationSchema } from './config/env.validation';
 import { ExportModule } from './export/export.module';
+import { AttachmentsModule } from './attachments/attachments.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { ExportModule } from './export/export.module';
     AiModule,
     MilestonesModule,
     NotificationsModule,
+    AttachmentsModule,
   ],
   controllers: [HealthController],
 })

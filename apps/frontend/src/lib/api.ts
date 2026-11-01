@@ -415,4 +415,46 @@ export const api = {
     downloadFile(`/projects/${projectId}/export/gantt/png`, 'gantt.png'),
   exportGanttPdf: (projectId: string) =>
     downloadFile(`/projects/${projectId}/export/gantt/pdf`, 'gantt.pdf'),
+
+  // Adjuntos
+  uploadAttachment: async (taskId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${BASE}/tasks/${taskId}/attachments`, {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    });
+    if (!res.ok) {
+      const body = await readErrorBody(res);
+      throw new ApiRequestError(res.status, res.statusText, body.details, body.code, body.data);
+    }
+    return res.json();
+  },
+  getAttachments: (taskId: string) =>
+    request<{ id: string; fileName: string; mimeType: string; sizeBytes: number; uploadedBy: string; uploaderName: string; createdAt: string }[]>(`/tasks/${taskId}/attachments`),
+  downloadAttachment: (id: string, fileName: string) =>
+    downloadFile(`/attachments/${id}/download`, fileName),
+  deleteAttachment: (id: string) =>
+    request<void>(`/attachments/${id}`, { method: 'DELETE' }),
+
+  // Comprobantes de costos
+  uploadCostAttachment: async (projectId: string, costId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${BASE}/projects/${projectId}/costs/${costId}/attachment`, {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    });
+    if (!res.ok) {
+      const body = await readErrorBody(res);
+      throw new ApiRequestError(res.status, res.statusText, body.details, body.code, body.data);
+    }
+    return res.json();
+  },
+  getCostAttachments: (projectId: string) =>
+    request<{ id: string; costId: string; fileName: string; mimeType: string; sizeBytes: number; uploadedBy: string; uploaderName: string; createdAt: string }[]>(
+      `/projects/${projectId}/cost-attachments`,
+  ),
 };
