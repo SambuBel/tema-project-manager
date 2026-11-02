@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, type ChatTurn } from '../../lib/api';
 import { assistantErrorMessage } from '../../lib/assistantErrors';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
+import { MessageText } from './MessageText';
 
 /** Tiene que coincidir con MAX_HISTORY_TURNS del backend (ChatMessageDto). */
 const MAX_HISTORY_TURNS = 20;
@@ -169,7 +170,7 @@ export function ChatPanel({ open, onClose }: ChatPanelProps) {
                     : 'self-start bg-slate-100 text-slate-800'
               }`}
             >
-              {m.text}
+              {m.role === 'assistant' ? <MessageText text={m.text} /> : m.text}
             </div>
           ))}
           {canRetry && (

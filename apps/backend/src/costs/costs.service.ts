@@ -260,6 +260,24 @@ export class CostsService {
    * con joins: sin N+1. Consultas crudas: TypeORM filtra `deleted_at` de los joins a usuarios dados de baja y acá hace falta
    * mostrar igual al creador; por eso `deleted_at IS NULL` de `costs` se escribe explícito.
    */
+  /** Total incurrido en una moneda, como texto con 2 decimales. Mismo orden que GET /costs: 404 de proyecto y después 403. */
+  async getIncurredTotal(projectId: string, currency: string, user: RequestUser): Promise<string> {
+    const project = await this.projectRepo.findOneBy({ id: projectId });
+    if (!project) {
+      throw new NotFoundException(`Project ${projectId} no encontrado`);
+    }
+    // RN-25: sin permiso económico → 403, nunca un total en cero.
+    if (!this.permissions.canViewEconomicData(user, project)) {
+      throw new ForbiddenException('No tenés permisos para ver la información económica de este proyecto.');
+    }
+
+    const [row]: Array<{ total: string }> = await this.dataSource.manager.query(
+      'SELECT COALESCE(SUM(amount), 0)::numeric(14,2)::text AS total FROM costs WHERE project_id = $1 AND currency = $2 AND deleted_at IS NULL',
+      [projectId, currency],
+    );
+    return row!.total;
+  }
+
   async list(projectId: string, query: ListCostsQueryDto, user: RequestUser): Promise<PaginatedResponse<CostResponseDto>> {
     const project = await this.projectRepo.findOneBy({ id: projectId });
     if (!project) {

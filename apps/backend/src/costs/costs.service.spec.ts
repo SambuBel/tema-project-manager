@@ -105,6 +105,38 @@ function build(opts: Opts = {}) {
 const errorOf = async (p: Promise<unknown>) => p.catch((e: unknown) => e);
 const WRITES = ['save-cost', 'save-audit'];
 
+describe('CostsService.getIncurredTotal', () => {
+  it('suma los costos de la moneda sin contar los borrados', async () => {
+    const { service, manager, projectRepo } = build();
+    (projectRepo as { findOneBy: unknown }).findOneBy = jest.fn().mockResolvedValue(project);
+    const query = jest.fn().mockResolvedValue([{ total: '1500.50' }]);
+    (manager as { query: unknown }).query = query;
+
+    await expect(service.getIncurredTotal(PROJECT_ID, 'ARS', realLeader)).resolves.toBe('1500.50');
+
+    const [sql, params] = query.mock.calls[0]!;
+    expect(sql).toContain('deleted_at IS NULL');
+    expect(params).toEqual([PROJECT_ID, 'ARS']);
+  });
+
+  it.each([['COLLABORATOR', collaborator], ['OBSERVER', observer], ['líder ajeno', foreignLeader]])('%s: 403 sin consultar los costos', async (_n, actor) => {
+    const { service, manager, projectRepo } = build();
+    (projectRepo as { findOneBy: unknown }).findOneBy = jest.fn().mockResolvedValue(project);
+    const query = jest.fn();
+    (manager as { query: unknown }).query = query;
+
+    await expect(service.getIncurredTotal(PROJECT_ID, 'ARS', actor)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('proyecto inexistente: 404', async () => {
+    const { service, projectRepo } = build();
+    (projectRepo as { findOneBy: unknown }).findOneBy = jest.fn().mockResolvedValue(null);
+
+    await expect(service.getIncurredTotal(PROJECT_ID, 'ARS', admin)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
 describe('CostsService.create', () => {
   it.each([['ADMIN', admin], ['PROGRAM_MANAGER', pm], ['líder real del proyecto', realLeader]])('%s: registra el costo', async (_n, actor) => {
     const { service, saved } = build();
