@@ -10,6 +10,7 @@ import { formatAmount } from '../../lib/money';
 import { Pagination } from '../Pagination';
 import { CostFormModal } from './CostFormModal';
 import { EconomyStateBoundary } from './EconomyStateBoundary';
+import { ConfirmDialog } from '../ConfirmDialog';
 
 interface CostsSectionProps {
   project: Project;
@@ -41,6 +42,14 @@ export function CostsSection({ project }: CostsSectionProps) {
   // ── Comprobantes (RF-CT-04) ───────────────────────────────────────
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadingCostId, setUploadingCostId] = useState<string | null>(null);
+  const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!uploadError) return;
+    const timer = setTimeout(() => setUploadError(null), 4000);
+    return () => clearTimeout(timer);
+  }, [uploadError]);
 
   const attQuery = useQuery({
     queryKey: ['cost-attachments', project.id],
@@ -75,7 +84,7 @@ export function CostsSection({ project }: CostsSectionProps) {
     const file = e.target.files?.[0];
     if (file && uploadingCostId) {
       if (file.size > 10 * 1024 * 1024) {
-        alert('El archivo supera el límite de 10 MB.');
+        setUploadError('El archivo supera el límite de 10 MB.');
       } else {
         uploadMut.mutate({ costId: uploadingCostId, file });
       }
@@ -86,6 +95,11 @@ export function CostsSection({ project }: CostsSectionProps) {
   return (
     <div className="flex flex-col gap-4">
       <EconomyStateBoundary isLoading={costsQuery.isLoading} error={costsQuery.error} loadingLabel="Cargando costos…" onRetry={() => void costsQuery.refetch()}>
+        {uploadError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {uploadError}
+          </div>
+        )}
         {result && !hasCosts && (
           <section className="rounded-xl border border-[#DEE5EC] bg-white p-6 text-center">
             <p className="text-sm text-[#172B42]">No hay costos registrados.</p>
@@ -169,7 +183,7 @@ export function CostsSection({ project }: CostsSectionProps) {
                               {canManage && (
                                 <button
                                   type="button"
-                                  onClick={() => { if (confirm('¿Eliminar el comprobante?')) deleteMut.mutate(att.id); }}
+                                  onClick={() => setDeletingAttId(att.id)}
                                   disabled={deleteMut.isPending}
                                   className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50"
                                   title="Eliminar comprobante"
@@ -245,7 +259,7 @@ export function CostsSection({ project }: CostsSectionProps) {
                             {canManage && (
                               <button
                                 type="button"
-                                onClick={() => { if (confirm('¿Eliminar el comprobante?')) deleteMut.mutate(att.id); }}
+                                onClick={() => setDeletingAttId(att.id)}
                                 disabled={deleteMut.isPending}
                                 className="text-red-600 hover:text-red-800 disabled:opacity-50"
                               >
@@ -292,6 +306,17 @@ export function CostsSection({ project }: CostsSectionProps) {
         )}
       </EconomyStateBoundary>
 
+      <ConfirmDialog
+        open={deletingAttId !== null}
+        title="Eliminar comprobante"
+        description="¿Estás seguro de que querés eliminar este comprobante?"
+        confirmLabel="Eliminar"
+        variant="danger"
+        isConfirming={deleteMut.isPending}
+        onConfirm={() => { if (deletingAttId) deleteMut.mutate(deletingAttId, { onSettled: () => setDeletingAttId(null) }); }}
+        onCancel={() => setDeletingAttId(null)}
+      />
+      
       {/* Input oculto para subir comprobantes */}
       <input type="file" ref={fileRef} className="hidden" onChange={handleFile} />
 

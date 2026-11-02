@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Post,
@@ -85,6 +86,7 @@ export class AttachmentsController {
   }
 
   @Delete('attachments/:id')
+  @HttpCode(204)
   remove(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: RequestUser,

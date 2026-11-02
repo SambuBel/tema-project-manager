@@ -1,7 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
+import { ConfirmDialog } from './ConfirmDialog'
 
 interface TaskAttachmentsProps {
   taskId: string;
@@ -19,7 +20,14 @@ export function TaskAttachments({ taskId, canUpload }: TaskAttachmentsProps) {
   const { user } = useCurrentUser();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(() => setError(null), 4000);
+    return () => clearTimeout(timer);
+  }, [error]);
 
   const { data: attachments = [], isLoading } = useQuery({
     queryKey: ['attachments', taskId],
@@ -76,7 +84,9 @@ export function TaskAttachments({ taskId, canUpload }: TaskAttachmentsProps) {
       </div>
 
       {error && (
-        <p className="mt-2 text-sm text-red-600">{error}</p>
+        <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
       )}
 
       {isLoading ? (
@@ -104,7 +114,7 @@ export function TaskAttachments({ taskId, canUpload }: TaskAttachmentsProps) {
                 {(att.uploadedBy === user?.id) && (
                   <button
                     type="button"
-                    onClick={() => deleteMutation.mutate(att.id)}
+                    onClick={() => setDeletingId(att.id)}
                     disabled={deleteMutation.isPending}
                     className="text-sm font-medium text-red-600 hover:underline disabled:opacity-50"
                   >
@@ -116,6 +126,17 @@ export function TaskAttachments({ taskId, canUpload }: TaskAttachmentsProps) {
           ))}
         </ul>
       )}
+
+      <ConfirmDialog
+        open={deletingId !== null}
+        title="Eliminar adjunto"
+        description="¿Estás seguro de que querés eliminar este archivo?"
+        confirmLabel="Eliminar"
+        variant="danger"
+        isConfirming={deleteMutation.isPending}
+        onConfirm={() => { if (deletingId) deleteMutation.mutate(deletingId, { onSettled: () => setDeletingId(null) }); }}
+        onCancel={() => setDeletingId(null)}
+      />
     </div>
   );
 }
