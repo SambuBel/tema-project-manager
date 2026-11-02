@@ -41,6 +41,50 @@ export class NotificationEventsService {
     }
   }
 
+  /** CU-06: avisa al líder del proyecto que una tarea cambió de estado. No avisa si el cambio lo hizo él. */
+  async taskStatusChanged(p: {
+    task: TaskRef;
+    leaderId: string | null | undefined;
+    statusLabel: string;
+    actorId: string;
+    actorName: string;
+  }): Promise<void> {
+    if (!p.leaderId || p.leaderId === p.actorId) return;
+    try {
+      await this.notifications.create({
+        userId: p.leaderId,
+        type: NotificationType.TASK_STATUS_CHANGED,
+        title: 'Cambió el estado de una tarea',
+        message: p.actorName + ' pasó la tarea "' + p.task.title + '" a ' + p.statusLabel + '.',
+        projectId: p.task.projectId,
+        taskId: p.task.id,
+      });
+    } catch (err) {
+      this.logger.warn('No se pudo generar la notificación de cambio de estado: ' + String(err));
+    }
+  }
+
+  /** CU-01: te agregaron a un proyecto. No avisa si te agregaste vos. */
+  async projectMemberAdded(p: {
+    project: { id: string; name: string };
+    memberUserId: string;
+    actorId: string;
+    actorName: string;
+  }): Promise<void> {
+    if (p.memberUserId === p.actorId) return;
+    try {
+      await this.notifications.create({
+        userId: p.memberUserId,
+        type: NotificationType.PROJECT_MEMBER_ADDED,
+        title: 'Te agregaron a un proyecto',
+        message: p.actorName + ' te agregó al proyecto "' + p.project.name + '".',
+        projectId: p.project.id,
+      });
+    } catch (err) {
+      this.logger.warn('No se pudo generar la notificación de nuevo miembro: ' + String(err));
+    }
+  }
+
   /**
    * Se comentó una tarea. Los mencionados reciben COMMENT_MENTION; el responsable y quien creó la
    * tarea reciben TASK_COMMENTED (salvo el autor del comentario y los ya mencionados, para no duplicar).

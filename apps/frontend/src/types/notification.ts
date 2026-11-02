@@ -5,7 +5,9 @@ export type NotificationType =
   | 'TASK_COMMENTED'
   | 'TASK_DUE_SOON'
   | 'BUDGET_THRESHOLD'
-  | 'PROJECT_RED_ALERT';
+  | 'PROJECT_RED_ALERT'
+  | 'PROJECT_MEMBER_ADDED'
+  | 'TASK_STATUS_CHANGED';
 
 export interface AppNotification {
   id: string;
@@ -48,5 +50,10 @@ export const NOTIFICATION_TYPE_INFO: Record<NotificationType, { label: string; d
   PROJECT_RED_ALERT: {
     label: 'Proyecto en desvío rojo',
     description: 'Cuando un proyecto entra en desvío rojo (Líder y Program Manager).',
+  },
+  PROJECT_MEMBER_ADDED: { label: 'Nuevos proyectos', description: 'Cuando te agregan a un proyecto.' },
+  TASK_STATUS_CHANGED: {
+    label: 'Cambios de estado de tareas',
+    description: 'Cuando cambia el estado de una tarea de un proyecto que liderás.',
   },
 };
