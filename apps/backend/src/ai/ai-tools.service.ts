@@ -511,12 +511,14 @@ function withEmptyNote(result: ToolResult, listKey: string, note: string): ToolR
   return Array.isArray(list) && list.length === 0 ? { ...result, empty: true, note } : result;
 }
 
+/** Tareas de la respuesta de findAllByProject, sin las archivadas: el asistente no las informa ni las cuenta. */
 export function extractTaskList(tasks: unknown): TaskEntity[] {
-  if (Array.isArray(tasks)) return tasks;
-  if (tasks && typeof tasks === 'object' && 'data' in tasks && Array.isArray((tasks as any).data)) {
-    return (tasks as any).data;
-  }
-  return [];
+  const list: TaskEntity[] = Array.isArray(tasks)
+    ? tasks
+    : tasks && typeof tasks === 'object' && 'data' in tasks && Array.isArray((tasks as any).data)
+      ? (tasks as any).data
+      : [];
+  return list.filter((task) => !task.archivedAt);
 }
 
 export function isOverdue(task: Pick<TaskEntity, 'dueDate' | 'status'>, today = new Date()): boolean {

@@ -9,6 +9,7 @@ const baseSelect =
 /** Aplica los filtros del tablero (en el cliente, sobre las tareas ya cargadas). */
 export function applyBoardFilters(tasks: Task[], assignee: string, priority: TaskPriority | ''): Task[] {
   return tasks.filter((t) => {
+    if (t.archivedAt) return false;
     if (priority && t.priority !== priority) return false;
     if (assignee === 'UNASSIGNED') return !t.assignedToId;
     if (assignee && t.assignedToId !== assignee) return false;
