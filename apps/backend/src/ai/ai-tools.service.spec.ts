@@ -225,6 +225,33 @@ describe('AiToolsService', () => {
       expect(result.metrics).toMatchObject({ totalTasks: 3, inReviewTasks: 2, pendingTasks: 1 });
     });
 
+    it('no cuenta las tareas archivadas en las métricas ni en la carga', async () => {
+      mockProjectsService.getMembers.mockResolvedValue([]);
+      mockTasksService.findAllByProject.mockResolvedValue([
+        { id: 't1', status: TaskStatus.COMPLETED, dueDate: null, archivedAt: null },
+        { id: 't2', status: TaskStatus.PENDING, dueDate: null, archivedAt: null },
+        { id: 't3', status: TaskStatus.PENDING, dueDate: null, archivedAt: new Date(), assignedToId: 'u1', assignedTo: { name: 'Cris' } },
+      ]);
+
+      const result = await tools.execute(TOOL_NAMES.getProject, {}, ctx);
+
+      expect(result.metrics).toMatchObject({ totalTasks: 2, pendingTasks: 1, realProgressPercentage: 50 });
+      expect(result.topAssignees).toEqual([]);
+    });
+
+    it('no lista las tareas archivadas', async () => {
+      mockTasksService.findAllByProject.mockResolvedValue(
+        taskPage([
+          { id: 't1', title: 'Activa', status: TaskStatus.PENDING, dueDate: null, archivedAt: null },
+          { id: 't2', title: 'Archivada', status: TaskStatus.PENDING, dueDate: null, archivedAt: new Date() },
+        ]),
+      );
+
+      const result = await tools.execute(TOOL_NAMES.listTasks, {}, ctx);
+
+      expect((result.tasks as { title: string }[]).map((t) => t.title)).toEqual(['Activa']);
+    });
+
     it('CU-05: ordena los responsables por tareas activas, sin contar completadas ni sin responsable', async () => {
       const task = (status: TaskStatus, id?: string, name?: string) => ({
         status,
