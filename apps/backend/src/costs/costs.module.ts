@@ -10,5 +10,6 @@ import { CostsService } from './costs.service';
   imports: [TypeOrmModule.forFeature([ProjectEntity]), AuthModule, UsersModule],
   controllers: [CostsController],
   providers: [CostsService],
+  exports: [CostsService],
 })
 export class CostsModule {}

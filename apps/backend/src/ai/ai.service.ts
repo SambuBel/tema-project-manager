@@ -6,11 +6,13 @@ import { ProjectEntity } from '../projects/project.entity';
 import { TaskStatus } from '../database/enums';
 import { ChatMessageDto } from './dto/chat-message.dto';
 import { AiToolsService, TOOL_NAMES, ToolArgs, ToolContext, ToolResult } from './ai-tools.service';
-import { GeminiClient } from './gemini.client';
+import { GeminiClient, GeminiRateLimitError, GeminiTurn } from './gemini.client';
 import { buildSystemPrompt } from './ai.prompt';
 
 /** Vueltas maximas modelo -> tools -> modelo por mensaje (evita loops si el modelo se encapricha). */
 export const MAX_TOOL_ROUNDS = 5;
+
+export const RATE_LIMIT_MESSAGE = 'El asistente recibió muchas consultas seguidas. Esperá un minuto y volvé a intentar';
 
 export type AssistantMode = 'gemini' | 'rules';
 
@@ -48,6 +50,10 @@ export class AiService {
       try {
         return await this.answerWithGemini(dto, ctx);
       } catch (error) {
+        if (error instanceof GeminiRateLimitError) {
+          this.logger.warn(`Gemini sigue sin cuota después de reintentar: ${error.message}`);
+          return RATE_LIMIT_MESSAGE;
+        }
         this.logger.error(`Gemini falló, sigo con el asistente por reglas: ${(error as Error).message}`);
       }
     }
@@ -77,9 +83,18 @@ export class AiService {
     ];
 
     let lastError: string | null = null;
+    const changes: string[] = [];
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const turn = await this.gemini.generate(contents, systemPrompt, this.tools.declarations);
+      let turn: GeminiTurn;
+      try {
+        turn = await this.gemini.generate(contents, systemPrompt, this.tools.declarations);
+      } catch (error) {
+        // El cambio ya se guardó: si se le pide que reintente, el usuario lo duplica.
+        if (changes.length === 0) throw error;
+        this.logger.error(`Gemini falló después de guardar cambios: ${(error as Error).message}`);
+        return describeSavedChanges(changes);
+      }
 
       if (turn.functionCalls.length === 0) {
         return turn.text.trim() || 'No tengo una respuesta para eso, ¿podés reformular la pregunta?';
@@ -94,12 +109,15 @@ export class AiService {
         // Una linea por tool en la consola del backend: sin esto no hay forma de saber por que el modelo se trabo.
         this.logger.log(`tool ${name} ${JSON.stringify(call.args ?? {})} -> ${JSON.stringify(result).slice(0, 300)}`);
         if (typeof result.error === 'string') lastError = result.error;
+        const change = describeChange(result);
+        if (change) changes.push(change);
         responses.push({ functionResponse: { id: call.id, name, response: result } });
       }
       contents.push({ role: 'user', parts: responses });
     }
 
     this.logger.warn(`Se agotaron las ${MAX_TOOL_ROUNDS} vueltas de tools sin respuesta final`);
+    if (changes.length > 0) return describeSavedChanges(changes);
     return lastError
       ? `No pude completarlo: ${lastError}`
       : 'No pude resolver la consulta. Probá abriendo el proyecto y preguntando algo más puntual.';
@@ -198,6 +216,23 @@ const HELP_TEXT = [
   '- Mostrar el equipo del proyecto ("¿quiénes son los miembros?")',
   'Las preguntas sobre tareas y equipo son del proyecto que tengas abierto.',
 ].join('\n');
+
+/** Qué guardó una tool que modifica datos. Las de consulta y las que devolvieron { error } no guardaron nada. */
+function describeChange(result: ToolResult): string | null {
+  const created = result.created as { title: string; url: string } | undefined;
+  if (created) return `Tarea creada: "${created.title}" ${created.url}`;
+  const updated = result.updated as { title: string } | undefined;
+  if (updated) return `Tarea actualizada: "${updated.title}"`;
+  return result.comment ? 'Comentario agregado' : null;
+}
+
+function describeSavedChanges(changes: string[]): string {
+  return [
+    'Ya quedó hecho:',
+    ...changes.map((change) => `- ${change}`),
+    'No hace falta repetir el pedido: no pude terminar la respuesta, pero los cambios están guardados.',
+  ].join('\n');
+}
 
 function plural(n: number): string {
   return n === 1 ? '' : 's';

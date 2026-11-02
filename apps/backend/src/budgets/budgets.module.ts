@@ -12,5 +12,6 @@ import { BudgetsService } from './budgets.service';
   imports: [TypeOrmModule.forFeature([BudgetEntity, ProjectEntity, AuditLogEntity]), AuthModule, UsersModule],
   controllers: [BudgetsController],
   providers: [BudgetsService],
+  exports: [BudgetsService],
 })
 export class BudgetsModule {}

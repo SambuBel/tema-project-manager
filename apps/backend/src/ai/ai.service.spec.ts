@@ -1,8 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException } from '@nestjs/common';
-import { AiService, MAX_TOOL_ROUNDS } from './ai.service';
+import { ConfigService } from '@nestjs/config';
+import { AiService, MAX_TOOL_ROUNDS, RATE_LIMIT_MESSAGE } from './ai.service';
 import { AiToolsService } from './ai-tools.service';
-import { GeminiClient, GeminiTurn } from './gemini.client';
+import { GeminiClient, GeminiRateLimitError, GeminiTurn } from './gemini.client';
+import { BudgetsService } from '../budgets/budgets.service';
+import { CostsService } from '../costs/costs.service';
 import { TasksService } from '../tasks/tasks.service';
 import { ProjectsService } from '../projects/projects.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
@@ -45,6 +48,9 @@ describe('AiService', () => {
         { provide: TasksService, useValue: mockTasksService },
         { provide: ProjectsService, useValue: mockProjectsService },
         { provide: GeminiClient, useValue: mockGemini },
+        { provide: BudgetsService, useValue: {} },
+        { provide: CostsService, useValue: {} },
+        { provide: ConfigService, useValue: { getOrThrow: () => 'https://tema.test' } },
       ],
     }).compile();
 
@@ -234,6 +240,56 @@ describe('AiService', () => {
       const reply = await service.answer({ message: 'vencidas?', projectId: PROJECT_ID }, currentUser);
 
       expect(reply).toMatch(/no hay tareas vencidas/i);
+    });
+
+    it('si Gemini sigue sin cuota muestra el aviso y no cae al modo reglas', async () => {
+      mockGemini.generate.mockRejectedValue(new GeminiRateLimitError('429'));
+
+      const reply = await service.answer({ message: 'vencidas?', projectId: PROJECT_ID }, currentUser);
+
+      expect(reply).toBe('El asistente recibió muchas consultas seguidas. Esperá un minuto y volvé a intentar');
+      expect(reply).toBe(RATE_LIMIT_MESSAGE);
+      expect(mockTasksService.findAllByProject).not.toHaveBeenCalled();
+    });
+
+    describe('si Gemini falla después de guardar un cambio', () => {
+      const createTaskTurn: GeminiTurn = {
+        functionCalls: [{ id: 'c1', name: 'create_task', args: { title: 'Nueva' } }],
+        text: '',
+        content: { role: 'model', parts: [{ functionCall: { id: 'c1', name: 'create_task', args: { title: 'Nueva' } } }] },
+      };
+
+      beforeEach(() => {
+        (mockTasksService as unknown as { create: jest.Mock }).create = jest.fn().mockResolvedValue({
+          id: 't1',
+          slug: 'nueva',
+          title: 'Nueva',
+          status: TaskStatus.PENDING,
+          dueDate: null,
+        });
+      });
+
+      it.each([
+        ['cuota (429)', new GeminiRateLimitError('429')],
+        ['otro error', new Error('Error de red')],
+      ])('%s: informa lo guardado y no pide reintentar', async (_name, error) => {
+        mockGemini.generate.mockResolvedValueOnce(createTaskTurn).mockRejectedValueOnce(error);
+
+        const reply = await service.answer({ message: 'creala', projectId: PROJECT_ID }, currentUser);
+
+        expect(reply).toContain('Tarea creada: "Nueva" https://tema.test/projects/proyecto-demo?task=nueva');
+        expect(reply).toContain('No hace falta repetir el pedido');
+        expect(reply).not.toBe(RATE_LIMIT_MESSAGE);
+      });
+
+      it('si la tool devolvió error no informa nada como guardado', async () => {
+        (mockTasksService as unknown as { create: jest.Mock }).create.mockRejectedValue(new ForbiddenException('No podés crear tareas'));
+        mockGemini.generate.mockResolvedValueOnce(createTaskTurn).mockRejectedValueOnce(new GeminiRateLimitError('429'));
+
+        const reply = await service.answer({ message: 'creala', projectId: PROJECT_ID }, currentUser);
+
+        expect(reply).toBe(RATE_LIMIT_MESSAGE);
+      });
     });
   });
 });
