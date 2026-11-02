@@ -70,7 +70,7 @@ describe('CostsSection - listado', () => {
     api.listProjectCosts.mockResolvedValue(pageOf([cost(1, { amount: '1250.50', currency: 'USD' })]));
     renderSection(admin);
     const table = await screen.findByRole('table', { name: 'Costos del proyecto' });
-    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Fecha', 'Rubro', 'Descripción', 'Tarea', 'Monto', 'Moneda', 'Creado por', 'Acciones']);
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Fecha', 'Rubro', 'Descripción', 'Tarea', 'Monto', 'Moneda', 'Creado por', 'Comprobante', 'Acciones']);
     const cells = within(within(table).getAllByRole('row')[1]!).getAllByRole('cell').map((c) => c.textContent);
     expect(cells.slice(0, 7)).toEqual(['20/10/2026', 'Recursos humanos', 'Costo 1', 'Sin tarea', '1.250,50', 'USD', 'Ana Pérez']);
   });

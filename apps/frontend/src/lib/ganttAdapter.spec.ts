@@ -81,9 +81,18 @@ describe('toSvarLinks', () => {
     expect(toSvarLinks([dep('d1', 'A', 'Z'), dep('d2', 'Z', 'B')], ids)).toEqual([]);
   });
 
-  it('descarta tipos distintos de FINISH_TO_START', () => {
-    const other = { ...dep('d1', 'A', 'B'), type: 'START_TO_START' } as unknown as GanttDependency;
-    expect(toSvarLinks([other], ids)).toEqual([]);
+  it('mapea los 4 tipos de dependencia a su tipo SVAR', () => {
+    const types = ['FINISH_TO_START', 'START_TO_START', 'FINISH_TO_FINISH', 'START_TO_FINISH'];
+    const links = toSvarLinks(
+      types.map((type, i) => ({ ...dep(`d${i}`, 'A', 'B'), type }) as unknown as GanttDependency),
+      ids,
+    );
+    expect(links.map((l) => l.type)).toEqual(['e2s', 's2s', 'e2e', 's2e']);
+  });
+
+  it('un tipo desconocido cae en e2s (fin a inicio) en vez de descartarse', () => {
+    const other = { ...dep('d1', 'A', 'B'), type: 'OTRO_TIPO' } as unknown as GanttDependency;
+    expect(toSvarLinks([other], ids)).toEqual([{ id: 'd1', type: 'e2s', source: 'A', target: 'B' }]);
   });
 });
 
