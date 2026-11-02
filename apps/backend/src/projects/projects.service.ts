@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException, ForbiddenException, Optional } from '@nestjs/common';
+import { NotificationEventsService } from '../notifications/notification-events.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, EntityManager, In, IsNull, Repository, DataSource } from 'typeorm';
 import * as crypto from 'crypto';
@@ -33,6 +34,8 @@ import { DEFAULT_PROJECT_CURRENCY } from '../economy/project-currency';
 
 @Injectable()
 export class ProjectsService {
+  private readonly logger = new Logger(ProjectsService.name);
+
   constructor(
     @InjectRepository(ProjectEntity)
     private readonly repo: Repository<ProjectEntity>,
@@ -43,6 +46,7 @@ export class ProjectsService {
     private readonly permissions: PermissionsService,
     private readonly dataSource: DataSource,
     private readonly activityService: ProjectActivityService,
+    @Optional() private readonly notificationEvents?: NotificationEventsService,
   ) {}
 
   /**
@@ -812,8 +816,10 @@ export class ProjectsService {
   }
 
   async addMember(projectId: string, dto: AddProjectMemberDto, user: RequestUser): Promise<ProjectMemberEntity> {
-    return this.dataSource.transaction(async (manager) => {
+    let addedTo!: ProjectEntity;
+    const member = await this.dataSource.transaction(async (manager) => {
       const project = await this.findProjectInTransaction(manager, projectId);
+      addedTo = project;
 
       if (!this.permissions.canManageProjectTeam(user, project)) {
         throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
@@ -864,6 +870,30 @@ export class ProjectsService {
 
       return savedMember;
     });
+
+    await this.notifyMemberAdded(addedTo, dto.userId, user);
+
+    return member;
+  }
+
+  /** CU-01: fuera de la transacción. Un fallo se loguea pero nunca rompe el alta del miembro. */
+  private async notifyMemberAdded(project: ProjectEntity, memberUserId: string, user: RequestUser): Promise<void> {
+    if (!this.notificationEvents) return;
+
+    try {
+      const actorName = user.name ?? (await this.usersService.findById(user.id))?.name ?? '';
+
+      await this.notificationEvents.projectMemberAdded({
+        project: { id: project.id, name: project.name },
+        memberUserId,
+        actorId: user.id,
+        actorName,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `No se pudo enviar la notificación de nuevo miembro del proyecto ${project.id}: ${(err as Error)?.message ?? err}`,
+      );
+    }
   }
 
   async updateMemberRole(

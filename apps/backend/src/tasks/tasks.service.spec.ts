@@ -2189,6 +2189,62 @@ describe('TasksService - completeSubtasks y auto-completado de Milestone', () =>
     );
   });
 
+  describe('CU-06: notificación al líder por cambio de estado', () => {
+    const colaborador = makeUser('colab-1', [RoleName.COLLABORATOR]);
+
+    function setup(status = TaskStatus.IN_PROGRESS) {
+      const ctx = makeService([{ userId: 'colab-1', projectId: PROJECT_ID, projectRole: ProjectMemberRole.COLLABORATOR, removedAt: null }]);
+      const task = makeTask({ id: 'task-600', projectId: PROJECT_ID, parentTaskId: null, title: 'Informe', status, assignedToId: 'colab-1', project: makeProject() });
+      ctx.taskRepo.findOne.mockResolvedValueOnce(task);
+      const taskStatusChanged = jest.fn().mockResolvedValue(undefined);
+      (ctx.service as unknown as { notificationEvents: unknown }).notificationEvents = { taskStatusChanged, taskAssigned: jest.fn() };
+      return { ...ctx, taskStatusChanged };
+    }
+
+    it('updateStatus avisa al líder con el estado nuevo', async () => {
+      const { service, taskStatusChanged } = setup();
+
+      await service.updateStatus('task-600', { status: TaskStatus.IN_REVIEW }, colaborador);
+
+      expect(taskStatusChanged).toHaveBeenCalledTimes(1);
+      expect(taskStatusChanged).toHaveBeenCalledWith(
+        expect.objectContaining({
+          task: expect.objectContaining({ id: 'task-600', title: 'Informe' }),
+          leaderId: LEADER_ID,
+          statusLabel: 'En revisión',
+          actorId: 'colab-1',
+        }),
+      );
+    });
+
+    it('updateStatus con el mismo estado no avisa', async () => {
+      const { service, taskStatusChanged } = setup(TaskStatus.IN_REVIEW);
+
+      await service.updateStatus('task-600', { status: TaskStatus.IN_REVIEW }, colaborador);
+
+      expect(taskStatusChanged).not.toHaveBeenCalled();
+    });
+
+    it('si falla la notificación, el cambio de estado igual queda hecho', async () => {
+      const { service, taskStatusChanged } = setup();
+      taskStatusChanged.mockRejectedValue(new Error('sin base'));
+
+      const result = await service.updateStatus('task-600', { status: TaskStatus.IN_REVIEW }, colaborador);
+
+      expect(result.status).toBe(TaskStatus.IN_REVIEW);
+    });
+
+    it('update avisa si cambia el estado y no avisa si cambia otro campo', async () => {
+      const first = setup();
+      await first.service.update('task-600', { status: TaskStatus.IN_REVIEW }, colaborador);
+      expect(first.taskStatusChanged).toHaveBeenCalledTimes(1);
+
+      const second = setup();
+      await second.service.update('task-600', { description: 'nueva' }, colaborador);
+      expect(second.taskStatusChanged).not.toHaveBeenCalled();
+    });
+  });
+
   it('updateStatus sin moveSubtasks no toca las subtareas', async () => {
     const { service, taskRepo, txManager } = makeService([]);
     const parentTask = makeTask({

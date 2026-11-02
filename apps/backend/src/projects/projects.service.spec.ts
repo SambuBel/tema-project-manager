@@ -772,6 +772,52 @@ describe('ProjectsService - Members (canManageProjectTeam)', () => {
   });
 
   describe('addMember', () => {
+    describe('CU-01: notificación al miembro nuevo', () => {
+      const leader = { ...makeUser('leader1', [RoleName.PROJECT_LEADER]), name: 'Lucía' } as RequestUser;
+      let projectMemberAdded: jest.Mock;
+
+      beforeEach(() => {
+        permissions.canManageProjectTeam.mockReturnValue(true);
+        mockUsersService.findById.mockResolvedValue({ id: 'u1', name: 'Ana' });
+        projectMemberAdded = jest.fn().mockResolvedValue(undefined);
+        (service as unknown as { notificationEvents: unknown }).notificationEvents = { projectMemberAdded };
+      });
+
+      it('avisa después de guardar el miembro', async () => {
+        const manager = makeMemberManager({ id: '1', name: 'Onboarding', leaderId: 'leader1' }, null);
+        mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+
+        await service.addMember('1', { userId: 'u1', projectRole: 'COLLABORATOR' as never }, leader);
+
+        expect(projectMemberAdded).toHaveBeenCalledWith({
+          project: { id: '1', name: 'Onboarding' },
+          memberUserId: 'u1',
+          actorId: 'leader1',
+          actorName: 'Lucía',
+        });
+      });
+
+      it('si falla la notificación, el miembro igual queda agregado', async () => {
+        const manager = makeMemberManager({ id: '1', name: 'Onboarding', leaderId: 'leader1' }, null);
+        mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+        projectMemberAdded.mockRejectedValue(new Error('sin base'));
+
+        const result = await service.addMember('1', { userId: 'u1', projectRole: 'COLLABORATOR' as never }, leader);
+
+        expect(result.userId).toBe('u1');
+      });
+
+      it('si el alta se rechaza no avisa', async () => {
+        const manager = makeMemberManager({ id: '1', name: 'Onboarding', leaderId: 'leader1' });
+        mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+        permissions.canManageProjectTeam.mockReturnValue(false);
+
+        await expect(service.addMember('1', { userId: 'u1', projectRole: 'COLLABORATOR' as never }, leader)).rejects.toThrow(ForbiddenException);
+
+        expect(projectMemberAdded).not.toHaveBeenCalled();
+      });
+    });
+
     it('permitido: agrega un miembro válido y audita MEMBER_ADDED', async () => {
       const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, null);
       mockDataSource.transaction.mockImplementation((fn) => fn(manager));

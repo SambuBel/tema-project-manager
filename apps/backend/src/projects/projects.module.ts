@@ -13,6 +13,7 @@ import { ProjectsService } from './projects.service';
 import { ProjectActivityService } from './project-activity.service';
 import { UsersModule } from '../users/users.module';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { AuthModule } from '../auth/auth.module';
     ]),
     UsersModule, 
     AuthModule,
+    NotificationsModule,
   ],
   controllers: [ProjectsController, ProjectInvitationsDevController],
   providers: [ProjectsService, ProjectActivityService, NonProductionGuard],

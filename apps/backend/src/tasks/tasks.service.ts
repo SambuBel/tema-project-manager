@@ -236,6 +236,28 @@ export class TasksService {
     }
   }
 
+  /** CU-06: igual que notifyTaskAssigned, fuera de la transacción y sin romper el cambio de estado si falla. */
+  private async notifyTaskStatusChanged(task: TaskEntity, leaderId: string | null | undefined, user: RequestUser): Promise<void> {
+    if (!this.notificationEvents) return;
+
+    try {
+      const actorName =
+        (user as any).name ?? (await this.usersService.findById(user.id))?.name ?? '';
+
+      await this.notificationEvents.taskStatusChanged({
+        task: { id: task.id, title: task.title, projectId: task.projectId },
+        leaderId,
+        statusLabel: TASK_STATUS_LABELS[task.status],
+        actorId: user.id,
+        actorName,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `No se pudo enviar la notificación de cambio de estado de la tarea ${task.id}: ${(err as Error)?.message ?? err}`,
+      );
+    }
+  }
+
   private async assertAssigneeIsProjectMember(project: ProjectEntity, assigneeId: string): Promise<void> {
     const assignee = await this.usersService.findById(assigneeId);
     if (!assignee) {
@@ -516,6 +538,8 @@ export class TasksService {
 
     // Se guarda antes de la transacción porque `task` se muta adentro.
     const previousAssigneeId = task.assignedToId;
+    const previousStatus = task.status;
+    const leaderId = task.project?.leaderId;
 
     const updated = await this.repo.manager.transaction(async (manager) => {
       if (dto.status === TaskStatus.COMPLETED && dto.completeSubtasks) {
@@ -594,6 +618,9 @@ export class TasksService {
     // Notificar solo si la tarea se reasignó a otra persona (fuera de la transacción).
     if (updated.assignedToId && updated.assignedToId !== previousAssigneeId) {
       await this.notifyTaskAssigned(updated, user);
+    }
+    if (updated.status !== previousStatus) {
+      await this.notifyTaskStatusChanged(updated, leaderId, user);
     }
 
     return updated;
@@ -1012,7 +1039,9 @@ export class TasksService {
       }
     }
 
-    return this.repo.manager.transaction(async (manager) => {
+    const leaderId = task.project?.leaderId;
+
+    const updated = await this.repo.manager.transaction(async (manager) => {
       if (dto.status === TaskStatus.COMPLETED && dto.completeSubtasks) {
         await this.completePendingSubtasksAtomically(task, user, manager, source);
       }
@@ -1043,6 +1072,10 @@ export class TasksService {
 
       return saved;
     });
+
+    await this.notifyTaskStatusChanged(updated, leaderId, user);
+
+    return updated;
   }
 
   /**
