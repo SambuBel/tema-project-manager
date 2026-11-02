@@ -21,6 +21,7 @@ import { MilestoneStatusBadge } from './milestones/MilestoneStatusBadge';
 import { TaskStatusDropdown } from './TaskStatusDropdown';
 import { TaskTimeline } from './TaskTimeline';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
+import { TaskAttachments } from './TaskAttachments';
 
 const priorityColors: Record<TaskPriority, string> = {
   LOW: 'bg-gray-100 text-gray-600',
@@ -416,6 +417,10 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
         <div className="mt-4">
           <SubtaskList parentTaskId={task.id} />
         </div>
+      </div>
+
+      <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">
+        <TaskAttachments taskId={task.id} canUpload={canComment} />
       </div>
 
       <div className="rounded-xl border border-[#DEE5EC] bg-white p-6">

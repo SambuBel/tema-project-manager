@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Project } from '@tema/shared-types';
+import { api } from '../../lib/api';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import { COSTS_PAGE_SIZE, useProjectCosts } from '../../hooks/useProjectCosts';
 import { canManageCostsUI } from '../../lib/permissions';
@@ -8,6 +10,7 @@ import { formatAmount } from '../../lib/money';
 import { Pagination } from '../Pagination';
 import { CostFormModal } from './CostFormModal';
 import { EconomyStateBoundary } from './EconomyStateBoundary';
+import { ConfirmDialog } from '../ConfirmDialog';
 
 interface CostsSectionProps {
   project: Project;
@@ -20,6 +23,7 @@ type FormState = { mode: 'create' } | { mode: 'edit'; costId: string } | null;
  * administrarlos. No hay eliminación (no existe endpoint aprobado) ni cálculos de disponible/ejecución (pendientes de TEMA).
  */
 export function CostsSection({ project }: CostsSectionProps) {
+  const qc = useQueryClient();
   const { user } = useCurrentUser();
   const canManage = !!user && canManageCostsUI(user, project);
   const [page, setPage] = useState(1);
@@ -35,9 +39,67 @@ export function CostsSection({ project }: CostsSectionProps) {
 
   const hasCosts = !!result && result.total > 0;
 
+  // ── Comprobantes (RF-CT-04) ───────────────────────────────────────
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploadingCostId, setUploadingCostId] = useState<string | null>(null);
+  const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!uploadError) return;
+    const timer = setTimeout(() => setUploadError(null), 4000);
+    return () => clearTimeout(timer);
+  }, [uploadError]);
+
+  const attQuery = useQuery({
+    queryKey: ['cost-attachments', project.id],
+    queryFn: () => api.getCostAttachments(project.id),
+  });
+
+  const attMap = useMemo(() => {
+    const m = new Map<string, { id: string; fileName: string }>();
+    for (const a of attQuery.data ?? []) {
+      if (a.costId) m.set(a.costId, a);
+    }
+    return m;
+  }, [attQuery.data]);
+
+  const uploadMut = useMutation({
+    mutationFn: ({ costId, file }: { costId: string; file: File }) =>
+      api.uploadCostAttachment(project.id, costId, file),
+    onSettled: () => {
+      setUploadingCostId(null);
+      void qc.invalidateQueries({ queryKey: ['cost-attachments', project.id] });
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (attachmentId: string) => api.deleteAttachment(attachmentId),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['cost-attachments', project.id] });
+    },
+  });
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && uploadingCostId) {
+      if (file.size > 10 * 1024 * 1024) {
+        setUploadError('El archivo supera el límite de 10 MB.');
+      } else {
+        uploadMut.mutate({ costId: uploadingCostId, file });
+      }
+    }
+    e.target.value = '';
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <EconomyStateBoundary isLoading={costsQuery.isLoading} error={costsQuery.error} loadingLabel="Cargando costos…" onRetry={() => void costsQuery.refetch()}>
+        {uploadError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {uploadError}
+          </div>
+        )}
         {result && !hasCosts && (
           <section className="rounded-xl border border-[#DEE5EC] bg-white p-6 text-center">
             <p className="text-sm text-[#172B42]">No hay costos registrados.</p>
@@ -67,7 +129,7 @@ export function CostsSection({ project }: CostsSectionProps) {
 
             {/* Tabla: desktop */}
             <div className={`hidden overflow-x-auto sm:block ${costsQuery.isPlaceholderData ? 'opacity-60' : ''}`} aria-busy={costsQuery.isPlaceholderData}>
-              <table className="w-full min-w-[48rem] text-left text-sm">
+              <table className="w-full min-w-[56rem] text-left text-sm">
                 <caption className="sr-only">Costos del proyecto</caption>
                 <thead>
                   <tr className="border-y border-[#DEE5EC] bg-[#F4F6F8] text-xs uppercase text-[#607185]">
@@ -85,6 +147,9 @@ export function CostsSection({ project }: CostsSectionProps) {
                     <th scope="col" className="px-4 py-2 font-medium">
                       Creado por
                     </th>
+                    <th scope="col" className="px-4 py-2 font-medium">
+                      Comprobante
+                    </th>
                     {canManage && (
                       <th scope="col" className="px-4 py-2 font-medium">
                         Acciones
@@ -93,66 +158,144 @@ export function CostsSection({ project }: CostsSectionProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {result.data.map((cost) => (
-                    <tr key={cost.id} className="border-b border-[#EEF2F6] align-top">
-                      <td className="whitespace-nowrap px-4 py-3">{formatLocalDate(cost.costDate)}</td>
-                      <td className="px-4 py-3">{cost.categoryName}</td>
-                      <td className="max-w-[18rem] break-words px-4 py-3">{cost.description}</td>
-                      <td className="px-4 py-3 text-[#607185]">{cost.taskTitle ?? 'Sin tarea'}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{formatAmount(cost.amount)}</td>
-                      <td className="px-4 py-3">{cost.currency}</td>
-                      <td className="px-4 py-3">{cost.createdByUser.name}</td>
-                      {canManage && (
+                  {result.data.map((cost) => {
+                    const att = attMap.get(cost.id);
+                    return (
+                      <tr key={cost.id} className="border-b border-[#EEF2F6] align-top">
+                        <td className="whitespace-nowrap px-4 py-3">{formatLocalDate(cost.costDate)}</td>
+                        <td className="px-4 py-3">{cost.categoryName}</td>
+                        <td className="max-w-[18rem] break-words px-4 py-3">{cost.description}</td>
+                        <td className="px-4 py-3 text-[#607185]">{cost.taskTitle ?? 'Sin tarea'}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{formatAmount(cost.amount)}</td>
+                        <td className="px-4 py-3">{cost.currency}</td>
+                        <td className="px-4 py-3">{cost.createdByUser.name}</td>
                         <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            aria-label={`Editar costo: ${cost.description}`}
-                            onClick={() => setForm({ mode: 'edit', costId: cost.id })}
-                            className="rounded-md border border-[#DEE5EC] bg-white px-3 py-1 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7]"
-                          >
-                            Editar
-                          </button>
+                          {att ? (
+                            <span className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void api.downloadAttachment(att.id, att.fileName)}
+                                className="max-w-[10rem] truncate text-sm text-[#245B78] underline hover:text-[#1a445b]"
+                                title={att.fileName}
+                              >
+                                {att.fileName}
+                              </button>
+                              {canManage && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDeletingAttId(att.id)}
+                                  disabled={deleteMut.isPending}
+                                  className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50"
+                                  title="Eliminar comprobante"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </span>
+                          ) : canManage ? (
+                            <button
+                              type="button"
+                              onClick={() => { setUploadingCostId(cost.id); fileRef.current?.click(); }}
+                              disabled={uploadMut.isPending && uploadingCostId === cost.id}
+                              className="text-sm text-[#245B78] hover:underline disabled:opacity-50"
+                            >
+                              {uploadMut.isPending && uploadingCostId === cost.id ? 'Subiendo…' : '+ Adjuntar'}
+                            </button>
+                          ) : (
+                            <span className="text-sm text-[#607185]">—</span>
+                          )}
                         </td>
-                      )}
-                    </tr>
-                  ))}
+                        {canManage && (
+                          <td className="px-4 py-3">
+                            <button
+                              type="button"
+                              aria-label={`Editar costo: ${cost.description}`}
+                              onClick={() => setForm({ mode: 'edit', costId: cost.id })}
+                              className="rounded-md border border-[#DEE5EC] bg-white px-3 py-1 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7]"
+                            >
+                              Editar
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
             {/* Cards: mobile */}
             <ul className={`flex flex-col divide-y divide-[#DEE5EC] border-t border-[#DEE5EC] sm:hidden ${costsQuery.isPlaceholderData ? 'opacity-60' : ''}`}>
-              {result.data.map((cost) => (
-                <li key={cost.id} className="flex flex-col gap-2 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="font-medium text-[#172B42]">{cost.categoryName}</p>
-                    <p className="shrink-0 text-right font-semibold tabular-nums text-[#172B42]">
-                      {formatAmount(cost.amount)} <span className="text-xs font-medium text-[#607185]">{cost.currency}</span>
-                    </p>
-                  </div>
-                  <p className="break-words text-sm text-[#172B42]">{cost.description}</p>
-                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-[#607185]">
-                    <dt>Fecha</dt>
-                    <dd>{formatLocalDate(cost.costDate)}</dd>
-                    <dt>Tarea</dt>
-                    <dd>{cost.taskTitle ?? 'Sin tarea'}</dd>
-                    <dt>Creado por</dt>
-                    <dd>{cost.createdByUser.name}</dd>
-                  </dl>
-                  {canManage && (
-                    <div>
-                      <button
-                        type="button"
-                        aria-label={`Editar costo: ${cost.description}`}
-                        onClick={() => setForm({ mode: 'edit', costId: cost.id })}
-                        className="rounded-md border border-[#DEE5EC] bg-white px-3 py-1.5 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7]"
-                      >
-                        Editar
-                      </button>
+              {result.data.map((cost) => {
+                const att = attMap.get(cost.id);
+                return (
+                  <li key={cost.id} className="flex flex-col gap-2 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="font-medium text-[#172B42]">{cost.categoryName}</p>
+                      <p className="shrink-0 text-right font-semibold tabular-nums text-[#172B42]">
+                        {formatAmount(cost.amount)} <span className="text-xs font-medium text-[#607185]">{cost.currency}</span>
+                      </p>
                     </div>
-                  )}
-                </li>
-              ))}
+                    <p className="break-words text-sm text-[#172B42]">{cost.description}</p>
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-[#607185]">
+                      <dt>Fecha</dt>
+                      <dd>{formatLocalDate(cost.costDate)}</dd>
+                      <dt>Tarea</dt>
+                      <dd>{cost.taskTitle ?? 'Sin tarea'}</dd>
+                      <dt>Creado por</dt>
+                      <dd>{cost.createdByUser.name}</dd>
+                      <dt>Comprobante</dt>
+                      <dd>
+                        {att ? (
+                          <span className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void api.downloadAttachment(att.id, att.fileName)}
+                              className="truncate text-[#245B78] underline hover:text-[#1a445b]"
+                              title={att.fileName}
+                            >
+                              {att.fileName}
+                            </button>
+                            {canManage && (
+                              <button
+                                type="button"
+                                onClick={() => setDeletingAttId(att.id)}
+                                disabled={deleteMut.isPending}
+                                className="text-red-600 hover:text-red-800 disabled:opacity-50"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </span>
+                        ) : canManage ? (
+                          <button
+                            type="button"
+                            onClick={() => { setUploadingCostId(cost.id); fileRef.current?.click(); }}
+                            disabled={uploadMut.isPending && uploadingCostId === cost.id}
+                            className="text-[#245B78] hover:underline disabled:opacity-50"
+                          >
+                            {uploadMut.isPending && uploadingCostId === cost.id ? 'Subiendo…' : '+ Adjuntar'}
+                          </button>
+                        ) : (
+                          '—'
+                        )}
+                      </dd>
+                    </dl>
+                    {canManage && (
+                      <div>
+                        <button
+                          type="button"
+                          aria-label={`Editar costo: ${cost.description}`}
+                          onClick={() => setForm({ mode: 'edit', costId: cost.id })}
+                          className="rounded-md border border-[#DEE5EC] bg-white px-3 py-1.5 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7]"
+                        >
+                          Editar
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
 
             <div className="border-t border-[#DEE5EC] p-4">
@@ -162,6 +305,20 @@ export function CostsSection({ project }: CostsSectionProps) {
           </section>
         )}
       </EconomyStateBoundary>
+
+      <ConfirmDialog
+        open={deletingAttId !== null}
+        title="Eliminar comprobante"
+        description="¿Estás seguro de que querés eliminar este comprobante?"
+        confirmLabel="Eliminar"
+        variant="danger"
+        isConfirming={deleteMut.isPending}
+        onConfirm={() => { if (deletingAttId) deleteMut.mutate(deletingAttId, { onSettled: () => setDeletingAttId(null) }); }}
+        onCancel={() => setDeletingAttId(null)}
+      />
+      
+      {/* Input oculto para subir comprobantes */}
+      <input type="file" ref={fileRef} className="hidden" onChange={handleFile} />
 
       {form && canManage && (
         <CostFormModal
