@@ -1,8 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AiToolsService, TOOL_NAMES, ToolContext } from './ai-tools.service';
 import { TasksService } from '../tasks/tasks.service';
 import { ProjectsService } from '../projects/projects.service';
+import { BudgetsService } from '../budgets/budgets.service';
+import { CostsService } from '../costs/costs.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { ProjectEntity } from '../projects/project.entity';
 import { AuditOrigin, TaskStatus } from '../database/enums';
@@ -20,6 +23,8 @@ describe('AiToolsService', () => {
   let tools: AiToolsService;
   let mockTasksService: { findAllByProject: jest.Mock; findOne: jest.Mock; updateStatus: jest.Mock; create: jest.Mock; addComment: jest.Mock; update: jest.Mock };
   let mockProjectsService: { findOne: jest.Mock; findAll: jest.Mock; getMembers: jest.Mock };
+  let mockBudgetsService: { getCurrent: jest.Mock };
+  let mockCostsService: { getIncurredTotal: jest.Mock };
   const ctx: ToolContext = { user, project };
 
   beforeEach(async () => {
@@ -32,12 +37,17 @@ describe('AiToolsService', () => {
       update: jest.fn(),
     };
     mockProjectsService = { findOne: jest.fn(), findAll: jest.fn().mockResolvedValue([]), getMembers: jest.fn() };
+    mockBudgetsService = { getCurrent: jest.fn() };
+    mockCostsService = { getIncurredTotal: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AiToolsService,
         { provide: TasksService, useValue: mockTasksService },
         { provide: ProjectsService, useValue: mockProjectsService },
+        { provide: BudgetsService, useValue: mockBudgetsService },
+        { provide: CostsService, useValue: mockCostsService },
+        { provide: ConfigService, useValue: { getOrThrow: () => 'https://tema.test/' } },
       ],
     }).compile();
 
@@ -132,6 +142,14 @@ describe('AiToolsService', () => {
     expect(ok.created).toMatchObject({ id: TASK_ID });
   });
 
+  it('CU-04: al crear una tarea devuelve el enlace directo', async () => {
+    mockTasksService.create.mockResolvedValue({ id: TASK_ID, slug: 'nueva tarea', title: 'Nueva', status: TaskStatus.PENDING, dueDate: null });
+
+    const result = await tools.execute(TOOL_NAMES.createTask, { title: 'Nueva' }, ctx);
+
+    expect((result.created as { url: string }).url).toBe('https://tema.test/projects/demo?task=nueva%20tarea');
+  });
+
   it('HU39: las acciones que modifican datos viajan marcadas como IA con el pedido del usuario', async () => {
     const withMessage: ToolContext = { user, project, message: 'creá la tarea Revisar diseño' };
     mockTasksService.create.mockResolvedValue({ id: TASK_ID, title: 'Revisar diseño', status: TaskStatus.PENDING, dueDate: null });
@@ -192,6 +210,88 @@ describe('AiToolsService', () => {
         realProgressPercentage: 25,
       });
       expect(result.members).toHaveLength(1);
+    });
+
+    it('CU-05: cuenta las tareas en revisión', async () => {
+      mockProjectsService.getMembers.mockResolvedValue([]);
+      mockTasksService.findAllByProject.mockResolvedValue([
+        { id: 't1', status: TaskStatus.IN_REVIEW, dueDate: null },
+        { id: 't2', status: TaskStatus.IN_REVIEW, dueDate: null },
+        { id: 't3', status: TaskStatus.PENDING, dueDate: null },
+      ]);
+
+      const result = await tools.execute(TOOL_NAMES.getProject, {}, ctx);
+
+      expect(result.metrics).toMatchObject({ totalTasks: 3, inReviewTasks: 2, pendingTasks: 1 });
+    });
+
+    it('CU-05: ordena los responsables por tareas activas, sin contar completadas ni sin responsable', async () => {
+      const task = (status: TaskStatus, id?: string, name?: string) => ({
+        status,
+        dueDate: null,
+        assignedToId: id ?? null,
+        assignedTo: name ? { name } : null,
+      });
+      mockProjectsService.getMembers.mockResolvedValue([]);
+      mockTasksService.findAllByProject.mockResolvedValue([
+        task(TaskStatus.PENDING, 'a', 'Ana'),
+        task(TaskStatus.COMPLETED, 'a', 'Ana'),
+        task(TaskStatus.COMPLETED, 'a', 'Ana'),
+        task(TaskStatus.IN_REVIEW, 'b', 'Beto'),
+        task(TaskStatus.BLOCKED, 'b', 'Beto'),
+        task(TaskStatus.PENDING, 'c', 'Caro'),
+        task(TaskStatus.PENDING, 'd', 'Dani'),
+        task(TaskStatus.PENDING),
+      ]);
+
+      const result = await tools.execute(TOOL_NAMES.getProject, {}, ctx);
+
+      expect(result.topAssignees).toEqual([
+        { name: 'Beto', activeTasks: 2 },
+        { name: 'Ana', activeTasks: 1 },
+        { name: 'Caro', activeTasks: 1 },
+      ]);
+    });
+  });
+
+  describe('obtener_situacion_presupuestaria', () => {
+    const run = () => tools.execute(TOOL_NAMES.getBudgetSituation, {}, ctx);
+
+    it('calcula incurrido, disponible y ejecución con importes exactos', async () => {
+      mockBudgetsService.getCurrent.mockResolvedValue({ totalAmount: '1000.10', currency: 'ARS' });
+      mockCostsService.getIncurredTotal.mockResolvedValue('250.05');
+
+      await expect(run()).resolves.toEqual({
+        available: true,
+        hasBudget: true,
+        currency: 'ARS',
+        budget: '1000.10',
+        incurred: '250.05',
+        remaining: '750.05',
+        executionPercentage: 25,
+      });
+      expect(mockBudgetsService.getCurrent).toHaveBeenCalledWith(PROJECT_ID, user);
+      expect(mockCostsService.getIncurredTotal).toHaveBeenCalledWith(PROJECT_ID, 'ARS', user);
+    });
+
+    it('si los costos superan el presupuesto, el disponible es negativo', async () => {
+      mockBudgetsService.getCurrent.mockResolvedValue({ totalAmount: '100.00', currency: 'ARS' });
+      mockCostsService.getIncurredTotal.mockResolvedValue('150.50');
+
+      await expect(run()).resolves.toMatchObject({ remaining: '-50.50', executionPercentage: 150.5 });
+    });
+
+    it('RN-25: sin permiso no devuelve datos ni un mensaje de error para repetirle al usuario', async () => {
+      mockBudgetsService.getCurrent.mockRejectedValue(new ForbiddenException('No tenés permisos'));
+
+      await expect(run()).resolves.toEqual({ available: false });
+      expect(mockCostsService.getIncurredTotal).not.toHaveBeenCalled();
+    });
+
+    it('con permiso y sin presupuesto lo informa', async () => {
+      mockBudgetsService.getCurrent.mockRejectedValue(new NotFoundException('sin presupuesto'));
+
+      await expect(run()).resolves.toEqual({ available: true, hasBudget: false });
     });
   });
 

@@ -1,9 +1,13 @@
-import { HttpException, Injectable } from '@nestjs/common';
+import { ForbiddenException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { FunctionDeclaration } from '@google/genai';
 import { ChangeSource, TasksService } from '../tasks/tasks.service';
 import { ProjectsService } from '../projects/projects.service';
+import { BudgetsService } from '../budgets/budgets.service';
+import { CostsService } from '../costs/costs.service';
+import { formatCents, toCents } from '../budgets/dto/amount';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { AuditOrigin, ProjectStatus, TaskPriority, TaskStatus } from '../database/enums';
 import { TaskEntity } from '../tasks/task.entity';
@@ -39,7 +43,11 @@ export const TOOL_NAMES = {
   getProject: 'get_project',
   addComment: 'add_comment',
   updateTask: 'update_task',
+  getBudgetSituation: 'obtener_situacion_presupuestaria',
 } as const;
+
+/** Cuántos responsables con más tareas activas devuelve get_project. */
+const TOP_ASSIGNEES_LIMIT = 3;
 
 const PROJECT_ID_PARAM = {
   type: 'string',
@@ -61,6 +69,9 @@ export class AiToolsService {
   constructor(
     private readonly tasksService: TasksService,
     private readonly projectsService: ProjectsService,
+    private readonly budgetsService: BudgetsService,
+    private readonly costsService: CostsService,
+    private readonly config: ConfigService,
   ) {}
 
   readonly declarations: FunctionDeclaration[] = [
@@ -176,6 +187,17 @@ export class AiToolsService {
       name: TOOL_NAMES.getProject,
       description:
         'Devuelve la información detallada de un proyecto, incluyendo miembros de equipo y métricas de avance real, esperado y desvío temporal.',
+      parametersJsonSchema: {
+        type: 'object',
+        properties: {
+          projectId: PROJECT_ID_PARAM,
+        },
+      },
+    },
+    {
+      name: TOOL_NAMES.getBudgetSituation,
+      description:
+        'Devuelve la situación presupuestaria de un proyecto: presupuesto, incurrido, disponible y porcentaje de ejecución. Si available es false, no mencionar presupuesto ni costos al usuario.',
       parametersJsonSchema: {
         type: 'object',
         properties: {
@@ -308,7 +330,7 @@ export class AiToolsService {
           throw new ToolInputError(errors.flatMap((e) => Object.values(e.constraints ?? {})).join('; '));
         }
         const task = await this.tasksService.create(dto, ctx.user, aiSource(ctx));
-        return { created: toTaskSummary(task) };
+        return { created: { ...toTaskSummary(task), url: this.taskUrl(project, task) } };
       }
 
       case TOOL_NAMES.updateTask:
@@ -360,6 +382,7 @@ export class AiToolsService {
         const completedTasks = taskList.filter((t) => t.status === TaskStatus.COMPLETED).length;
         const inProgressTasks = taskList.filter((t) => t.status === TaskStatus.IN_PROGRESS).length;
         const pendingTasks = taskList.filter((t) => t.status === TaskStatus.PENDING).length;
+        const inReviewTasks = taskList.filter((t) => t.status === TaskStatus.IN_REVIEW).length;
         const blockedTasks = taskList.filter((t) => t.status === TaskStatus.BLOCKED).length;
         const overdueTasks = taskList.filter((t) => isOverdue(t)).length;
 
@@ -402,6 +425,7 @@ export class AiToolsService {
             completedTasks,
             inProgressTasks,
             pendingTasks,
+            inReviewTasks,
             blockedTasks,
             overdueTasks,
             realProgressPercentage: realProgress,
@@ -409,8 +433,14 @@ export class AiToolsService {
             deviationPercentage: deviation,
             scheduleStatus,
           },
+          topAssignees: topAssignees(taskList),
           members,
         };
+      }
+
+      case TOOL_NAMES.getBudgetSituation: {
+        const project = await this.resolveProject(args.projectId, ctx);
+        return await this.budgetSituation(project, ctx.user);
       }
 
       case TOOL_NAMES.addComment:
@@ -432,6 +462,36 @@ export class AiToolsService {
       default:
         throw new ToolInputError(`La herramienta "${name}" no existe.`);
     }
+  }
+
+  /** BudgetsService y CostsService validan el permiso económico. Sin permiso no viaja ningún dato al modelo (RN-25). */
+  private async budgetSituation(project: ProjectEntity, user: RequestUser): Promise<ToolResult> {
+    try {
+      const budget = await this.budgetsService.getCurrent(project.id, user);
+      const incurred = await this.costsService.getIncurredTotal(project.id, budget.currency, user);
+      const budgetCents = toCents(budget.totalAmount);
+      const incurredCents = toCents(incurred);
+      const remainingCents = budgetCents - incurredCents;
+
+      return {
+        available: true,
+        hasBudget: true,
+        currency: budget.currency,
+        budget: budget.totalAmount,
+        incurred,
+        remaining: remainingCents < 0n ? `-${formatCents(-remainingCents)}` : formatCents(remainingCents),
+        executionPercentage: budgetCents === 0n ? null : Number((incurredCents * 10000n) / budgetCents) / 100,
+      };
+    } catch (error) {
+      if (error instanceof ForbiddenException) return { available: false };
+      if (error instanceof NotFoundException) return { available: true, hasBudget: false };
+      throw error;
+    }
+  }
+
+  private taskUrl(project: ProjectEntity, task: TaskEntity): string {
+    const base = this.config.getOrThrow<string>('FRONTEND_URL').replace(/\/+$/, '');
+    return `${base}/projects/${encodeURIComponent(project.slug)}?task=${encodeURIComponent(task.slug)}`;
   }
 
   /** projectId explicito (UUID o slug) o, si no viene, el proyecto abierto en pantalla. */
@@ -461,6 +521,20 @@ export function extractTaskList(tasks: unknown): TaskEntity[] {
 
 export function isOverdue(task: Pick<TaskEntity, 'dueDate' | 'status'>, today = new Date()): boolean {
   return task.dueDate !== null && new Date(task.dueDate) < today && task.status !== TaskStatus.COMPLETED;
+}
+
+/** Responsables con más tareas sin completar, de mayor a menor. Las tareas sin responsable no cuentan. */
+function topAssignees(tasks: TaskEntity[]) {
+  const counts = new Map<string, { name: string; activeTasks: number }>();
+  for (const task of tasks) {
+    if (task.status === TaskStatus.COMPLETED || !task.assignedToId) continue;
+    const entry = counts.get(task.assignedToId) ?? { name: task.assignedTo?.name ?? 'Sin nombre', activeTasks: 0 };
+    entry.activeTasks += 1;
+    counts.set(task.assignedToId, entry);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.activeTasks - a.activeTasks || a.name.localeCompare(b.name))
+    .slice(0, TOP_ASSIGNEES_LIMIT);
 }
 
 function toTaskSummary(task: TaskEntity) {

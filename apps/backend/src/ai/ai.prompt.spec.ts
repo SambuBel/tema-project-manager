@@ -20,6 +20,18 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toMatch(/ninguna herramienta ofrece/);
   });
 
+  it('CU-05: pide la situación presupuestaria y omitirla sin mencionarla si no está disponible', () => {
+    expect(prompt).toMatch(/get_project y a obtener_situacion_presupuestaria/);
+    expect(prompt).toMatch(/incluidas las en revisión/);
+    expect(prompt).toMatch(/topAssignees/);
+    expect(prompt).toMatch(/available: false, no menciones presupuesto/);
+    expect(prompt).not.toMatch(/ofrece \(por ejemplo presupuesto/);
+  });
+
+  it('CU-04: pide responder con el enlace de la tarea creada', () => {
+    expect(prompt).toMatch(/enlace del campo url/);
+  });
+
   it('sin proyecto abierto pide preguntar cuál es en vez de seguir llamando herramientas', () => {
     expect(prompt).toMatch(/list_projects una sola vez/);
     expect(prompt).toMatch(/No sigas llamando herramientas/);
