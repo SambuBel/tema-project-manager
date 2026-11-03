@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationEntity } from '../database/entities/notification.entity';
 import { NotificationPreferenceEntity } from '../database/entities/notification-preference.entity';
+import { UserEntity } from '../database/entities/user.entity';
 import { BudgetEntity } from '../database/entities/budget.entity';
 import { CostEntity } from '../database/entities/cost.entity';
 import { UserRoleEntity } from '../database/entities/user-role.entity';
@@ -15,6 +16,7 @@ import { NotificationEventsService } from './notification-events.service';
 import { ProjectAlertsService } from './project-alerts.service';
 import { NotificationJobsService } from './notification-jobs.service';
 import { TaskDueSoonService } from './task-due-soon.service';
+import { EmailNotificationService } from './email-notification.service';
 
 /**
  * Módulo de notificaciones. Exporta NotificationEventsService (eventos de dominio) y
@@ -26,6 +28,7 @@ import { TaskDueSoonService } from './task-due-soon.service';
     TypeOrmModule.forFeature([
       NotificationEntity,
       NotificationPreferenceEntity,
+      UserEntity,
       BudgetEntity,
       CostEntity,
       UserRoleEntity,
@@ -38,6 +41,7 @@ import { TaskDueSoonService } from './task-due-soon.service';
   controllers: [NotificationsController],
   providers: [
     NotificationsService,
+    EmailNotificationService,
     NotificationEventsService,
     TaskDueSoonService,
     ProjectAlertsService,

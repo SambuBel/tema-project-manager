@@ -6,8 +6,8 @@ import { NotificationChannel } from '../enums';
 
 /**
  * `type` queda como varchar libre (ej: TASK_ASSIGNED, PROJECT_STATUS_CHANGED) porque el
- * catalogo de tipos de notificacion todavia no esta cerrado; `channel` si es un enum acotado
- * para poder distinguir IN_APP/EMAIL sin implementar el envio real (fuera de alcance aca).
+ * catálogo de tipos de notificación todavía no está cerrado; `channel` distingue las
+ * notificaciones visibles en la aplicación de los emails enviados.
  */
 @Entity('notifications')
 export class NotificationEntity {

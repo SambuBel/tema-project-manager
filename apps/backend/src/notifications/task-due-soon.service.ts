@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TaskEntity } from '../tasks/task.entity';
 import { NotificationEntity } from '../database/entities/notification.entity';
-import { TaskStatus } from '../database/enums';
+import { NotificationChannel, TaskStatus } from '../database/enums';
 import { NotificationsService } from './notifications.service';
 import { NotificationType } from './notification-type';
 import { DUE_SOON_DAYS } from './notifications.config';
@@ -56,7 +56,12 @@ export class TaskDueSoonService {
       if (!task.assignedToId || !task.dueDate) continue;
 
       const already = await this.notifs.count({
-        where: { userId: task.assignedToId, taskId: task.id, type: NotificationType.TASK_DUE_SOON },
+        where: {
+          userId: task.assignedToId,
+          taskId: task.id,
+          type: NotificationType.TASK_DUE_SOON,
+          channel: NotificationChannel.IN_APP,
+        },
       });
       if (already > 0) continue;
 

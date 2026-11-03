@@ -1,11 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Repository } from 'typeorm';
 import { NotificationEntity } from '../database/entities/notification.entity';
 import { NotificationPreferenceEntity } from '../database/entities/notification-preference.entity';
+import { UserEntity } from '../database/entities/user.entity';
 import { NotificationChannel } from '../database/enums';
 import { NotificationType } from './notification-type';
 import { ListNotificationsDto } from './list-notifications.dto';
+import { EmailNotificationService } from './email-notification.service';
 
 /** Datos para generar una notificación. Lo usan los demás módulos (tareas, comentarios, etc.). */
 export interface CreateNotificationInput {
@@ -62,11 +64,16 @@ function toView(n: NotificationEntity): NotificationView {
  */
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     @InjectRepository(NotificationEntity)
     private readonly notifications: Repository<NotificationEntity>,
     @InjectRepository(NotificationPreferenceEntity)
     private readonly preferences: Repository<NotificationPreferenceEntity>,
+    @InjectRepository(UserEntity)
+    private readonly users: Repository<UserEntity>,
+    private readonly emailNotifications: EmailNotificationService,
   ) {}
 
   /** De los usuarios dados, los que NO desactivaron este tipo de notificación. */
@@ -84,16 +91,14 @@ export class NotificationsService {
     const [allowed] = await this.usersWithTypeEnabled([input.userId], input.type);
     if (!allowed) return null;
 
-    const entity = this.notifications.create({
-      userId: input.userId,
-      type: input.type,
-      title: input.title,
-      message: input.message,
+    const notification = await this.notifications.save(this.notifications.create({
+      ...input,
       projectId: input.projectId ?? null,
       taskId: input.taskId ?? null,
       channel: NotificationChannel.IN_APP,
-    });
-    return toView(await this.notifications.save(entity));
+    }));
+    await this.sendEmailIfEnabled([input.userId], input);
+    return toView(notification);
   }
 
   /** Genera la misma notificación para varios destinatarios (sin repetir y respetando preferencias). */
@@ -117,7 +122,60 @@ export class NotificationsService {
       }),
     );
     await this.notifications.save(entities);
+    await this.sendEmailIfEnabled(recipients, data);
     return entities.length;
+  }
+
+  private async sendEmailIfEnabled(
+    userIds: string[],
+    data: Omit<CreateNotificationInput, 'userId'>,
+  ): Promise<void> {
+    if (!this.emailNotifications.isEnabledFor(data.type) || userIds.length === 0) return;
+
+    let recipients: UserEntity[];
+    try {
+      recipients = await this.users.find({
+        where: { id: In(userIds), active: true },
+        select: ['id', 'email'],
+      });
+    } catch (error) {
+      this.logger.error('No se pudieron cargar los destinatarios de notificaciones email: ' + String(error));
+      return;
+    }
+
+    await Promise.all(
+      recipients.map(async (recipient) => {
+        try {
+          await this.emailNotifications.send({
+            to: recipient.email,
+            subject: data.title,
+            text: data.message,
+          });
+        } catch (error) {
+          this.logger.error(
+            'No se pudo enviar la notificación por email a ' + recipient.email + ': ' + String(error),
+          );
+          return;
+        }
+
+        try {
+          await this.notifications.save(this.notifications.create({
+            userId: recipient.id,
+            type: data.type,
+            title: data.title,
+            message: data.message,
+            projectId: data.projectId ?? null,
+            taskId: data.taskId ?? null,
+            channel: NotificationChannel.EMAIL,
+          }));
+        } catch (error) {
+          this.logger.error(
+            'El email se envió, pero no se pudo registrar la notificación EMAIL para ' +
+              recipient.email + ': ' + String(error),
+          );
+        }
+      }),
+    );
   }
 
   /** Listado del usuario, de la más nueva a la más vieja. */
@@ -150,7 +208,9 @@ export class NotificationsService {
 
   /** Marca una como leída. Si no es del usuario responde 404 (no revela que existe). */
   async markAsRead(id: string, userId: string): Promise<NotificationView> {
-    const notification = await this.notifications.findOne({ where: { id, userId } });
+    const notification = await this.notifications.findOne({
+      where: { id, userId, channel: NotificationChannel.IN_APP },
+    });
     if (!notification) {
       throw new NotFoundException('Notificación ' + id + ' no encontrada');
     }

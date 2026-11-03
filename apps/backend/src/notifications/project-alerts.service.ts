@@ -7,7 +7,7 @@ import { BudgetEntity } from '../database/entities/budget.entity';
 import { CostEntity } from '../database/entities/cost.entity';
 import { NotificationEntity } from '../database/entities/notification.entity';
 import { UserRoleEntity } from '../database/entities/user-role.entity';
-import { ProjectStatus, RoleName } from '../database/enums';
+import { NotificationChannel, ProjectStatus, RoleName } from '../database/enums';
 import { NotificationsService } from './notifications.service';
 import { NotificationType } from './notification-type';
 import { BUDGET_THRESHOLDS, RED_ALERT_REPEAT_DAYS, RED_DEVIATION_POINTS } from './notifications.config';
@@ -150,6 +150,7 @@ export class ProjectAlertsService {
         type,
         title,
         userId: In(recipients),
+        channel: NotificationChannel.IN_APP,
         ...(since ? { createdAt: MoreThanOrEqual(since) } : {}),
       },
       select: ['id', 'userId'],

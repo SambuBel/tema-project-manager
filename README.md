@@ -70,8 +70,12 @@ te indica cuál.
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_CALLBACK_URL` | Login con Google |
 | `AUTHORIZED_DOMAIN_DEV` | Dominio de correo autorizado en desarrollo |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | Asistente de IA (opcional) |
+| `EMAIL_NOTIFICATIONS_MODE` | `log` (predeterminado, simulación) o `smtp` para enviar |
+| `EMAIL_NOTIFICATION_TYPES` | Tipos habilitados para email (por defecto, los seis eventos RF) |
+| `EMAIL_FROM`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` | Remitente y credenciales SMTP; obligatorios en modo `smtp` |
 
-Nunca subas al repositorio los valores reales de `JWT_SECRET`, `GOOGLE_CLIENT_SECRET` ni `GEMINI_API_KEY`.
+Nunca subas al repositorio los valores reales de `JWT_SECRET`, `GOOGLE_CLIENT_SECRET`, `GEMINI_API_KEY` ni `SMTP_PASSWORD`.
+Para configurar el canal email y las preferencias, ver [docs/notificaciones-email.md](docs/notificaciones-email.md).
 
 ## Usuarios y acceso
 

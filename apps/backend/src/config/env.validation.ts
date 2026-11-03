@@ -24,4 +24,32 @@ export const envValidationSchema = Joi.object({
   // Asistente IA: opcional. Sin key el asistente responde por reglas (modo demo).
   GEMINI_API_KEY: Joi.string().allow('').optional(),
   GEMINI_MODEL: Joi.string().allow('').optional(),
+
+  // El modo log evita envíos reales hasta que se apruebe y configure la cuenta remitente.
+  EMAIL_NOTIFICATIONS_MODE: Joi.string().valid('log', 'smtp').default('log'),
+  EMAIL_NOTIFICATION_TYPES: Joi.string().default(
+    'TASK_ASSIGNED,COMMENT_MENTION,TASK_COMMENTED,TASK_DUE_SOON,BUDGET_THRESHOLD,PROJECT_RED_ALERT',
+  ),
+  EMAIL_FROM: Joi.string().email().when('EMAIL_NOTIFICATIONS_MODE', {
+    is: 'smtp',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  SMTP_HOST: Joi.string().when('EMAIL_NOTIFICATIONS_MODE', {
+    is: 'smtp',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  SMTP_PORT: Joi.number().port().default(587),
+  SMTP_SECURE: Joi.boolean().default(false),
+  SMTP_USER: Joi.string().when('EMAIL_NOTIFICATIONS_MODE', {
+    is: 'smtp',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  SMTP_PASSWORD: Joi.string().when('EMAIL_NOTIFICATIONS_MODE', {
+    is: 'smtp',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
 });
