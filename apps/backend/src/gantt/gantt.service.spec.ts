@@ -109,7 +109,7 @@ describe('GanttService - datos del read model', () => {
     expect(tasks[0]!.assignedTo).toBeNull();
   });
 
-  it('consulta tareas del proyecto excluyendo archivadas, y solo dependencias FINISH_START del mismo proyecto', async () => {
+  it('consulta tareas del proyecto excluyendo archivadas, y las dependencias de cualquier tipo del mismo proyecto', async () => {
     const { service, taskQb, depQb } = build();
     await service.getGantt(PROJECT_ID, admin);
 
@@ -120,7 +120,7 @@ describe('GanttService - datos del read model', () => {
     expect(depQb.andWhere).toHaveBeenCalledWith('succ.projectId = :projectId', { projectId: PROJECT_ID });
     expect(depQb.andWhere).toHaveBeenCalledWith('pred.archivedAt IS NULL');
     expect(depQb.andWhere).toHaveBeenCalledWith('succ.archivedAt IS NULL');
-    expect(depQb.andWhere).toHaveBeenCalledWith('dep.dependencyType = :type', { type: DependencyType.FINISH_START });
+    expect(depQb.andWhere).not.toHaveBeenCalledWith(expect.stringContaining('dependencyType'), expect.anything());
   });
 
   it('ordena por fecha de inicio (sin planificar al final) y antigüedad', async () => {
