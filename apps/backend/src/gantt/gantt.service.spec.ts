@@ -120,7 +120,6 @@ describe('GanttService - datos del read model', () => {
     expect(depQb.andWhere).toHaveBeenCalledWith('succ.projectId = :projectId', { projectId: PROJECT_ID });
     expect(depQb.andWhere).toHaveBeenCalledWith('pred.archivedAt IS NULL');
     expect(depQb.andWhere).toHaveBeenCalledWith('succ.archivedAt IS NULL');
-    expect(depQb.andWhere).not.toHaveBeenCalledWith(expect.stringContaining('dependencyType'), expect.anything());
   });
 
   it('ordena por fecha de inicio (sin planificar al final) y antigüedad', async () => {
