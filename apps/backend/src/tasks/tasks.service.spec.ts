@@ -254,6 +254,21 @@ describe('TasksService - create (canCreateTask)', () => {
       service.create({ ...dto, assignedToId: LEADER_ID }, makeUser('admin-1', [RoleName.ADMIN])),
     ).resolves.toBeDefined();
   });
+
+  it('regla #2: responsable con projectRole OBSERVER: 400, no guarda', async () => {
+    const { service, taskRepo } = makeService([membership('obs-1', ProjectMemberRole.OBSERVER)]);
+    await expect(
+      service.create({ ...dto, assignedToId: 'obs-1' }, makeUser('admin-1', [RoleName.ADMIN])),
+    ).rejects.toThrow('No se puede asignar una tarea a un Observador del proyecto');
+    expect(taskRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('regla #2: responsable con projectRole COLLABORATOR: permitido', async () => {
+    const { service } = makeService([membership('collab-1', ProjectMemberRole.COLLABORATOR)]);
+    await expect(
+      service.create({ ...dto, assignedToId: 'collab-1' }, makeUser('admin-1', [RoleName.ADMIN])),
+    ).resolves.toBeDefined();
+  });
 });
 
 describe('TasksService - findAllByProject / findOne (canViewTask)', () => {
@@ -404,6 +419,23 @@ describe('TasksService - update (canEditTask)', () => {
       service.update('task-1', { assignedToId: 'ajeno' }, makeUser('admin-1', [RoleName.ADMIN])),
     ).rejects.toThrow(BadRequestException);
     expect(taskRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('regla #2: reasignar a un OBSERVER del proyecto: 400, no guarda', async () => {
+    const { service, taskRepo } = makeService([membership('obs-1', ProjectMemberRole.OBSERVER)]);
+    taskRepo.findOne.mockResolvedValue(makeTask({ project: makeProject(), assignedToId: null }));
+    await expect(
+      service.update('task-1', { assignedToId: 'obs-1' }, makeUser('admin-1', [RoleName.ADMIN])),
+    ).rejects.toThrow('No se puede asignar una tarea a un Observador del proyecto');
+    expect(taskRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('regla #2: tarea vieja ya asignada a un OBSERVER, reenviando el mismo responsable: se puede editar', async () => {
+    const { service, taskRepo } = makeService([membership('obs-1', ProjectMemberRole.OBSERVER)]);
+    taskRepo.findOne.mockResolvedValue(makeTask({ project: makeProject(), assignedToId: 'obs-1' }));
+    await expect(
+      service.update('task-1', { title: 'x', assignedToId: 'obs-1' }, makeUser('admin-1', [RoleName.ADMIN])),
+    ).resolves.toMatchObject({ title: 'x' });
   });
 
   describe('validación de transiciones de estado en update genérico', () => {
