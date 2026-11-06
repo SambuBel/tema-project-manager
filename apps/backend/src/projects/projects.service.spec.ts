@@ -339,6 +339,26 @@ describe('ProjectsService - findOne / getMembers / getActivity (canViewProject)'
     });
   });
 
+  describe('getAvailableUsers', () => {
+    it('regla #5: no ofrece al líder del proyecto, ni a miembros activos ni a usuarios inactivos', async () => {
+      mockRepo.findOne.mockResolvedValue({ id: '1', leaderId: 'leader1' });
+      permissions.canManageProjectTeam.mockReturnValue(true);
+      mockMemberRepo.find.mockResolvedValue([{ userId: 'miembro' }]);
+      (service as unknown as { usersService: { findAllWithRoles: jest.Mock } }).usersService = {
+        findAllWithRoles: jest.fn().mockResolvedValue([
+          { id: 'leader1', active: true },
+          { id: 'miembro', active: true },
+          { id: 'inactivo', active: false },
+          { id: 'libre', active: true },
+        ]),
+      };
+
+      const result = await service.getAvailableUsers('1', undefined, makeUser('leader1'));
+
+      expect(result.map((u) => u.id)).toEqual(['libre']);
+    });
+  });
+
   describe('getActivity', () => {
     it('delega en ProjectActivityService.getActivity si canViewProject da true', async () => {
       mockRepo.findOne.mockResolvedValue({ id: '1' });
@@ -882,6 +902,18 @@ describe('ProjectsService - Members (canManageProjectTeam)', () => {
       await expect(
         service.addMember('1', { userId: 'u1', projectRole: 'COLLABORATOR' as never }, makeUser('leader1')),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('regla #5: no se puede agregar al líder como miembro de su propio proyecto', async () => {
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, null);
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+      permissions.canManageProjectTeam.mockReturnValue(true);
+      mockUsersService.findById.mockResolvedValue({ id: 'leader1', name: 'Lucía' });
+
+      await expect(
+        service.addMember('1', { userId: 'leader1', projectRole: 'COLLABORATOR' as never }, makeUser('leader1')),
+      ).rejects.toThrow('El líder del proyecto ya forma parte del equipo');
+      expect(manager.save).not.toHaveBeenCalled();
     });
   });
 

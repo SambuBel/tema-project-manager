@@ -1,19 +1,26 @@
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { api, ApiRequestError } from '../lib/api';
 import { TaskForm } from '../components/TaskForm';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
 import { canEditTaskUI } from '../lib/permissions';
 
+/** Un 4xx (tarea inexistente, id inválido, sin acceso) va a volver a fallar: no se reintenta, así no queda "Cargando..." varios segundos. */
+function retryUnlessClientError(failureCount: number, error: unknown): boolean {
+  if (error instanceof ApiRequestError && error.status >= 400 && error.status < 500) return false;
+  return failureCount < 1;
+}
+
 export function EditTaskPage() {
   const { taskId = '' } = useParams<{ taskId: string }>();
   const { user } = useCurrentUser();
 
-  const { data: task, isLoading, isError } = useQuery({
+  const { data: task, isLoading, isError, error } = useQuery({
     queryKey: ['task', taskId],
     queryFn: () => api.getTask(taskId),
     enabled: !!taskId,
+    retry: retryUnlessClientError,
   });
 
   const { membership } = useMyMembership(task?.projectId);
@@ -23,7 +30,12 @@ export function EditTaskPage() {
   }
 
   if (isError || !task) {
-    return <div className="p-8 text-red-600">Error al cargar la tarea para edición.</div>;
+    const notFound = error instanceof ApiRequestError && (error.status === 404 || error.status === 400);
+    return (
+      <div className="p-8 text-red-600">
+        {notFound ? 'La tarea no existe o fue eliminada.' : 'Error al cargar la tarea para edición.'}
+      </div>
+    );
   }
 
   // La visibilidad del botón que trae hasta acá ya filtra esto, pero si alguien

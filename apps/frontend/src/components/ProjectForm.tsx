@@ -383,7 +383,8 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
       </div>
 
       {/* Bottom Bar */}
-      <div className="fixed bottom-0 left-sidebar lg:left-sidebar bg-white border-t border-gray-200 p-4 right-0 flex items-center justify-between z-10">
+      {/* pr-24: deja libre la esquina del botón flotante del asistente (BUG-18), si no tapa "Crear proyecto". */}
+      <div className="fixed bottom-0 left-sidebar lg:left-sidebar bg-white border-t border-gray-200 p-4 pr-24 right-0 flex items-center justify-between z-10">
         <span className="text-xs text-gray-500 ml-4">* Campos obligatorios</span>
         
         <div className="flex gap-3 mr-4">
