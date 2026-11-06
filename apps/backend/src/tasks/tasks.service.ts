@@ -12,7 +12,7 @@ import { CommentMentionDto } from './dto/comment-mention.dto';
 import { ProjectActivityService } from '../projects/project-activity.service';
 import { AuditOrigin, ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
 import { ProjectActivityEntity } from '../database/entities/project-activity.entity';
-import { TaskPriority, TaskStatus } from '../database/enums';
+import { ProjectMemberRole, TaskPriority, TaskStatus } from '../database/enums';
 import { UsersService } from '../users/users.service';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
@@ -270,6 +270,11 @@ export class TasksService {
     if (!isLeader && !membership) {
       throw new BadRequestException('El responsable debe ser miembro del proyecto');
     }
+
+    // Regla #2 (QA TEMA): un Observador no puede actualizar tareas, así que tampoco puede ser responsable.
+    if (membership && membership.projectRole === ProjectMemberRole.OBSERVER) {
+      throw new BadRequestException('No se puede asignar una tarea a un Observador del proyecto');
+    }
   }
 
   /**
@@ -514,7 +519,9 @@ export class TasksService {
 
     this.assertDatesConsistent(task, dto);
 
-    if (dto.assignedToId) {
+    // Solo se valida si el responsable cambia: reenviar el mismo (el formulario manda todo) no debe
+    // bloquear la edición de tareas que ya estaban asignadas antes de la regla #2.
+    if (dto.assignedToId && dto.assignedToId !== task.assignedToId) {
       await this.assertAssigneeIsProjectMember(task.project, dto.assignedToId);
     }
 

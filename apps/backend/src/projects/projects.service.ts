@@ -815,6 +815,19 @@ export class ProjectsService {
     });
   }
 
+  /**
+   * BUG-02 (QA TEMA): un usuario cuyo ÚNICO rol global es Observador no puede ser Colaborador de un
+   * proyecto (si no, termina creando y editando tareas). Solo puede sumarse como Observador.
+   */
+  private async assertProjectRoleAllowedForUser(userId: string, projectRole: string): Promise<void> {
+    if (projectRole !== ProjectMemberRoleEnum.COLLABORATOR) return;
+    const roles = await this.authService.getRoleNames(userId);
+    const observerOnly = roles.length > 0 && roles.every((r) => r === RoleName.OBSERVER);
+    if (observerOnly) {
+      throw new BadRequestException('Un usuario con rol global Observador solo puede sumarse al proyecto como Observador.');
+    }
+  }
+
   async addMember(projectId: string, dto: AddProjectMemberDto, user: RequestUser): Promise<ProjectMemberEntity> {
     let addedTo!: ProjectEntity;
     const member = await this.dataSource.transaction(async (manager) => {
@@ -837,6 +850,8 @@ export class ProjectsService {
       if (existing && existing.removedAt === null) {
         throw new ConflictException(`El usuario ya es miembro activo de este proyecto`);
       }
+
+      await this.assertProjectRoleAllowedForUser(dto.userId, dto.projectRole);
 
       // dto.projectRole es el tipo union de @tema/shared-types ('COLLABORATOR' |
       // 'OBSERVER'), validado por @IsEnum(ProjectMemberRole) en el DTO concreto
@@ -920,6 +935,8 @@ export class ProjectsService {
       // dto.projectRole ya viene validado por @IsEnum(ProjectMemberRole) en el DTO
       // (solo COLLABORATOR u OBSERVER): no hace falta re-validar acá. Mismo cast que
       // en addMember (shared-types union -> enum backend, ver comentario ahí).
+      await this.assertProjectRoleAllowedForUser(member.userId, dto.projectRole);
+
       const previousRole = member.projectRole;
       member.projectRole = dto.projectRole as unknown as ProjectMemberRoleEnum;
       const savedMember = await manager.save(member);

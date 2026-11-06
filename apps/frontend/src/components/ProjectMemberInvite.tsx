@@ -18,6 +18,11 @@ const ROLE_OPTIONS: { value: ProjectMemberRole; label: string }[] = [
   { value: 'OBSERVER', label: 'Observador' },
 ];
 
+/** BUG-02: con rol global solo Observador no puede ser Colaborador (el backend también lo rechaza). */
+function isObserverOnly(user: UserWithRoles): boolean {
+  return user.roles.length > 0 && user.roles.every((r) => r === 'OBSERVER');
+}
+
 function initials(name: string): string {
   return name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase();
 }
@@ -66,9 +71,9 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
       : addMembersMutation.error?.message;
 
   const handleSelectUser = (user: UserWithRoles) => {
-    // Si no está ya seleccionado, lo agregamos con rol Colaborador por defecto
+    // Si no está ya seleccionado, lo agregamos con rol Colaborador por defecto (Observador si es su único rol global)
     if (!selectedMembers.some((m) => m.user.id === user.id)) {
-      setSelectedMembers((prev) => [...prev, { user, role: 'COLLABORATOR' }]);
+      setSelectedMembers((prev) => [...prev, { user, role: isObserverOnly(user) ? 'OBSERVER' : 'COLLABORATOR' }]);
     }
     // Ocultar la lista y limpiar el buscador
     setIsDropdownOpen(false);
@@ -206,7 +211,7 @@ export function ProjectMemberInvite({ project, onBack }: ProjectMemberInviteProp
                           onChange={(e) => handleChangeRole(user.id, e.target.value as ProjectMemberRole)}
                           className="rounded-md border border-[#DEE5EC] bg-white px-2.5 py-1.5 text-xs font-medium text-[#172B42] focus:border-[#245B78] focus:outline-none focus:ring-1 focus:ring-[#245B78]"
                         >
-                          {ROLE_OPTIONS.map((o) => (
+                          {ROLE_OPTIONS.filter((o) => !(isObserverOnly(user) && o.value === 'COLLABORATOR')).map((o) => (
                             <option key={o.value} value={o.value}>{o.label}</option>
                           ))}
                         </select>

@@ -737,6 +737,7 @@ describe('ProjectsService - Members (canManageProjectTeam)', () => {
   let service: ProjectsService;
   let mockDataSource: { transaction: jest.Mock };
   let mockUsersService: { findById: jest.Mock };
+  let mockAuthService: { getRoleNames: jest.Mock };
   let permissions: ReturnType<typeof makePermissions>;
   let activityService: ReturnType<typeof makeActivityService>;
 
@@ -752,6 +753,7 @@ describe('ProjectsService - Members (canManageProjectTeam)', () => {
   beforeEach(async () => {
     mockDataSource = { transaction: jest.fn() };
     mockUsersService = { findById: jest.fn() };
+    mockAuthService = { getRoleNames: jest.fn().mockResolvedValue([RoleName.COLLABORATOR]) };
     permissions = makePermissions();
     activityService = makeActivityService();
 
@@ -761,7 +763,7 @@ describe('ProjectsService - Members (canManageProjectTeam)', () => {
         { provide: getRepositoryToken(ProjectEntity), useValue: {} },
         { provide: getRepositoryToken(ProjectMemberEntity), useValue: {} },
         { provide: UsersService, useValue: mockUsersService },
-        { provide: AuthService, useValue: {} },
+        { provide: AuthService, useValue: mockAuthService },
         { provide: PermissionsService, useValue: permissions },
         { provide: DataSource, useValue: mockDataSource },
         { provide: ProjectActivityService, useValue: activityService },
@@ -925,6 +927,53 @@ describe('ProjectsService - Members (canManageProjectTeam)', () => {
       await expect(
         service.updateMemberRole('1', 'missing', { projectRole: 'OBSERVER' as never }, makeUser('leader1')),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('BUG-02: usuario con rol global solo Observador', () => {
+    const MSG = 'Un usuario con rol global Observador solo puede sumarse al proyecto como Observador.';
+
+    beforeEach(() => {
+      permissions.canManageProjectTeam.mockReturnValue(true);
+      mockUsersService.findById.mockResolvedValue({ id: 'obs-1', name: 'Olga' });
+      mockAuthService.getRoleNames.mockResolvedValue([RoleName.OBSERVER]);
+    });
+
+    it('addMember como COLLABORATOR: 400, no guarda', async () => {
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, null);
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+
+      await expect(
+        service.addMember('1', { userId: 'obs-1', projectRole: 'COLLABORATOR' as never }, makeUser('leader1')),
+      ).rejects.toThrow(MSG);
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('addMember como OBSERVER: permitido', async () => {
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, null);
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+
+      const result = await service.addMember('1', { userId: 'obs-1', projectRole: 'OBSERVER' as never }, makeUser('leader1'));
+      expect(result.projectRole).toBe('OBSERVER');
+    });
+
+    it('addMember como COLLABORATOR si además tiene otro rol global (ej. COLLABORATOR): permitido', async () => {
+      mockAuthService.getRoleNames.mockResolvedValue([RoleName.OBSERVER, RoleName.COLLABORATOR]);
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, null);
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+
+      const result = await service.addMember('1', { userId: 'obs-1', projectRole: 'COLLABORATOR' as never }, makeUser('leader1'));
+      expect(result.projectRole).toBe('COLLABORATOR');
+    });
+
+    it('updateMemberRole a COLLABORATOR: 400, no guarda', async () => {
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, { id: 'm1', userId: 'obs-1', projectRole: 'OBSERVER' });
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+
+      await expect(
+        service.updateMemberRole('1', 'm1', { projectRole: 'COLLABORATOR' as never }, makeUser('leader1')),
+      ).rejects.toThrow(MSG);
+      expect(manager.save).not.toHaveBeenCalled();
     });
   });
 });
