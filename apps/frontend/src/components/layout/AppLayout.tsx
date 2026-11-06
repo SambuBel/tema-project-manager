@@ -95,7 +95,8 @@ export function AppLayout() {
           </button>
           <span className="ml-3 text-sm font-semibold text-slate-800">TEMA Project Manager</span>
         </header>
-        <main className="mx-auto w-full max-w-6xl min-w-0 p-4 sm:p-8">
+        {/* pb-24 extra: deja espacio para que el botón flotante del asistente no tape los botones del final de la página */}
+        <main className={`mx-auto w-full max-w-6xl min-w-0 p-4 sm:p-8 ${canUseAssistant ? 'pb-24 sm:pb-24' : ''}`}>
           <Outlet />
         </main>
       </div>

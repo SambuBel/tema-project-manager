@@ -670,7 +670,8 @@ export class ProjectsService {
     ]);
 
     const memberIds = new Set(members.map((m) => m.userId));
-    return candidates.filter((u) => u.active && !memberIds.has(u.id));
+    // El líder ya integra el equipo por ser líder: no se ofrece como colaborador/observador de su propio proyecto.
+    return candidates.filter((u) => u.active && !memberIds.has(u.id) && u.id !== project.leaderId);
   }
 
   async inviteMember(projectId: string, dto: InviteProjectMemberDto, user: RequestUser) {
@@ -688,6 +689,9 @@ export class ProjectsService {
       // Check if user is already a member
       const existingUser = await this.usersService.findByEmail(dto.email, manager);
       if (existingUser) {
+        if (existingUser.id === project.leaderId) {
+          throw new BadRequestException('El líder del proyecto ya forma parte del equipo; no se lo puede invitar como miembro.');
+        }
         const isMember = await manager.findOne(ProjectMemberEntity, {
           where: { projectId: project.id, userId: existingUser.id, removedAt: IsNull() },
         });
@@ -828,6 +832,10 @@ export class ProjectsService {
       const userExists = await this.usersService.findById(dto.userId);
       if (!userExists) {
         throw new NotFoundException(`El usuario con ID ${dto.userId} no existe`);
+      }
+
+      if (dto.userId === project.leaderId) {
+        throw new BadRequestException('El líder del proyecto ya forma parte del equipo; no se lo puede agregar como miembro.');
       }
 
       const existing = await manager.findOne(ProjectMemberEntity, {
