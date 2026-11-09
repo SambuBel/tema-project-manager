@@ -4,7 +4,7 @@ import { keepPreviousData, useIsFetching, useQuery, useQueryClient } from '@tans
 import { api, ApiRequestError } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
-import { canCreateTaskUI } from '../lib/permissions';
+import { canAddSubtaskUI, canCreateTaskUI } from '../lib/permissions';
 import { SubtaskCreateModal } from './SubtaskCreateModal';
 import { CreateTaskDrawer } from './CreateTaskDrawer';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
@@ -110,6 +110,8 @@ interface TaskRowProps {
   onToggleExpand: (taskId: string) => void;
   onSelectTask: (taskIdentifier: string) => void;
   canCreateSubtask: boolean;
+  /** Por fila: solo si puede editar ESA tarea y está abierta (ver canAddSubtaskUI). */
+  canAddSubtaskTo: (task: Task) => boolean;
   onAddSubtask: (task: Task) => void;
   projectEstimatedEndDate?: string | null;
   blockedByDependency?: boolean;
@@ -121,6 +123,7 @@ function TaskRow({
   onToggleExpand,
   onSelectTask,
   canCreateSubtask,
+  canAddSubtaskTo,
   onAddSubtask,
   projectEstimatedEndDate,
   blockedByDependency,
@@ -286,7 +289,7 @@ function TaskRow({
 
         {canCreateSubtask && (
           <div className="w-[130px] shrink-0 pr-5">
-            {!task.archivedAt && (
+            {canAddSubtaskTo(task) && (
               <button
                 type="button"
                 onClick={() => onAddSubtask(task)}
@@ -579,6 +582,8 @@ export function TaskList({
   const { membership } = useMyMembership(projectId);
   const { blockedIds } = useBlockedTasks(projectId);
   const canCreateSubtask = !!currentUser && !!project.data && canCreateTaskUI(currentUser, project.data, membership);
+  const canAddSubtaskTo = (task: Task) =>
+    !!currentUser && !!project.data && canAddSubtaskUI(currentUser, task, project.data, membership);
 
   /* Búsqueda por texto: se aplica sola 300 ms después de dejar de escribir (sin botón "Buscar"). */
   useEffect(() => {
@@ -882,6 +887,7 @@ export function TaskList({
                   onToggleExpand={toggleExpand}
                   onSelectTask={handleSelectTask}
                   canCreateSubtask={canCreateSubtask}
+                  canAddSubtaskTo={canAddSubtaskTo}
                   onAddSubtask={setSubtaskParent}
                   projectEstimatedEndDate={project.data?.estimatedEndDate}
                   blockedByDependency={blockedIds.has(task.id)}

@@ -1007,6 +1007,64 @@ describe('ProjectsService - Members (canManageProjectTeam)', () => {
       ).rejects.toThrow(MSG);
       expect(manager.save).not.toHaveBeenCalled();
     });
+
+    it('addMember como COLLABORATOR: responde 400 (BadRequestException) y no crea la membresía', async () => {
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, null);
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+
+      const error = await service
+        .addMember('1', { userId: 'obs-1', projectRole: 'COLLABORATOR' as never }, makeUser('leader1'))
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getStatus()).toBe(400);
+      expect(manager.create).not.toHaveBeenCalled();
+      expect(manager.save).not.toHaveBeenCalled();
+      expect(activityService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('re-alta de un miembro dado de baja como COLLABORATOR: 400 y no lo reactiva', async () => {
+      const removedAt = new Date('2026-10-01T00:00:00Z');
+      const existing = { id: 'm0', userId: 'obs-1', projectRole: 'OBSERVER', removedAt };
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, existing);
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+
+      await expect(
+        service.addMember('1', { userId: 'obs-1', projectRole: 'COLLABORATOR' as never }, makeUser('leader1')),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(existing.removedAt).toBe(removedAt);
+      expect(existing.projectRole).toBe('OBSERVER');
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('updateMemberRole a COLLABORATOR: responde 400 (BadRequestException) y conserva el rol local OBSERVER', async () => {
+      const member = { id: 'm1', userId: 'obs-1', projectRole: 'OBSERVER' };
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, member);
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+
+      const error = await service
+        .updateMemberRole('1', 'm1', { projectRole: 'COLLABORATOR' as never }, makeUser('leader1'))
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getStatus()).toBe(400);
+      expect(member.projectRole).toBe('OBSERVER');
+      expect(manager.save).not.toHaveBeenCalled();
+      expect(activityService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('updateMemberRole a COLLABORATOR para un usuario con rol global COLLABORATOR: permitido (control positivo)', async () => {
+      mockAuthService.getRoleNames.mockResolvedValue([RoleName.COLLABORATOR]);
+      const member = { id: 'm1', userId: 'collab-1', projectRole: 'OBSERVER' };
+      const manager = makeMemberManager({ id: '1', leaderId: 'leader1' }, member);
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+
+      const result = await service.updateMemberRole('1', 'm1', { projectRole: 'COLLABORATOR' as never }, makeUser('leader1'));
+
+      expect(result.projectRole).toBe('COLLABORATOR');
+      expect(manager.save).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

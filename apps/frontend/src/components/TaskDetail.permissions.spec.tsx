@@ -168,3 +168,46 @@ describe('TaskDetail - comentarios y cambio de estado según permisos', () => {
     expect(html).not.toContain('Desasociar del hito');
   });
 });
+
+describe('TaskDetail - botón "Agregar subtarea" (BUG-07)', () => {
+  const ADD = '+ Agregar subtarea';
+  const collab = user('collab-1', ['COLLABORATOR']);
+  const members = [member('collab-1', 'COLLABORATOR')];
+
+  it('colaborador + tarea ajena: NO ve el botón (P-15)', () => {
+    expect(render(collab, members, { createdBy: 'camilo' })).not.toContain(ADD);
+  });
+
+  it('colaborador + tarea propia: ve el botón', () => {
+    expect(render(collab, members, { createdBy: 'collab-1' })).toContain(ADD);
+  });
+
+  it('colaborador + tarea ajena que tiene asignada: ve el botón', () => {
+    expect(render(collab, members, { createdBy: 'camilo', assignedToId: 'collab-1' })).toContain(ADD);
+  });
+
+  it.each([
+    ['ADMIN', user('admin-1', ['ADMIN']), []],
+    ['PROGRAM_MANAGER', user('pm-1', ['PROGRAM_MANAGER']), []],
+    ['líder real', user(LEADER_ID, ['PROJECT_LEADER']), []],
+  ])('%s + tarea ajena activa: ve el botón', (_label, actor, actorMembers) => {
+    expect(render(actor, actorMembers)).toContain(ADD);
+  });
+
+  it('observador (local): no ve el botón', () => {
+    expect(render(user('obs-1', ['OBSERVER']), [member('obs-1', 'OBSERVER')], { createdBy: 'obs-1' })).not.toContain(ADD);
+  });
+
+  it('tarea COMPLETED: no se ofrece, ni al dueño ni a ADMIN', () => {
+    expect(render(collab, members, { createdBy: 'collab-1', status: 'COMPLETED' })).not.toContain(ADD);
+    expect(render(user('admin-1', ['ADMIN']), [], { status: 'COMPLETED' })).not.toContain(ADD);
+  });
+
+  it('tarea archivada: no se ofrece', () => {
+    expect(render(collab, members, { createdBy: 'collab-1', archivedAt: '2026-10-01T00:00:00Z' })).not.toContain(ADD);
+  });
+
+  it('una subtarea no ofrece agregar subtareas', () => {
+    expect(render(user('admin-1', ['ADMIN']), [], { parentTaskId: 'padre-1' })).not.toContain(ADD);
+  });
+});

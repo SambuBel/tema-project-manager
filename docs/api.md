@@ -34,6 +34,7 @@ Documento de referencia de los endpoints de **tareas**, **subtareas** y **asiste
 | Ver tareas del proyecto | Cualquier integrante del proyecto, el líder, ADMIN y PROGRAM_MANAGER |
 | Crear y comentar | ADMIN, PROGRAM_MANAGER, líder del proyecto y colaboradores del proyecto. El observador no |
 | Editar y cambiar estado | ADMIN, PROGRAM_MANAGER y líder: cualquier tarea. Colaborador: solo las que creó o tiene asignadas. Observador: nunca |
+| Agregar una subtarea (tarea hija con `parentTaskId`) | Quien pueda editar la tarea padre (misma regla que "Editar"). No se admiten en tareas completadas ni archivadas: `400`, la tarea no se reabre sola. Sin permiso sobre el padre: `403` |
 | Cambiar fechas | ADMIN, PROGRAM_MANAGER y líder del proyecto |
 | Archivar | ADMIN, PROGRAM_MANAGER y líder del proyecto |
 

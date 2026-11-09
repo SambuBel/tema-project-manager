@@ -2367,3 +2367,143 @@ describe('TasksService - completeSubtasks y auto-completado de Milestone', () =>
     expect(milestoneRecord.completedById).toBeNull();
   });
 });
+
+describe('TasksService - BUG-07: crear subtarea (parentTaskId) exige poder editar la tarea padre', () => {
+  const carla = makeUser('carla', [RoleName.COLLABORATOR]);
+  const members = [membership('carla', ProjectMemberRole.COLLABORATOR), membership('camilo', ProjectMemberRole.COLLABORATOR)];
+
+  /** Tarea padre abierta de `owner` (creada por él). Cada test pisa solo lo que necesita. */
+  const parent = (overrides: Partial<TaskEntity> = {}): TaskEntity =>
+    makeTask({
+      id: 'parent-1',
+      project: makeProject(),
+      createdBy: 'camilo',
+      status: TaskStatus.IN_PROGRESS,
+      parentTaskId: null,
+      archivedAt: null,
+      ...overrides,
+    });
+
+  const dto = (parentTaskId?: string): CreateTaskDto =>
+    ({ projectId: PROJECT_ID, title: 'Subtarea de prueba', parentTaskId }) as CreateTaskDto;
+
+  function setup(parentTask: TaskEntity | null) {
+    const ctx = makeService(members);
+    ctx.taskRepo.findOneBy.mockResolvedValue(parentTask);
+    return ctx;
+  }
+
+  it('1. colaborador + tarea ajena → 403 y no guarda nada (P-15)', async () => {
+    const { service, taskRepo, txManager, activityService } = setup(parent({ createdBy: 'camilo' }));
+
+    const error = await service.create(dto('parent-1'), carla).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect((error as ForbiddenException).getStatus()).toBe(403);
+    expect(taskRepo.save).not.toHaveBeenCalled();
+    expect(txManager.save).not.toHaveBeenCalled();
+    expect(activityService.logEvent).not.toHaveBeenCalled();
+  });
+
+  it('2. colaborador + tarea que él creó → crea la subtarea', async () => {
+    const { service, taskRepo } = setup(parent({ createdBy: 'carla' }));
+
+    const created = await service.create(dto('parent-1'), carla);
+
+    expect(created.parentTaskId).toBe('parent-1');
+    expect(created.createdBy).toBe('carla');
+    expect(taskRepo.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('3. colaborador + tarea ajena que tiene asignada → crea la subtarea', async () => {
+    const { service } = setup(parent({ createdBy: 'camilo', assignedToId: 'carla' }));
+
+    const created = await service.create(dto('parent-1'), carla);
+
+    expect(created.parentTaskId).toBe('parent-1');
+  });
+
+  it('4. autorizado + padre COMPLETED → 400, sin reabrirla ni guardar', async () => {
+    const completed = parent({ createdBy: 'carla', status: TaskStatus.COMPLETED });
+    const { service, taskRepo } = setup(completed);
+
+    const error = await service.create(dto('parent-1'), carla).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).message).toBe('No se pueden agregar subtareas a una tarea completada.');
+    expect(completed.status).toBe(TaskStatus.COMPLETED);
+    expect(taskRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('4b. el líder del proyecto tampoco puede agregarle subtareas a un padre COMPLETED', async () => {
+    const { service, taskRepo } = setup(parent({ status: TaskStatus.COMPLETED }));
+    const leader = makeUser(LEADER_ID, [RoleName.PROJECT_LEADER]);
+
+    await expect(service.create(dto('parent-1'), leader)).rejects.toThrow(BadRequestException);
+    expect(taskRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('5. autorizado + padre archivado → 400 y no guarda', async () => {
+    const { service, taskRepo } = setup(parent({ createdBy: 'carla', archivedAt: new Date('2026-10-01T00:00:00Z') }));
+
+    const error = await service.create(dto('parent-1'), carla).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).message).toBe('No se pueden agregar subtareas a una tarea archivada.');
+    expect(taskRepo.save).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['ADMIN', makeUser('admin-1', [RoleName.ADMIN])],
+    ['PROGRAM_MANAGER', makeUser('pm-1', [RoleName.PROGRAM_MANAGER])],
+    ['líder real del proyecto', makeUser(LEADER_ID, [RoleName.PROJECT_LEADER])],
+  ])('6. %s + padre activo de otra persona → crea la subtarea', async (_label, user) => {
+    const { service } = setup(parent({ createdBy: 'camilo' }));
+
+    const created = await service.create(dto('parent-1'), user);
+
+    expect(created.parentTaskId).toBe('parent-1');
+  });
+
+  it('7. crear una tarea normal (sin parentTaskId) sigue funcionando y no busca ningún padre', async () => {
+    const { service, taskRepo } = setup(null);
+
+    const created = await service.create(dto(undefined), carla);
+
+    expect(created.parentTaskId).toBeNull();
+    expect(taskRepo.findOneBy).not.toHaveBeenCalled();
+    expect(taskRepo.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('orden de validación: colaborador + tarea ajena y además COMPLETED → 403 (permiso antes que estado)', async () => {
+    const { service } = setup(parent({ createdBy: 'camilo', status: TaskStatus.COMPLETED }));
+
+    await expect(service.create(dto('parent-1'), carla)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('orden de validación: colaborador + tarea ajena y además archivada → 403 (permiso antes que archivada)', async () => {
+    const { service } = setup(parent({ createdBy: 'camilo', archivedAt: new Date() }));
+
+    await expect(service.create(dto('parent-1'), carla)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('se mantienen las validaciones previas: padre inexistente → 404', async () => {
+    const { service } = setup(null);
+
+    await expect(service.create(dto('no-existe'), carla)).rejects.toThrow(NotFoundException);
+  });
+
+  it('se mantienen las validaciones previas: padre de otro proyecto → 400', async () => {
+    const { service } = setup(parent({ createdBy: 'carla', projectId: 'otro-proyecto' }));
+
+    await expect(service.create(dto('parent-1'), carla)).rejects.toThrow('La tarea padre debe pertenecer al mismo proyecto');
+  });
+
+  it('se mantienen las validaciones previas: no se anida una subtarea dentro de otra subtarea → 400', async () => {
+    const { service } = setup(parent({ createdBy: 'carla', parentTaskId: 'abuela-1' }));
+
+    await expect(service.create(dto('parent-1'), carla)).rejects.toThrow(
+      'No se pueden anidar subtareas: la tarea padre ya es una subtarea',
+    );
+  });
+});

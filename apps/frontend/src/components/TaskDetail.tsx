@@ -10,7 +10,7 @@ import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
 import {
   canCommentOnTaskUI,
-  canCreateTaskUI,
+  canAddSubtaskUI,
   canDeleteTaskUI,
   canEditTaskUI,
   canManageMilestonesUI,
@@ -193,8 +193,7 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
   const canComment = !!user && canCommentOnTaskUI(user, task.project, membership);
   const canManageMilestone =
     !isSubtask && !!user && !!task.project && canManageMilestonesUI(user, task.project) && !task.archivedAt;
-  const canAddSubtask =
-    !!user && canCreateTaskUI(user, task.project, membership) && !task.parentTaskId && !task.archivedAt;
+  const canAddSubtask = !!user && canAddSubtaskUI(user, task, task.project, membership);
 
   const activeMilestones = projectMilestones ?? [];
   const associatedMilestone = activeMilestones.find((m) => m.id === task.milestoneId) ?? null;
