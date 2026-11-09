@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { ProjectForm } from '../components/ProjectForm';
 import { useCurrentUser } from '../hooks/useCurrentUser';
+import { projectLoadErrorMessage } from '../lib/loadErrors';
 import { canManageProjectUI } from '../lib/permissions';
 
 export function EditProjectPage() {
@@ -12,7 +13,7 @@ export function EditProjectPage() {
   const location = useLocation();
   const { user } = useCurrentUser();
 
-  const { data: project, isLoading, isError } = useQuery({
+  const { data: project, isLoading, isError, error } = useQuery({
     queryKey: ['project', projectId],
     queryFn: () => api.getProject(projectId),
     enabled: !!projectId,
@@ -29,7 +30,7 @@ export function EditProjectPage() {
   }
 
   if (isError || !project) {
-    return <div className="p-8 text-red-600">Error al cargar el proyecto para edicin.</div>;
+    return <div className="p-8 text-red-600">{projectLoadErrorMessage(error, 'Error al cargar el proyecto para edición.')}</div>;
   }
 
   // Misma regla que el botón "Editar proyecto" y que el backend (PATCH /projects/:id → 403). Entrar por
