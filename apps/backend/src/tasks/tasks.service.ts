@@ -278,19 +278,35 @@ export class TasksService {
   }
 
   /**
-   * Una subtarea tiene que apuntar a una tarea que exista, del MISMO proyecto, y que no
-   * sea a su vez una subtarea.
+   * Una subtarea tiene que apuntar a una tarea que exista, del MISMO proyecto, y que no sea a su vez
+   * una subtarea. Agregar una subtarea es MODIFICAR la tarea padre (BUG-07): exige la misma
+   * policy que editarla (canEditTask: ADMIN/PM/líder, o COLLABORATOR que la creó o la tiene
+   * asignada) y que el padre siga abierto: ni completada ni archivada (no se reabre sola).
+   * Orden: existencia/proyecto → permiso → profundidad → completada → archivada. El permiso va
+   * antes que el resto para no revelar el estado de una tarea que el usuario no puede editar.
    */
-  private async assertValidParentTask(projectId: string, parentTaskId: string): Promise<void> {
+  private async assertValidParentTask(project: ProjectEntity, parentTaskId: string, user: RequestUser): Promise<void> {
     const parent = await this.repo.findOneBy({ id: parentTaskId });
     if (!parent) {
       throw new NotFoundException(`Task ${parentTaskId} no encontrada`);
     }
-    if (parent.projectId !== projectId) {
+    if (parent.projectId !== project.id) {
       throw new BadRequestException('La tarea padre debe pertenecer al mismo proyecto');
     }
+
+    const canEditParent = await this.permissions.canEditTask(user, parent, project);
+    if (!canEditParent) {
+      throw new ForbiddenException('No podés agregar subtareas a una tarea que no podés editar.');
+    }
+
     if (parent.parentTaskId) {
       throw new BadRequestException('No se pueden anidar subtareas: la tarea padre ya es una subtarea');
+    }
+    if (parent.status === TaskStatus.COMPLETED) {
+      throw new BadRequestException('No se pueden agregar subtareas a una tarea completada.');
+    }
+    if (parent.archivedAt) {
+      throw new BadRequestException('No se pueden agregar subtareas a una tarea archivada.');
     }
   }
 
@@ -307,7 +323,7 @@ export class TasksService {
     }
 
     if (dto.parentTaskId) {
-      await this.assertValidParentTask(dto.projectId, dto.parentTaskId);
+      await this.assertValidParentTask(project, dto.parentTaskId, user);
     }
 
     const created = await this.repo.manager.transaction(async (manager) => {

@@ -5,6 +5,7 @@ import {
   canAssignProjectLeaderRoleUI,
   canChangeLeaderUI,
   canCreateProjectUI,
+  canAddSubtaskUI,
   canCommentOnTaskUI,
   canCreateTaskUI,
   canDeleteTaskUI,
@@ -184,6 +185,53 @@ describe('canCreateTaskUI', () => {
   it('COLLABORATOR global + membership OBSERVER en este proyecto -> false (no decide por el rol global)', () => {
     const user = makeUser('u1', ['COLLABORATOR']);
     expect(canCreateTaskUI(user, project, makeMembership('OBSERVER'))).toBe(false);
+  });
+});
+
+describe('canAddSubtaskUI (BUG-07: agregar una subtarea es editar la tarea padre)', () => {
+  const project = makeProject();
+  const collab = makeUser('u1', ['COLLABORATOR']);
+
+  it('COLLABORATOR: tarea ajena (ni creada ni asignada) -> false', () => {
+    expect(canAddSubtaskUI(collab, makeTask({ createdBy: 'otro' }), project, makeMembership('COLLABORATOR'))).toBe(false);
+  });
+
+  it('COLLABORATOR: tarea que creó -> true', () => {
+    expect(canAddSubtaskUI(collab, makeTask({ createdBy: 'u1' }), project, makeMembership('COLLABORATOR'))).toBe(true);
+  });
+
+  it('COLLABORATOR: tarea que tiene asignada -> true', () => {
+    expect(canAddSubtaskUI(collab, makeTask({ assignedToId: 'u1' }), project, makeMembership('COLLABORATOR'))).toBe(true);
+  });
+
+  it('ADMIN, PROGRAM_MANAGER y líder del proyecto: cualquier tarea activa -> true', () => {
+    const task = makeTask({ createdBy: 'otro', assignedToId: 'otro' });
+    expect(canAddSubtaskUI(makeUser('admin-1', ['ADMIN']), task, project, null)).toBe(true);
+    expect(canAddSubtaskUI(makeUser('pm-1', ['PROGRAM_MANAGER']), task, project, null)).toBe(true);
+    expect(canAddSubtaskUI(makeUser(LEADER_ID, ['PROJECT_LEADER']), task, project, null)).toBe(true);
+  });
+
+  it('OBSERVER local: nunca, ni sobre su propia tarea', () => {
+    const user = makeUser('u1', ['COLLABORATOR']);
+    expect(canAddSubtaskUI(user, makeTask({ createdBy: 'u1' }), project, makeMembership('OBSERVER'))).toBe(false);
+  });
+
+  it('tarea COMPLETED: nadie puede, ni siquiera ADMIN, líder o el dueño', () => {
+    const completed = makeTask({ createdBy: 'u1', status: 'COMPLETED' });
+    expect(canAddSubtaskUI(collab, completed, project, makeMembership('COLLABORATOR'))).toBe(false);
+    expect(canAddSubtaskUI(makeUser('admin-1', ['ADMIN']), completed, project, null)).toBe(false);
+    expect(canAddSubtaskUI(makeUser(LEADER_ID, ['PROJECT_LEADER']), completed, project, null)).toBe(false);
+  });
+
+  it('tarea archivada: nadie puede', () => {
+    const archived = makeTask({ createdBy: 'u1', archivedAt: '2026-10-01T00:00:00Z' });
+    expect(canAddSubtaskUI(collab, archived, project, makeMembership('COLLABORATOR'))).toBe(false);
+    expect(canAddSubtaskUI(makeUser('admin-1', ['ADMIN']), archived, project, null)).toBe(false);
+  });
+
+  it('una subtarea (tiene parentTaskId) no admite subtareas propias', () => {
+    const child = makeTask({ createdBy: 'u1', parentTaskId: 'padre-1' });
+    expect(canAddSubtaskUI(collab, child, project, makeMembership('COLLABORATOR'))).toBe(false);
   });
 });
 

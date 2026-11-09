@@ -154,6 +154,16 @@ export function canEditTaskUI(
   return task.createdBy === user.id || task.assignedToId === user.id;
 }
 
+export function canAddSubtaskUI(
+  user: AuthenticatedUser,
+  task: Pick<Task, 'createdBy' | 'assignedToId' | 'status' | 'archivedAt' | 'parentTaskId'>,
+  project: Pick<Project, 'leaderId'>,
+  membership: Pick<ProjectMember, 'projectRole'> | null,
+): boolean {
+  if (task.parentTaskId || task.archivedAt || task.status === 'COMPLETED') return false;
+  return canEditTaskUI(user, task, project, membership);
+}
+
 /**
  * Espeja PermissionsService.canCommentOnTask: ADMIN/PM/líder real siempre; el resto solo con
  * projectRole 'COLLABORATOR' en ESTE proyecto (OBSERVER local, aunque su rol global sea

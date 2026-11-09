@@ -2,9 +2,10 @@ import React from 'react';
 
 export const GoogleLoginButton: React.FC = () => {
   const handleGoogleLogin = () => {
-    // Redirige al flujo de OAuth del backend NestJS
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-    window.location.href = `${apiUrl}/api/auth/google`;
+    // Redirige al flujo de OAuth del backend NestJS. Ruta relativa (como el resto de la API): en
+    // dev la resuelve el proxy de Vite y en Vercel el rewrite. Con una URL absoluta al backend, la
+    // cookie del `state` quedaría en otro dominio que el del callback y el login fallaría.
+    window.location.href = '/api/auth/google';
   };
 
   return (
