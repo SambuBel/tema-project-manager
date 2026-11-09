@@ -449,6 +449,8 @@ export interface CreateCostDto {
   taskId?: ID;
   /** Confirma un costo con fecha anterior al inicio del proyecto (RN-21). */
   confirmBeforeProjectStart?: boolean;
+  /** Confirma un costo con fecha posterior al fin ESTIMADO del proyecto (BUG-10). */
+  confirmAfterProjectEnd?: boolean;
 }
 
 export interface Cost {
@@ -486,6 +488,8 @@ export interface UpdateCostDto {
   taskId?: ID | null;
   /** RN-21: solo hace falta si la edición mueve la fecha a una anterior al inicio del proyecto. */
   confirmBeforeProjectStart?: boolean;
+  /** BUG-10: solo hace falta si la edición mueve la fecha a una posterior al fin estimado del proyecto. */
+  confirmAfterProjectEnd?: boolean;
 }
 
 // --- Presupuesto (POST/GET /projects/:projectId/budget) ---------------------------------------

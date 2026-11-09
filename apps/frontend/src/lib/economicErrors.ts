@@ -7,7 +7,7 @@ import { retryUnlessClientError } from './queryRetry';
  * hoy; costos, perfiles y asignaciones en las próximas fases) muestran lo mismo. Nunca expone stack ni códigos técnicos.
  *
  *  - conflict:   alguien más cambió el dato mientras se editaba (RNF-20). La UI ofrece Recargar/Cancelar y NUNCA reintenta sola.
- *  - confirmation: el backend pide confirmar explícitamente (RN-21: costo anterior al inicio del proyecto). No es un error.
+ *  - confirmation: el backend pide confirmar explícitamente (RN-21: costo anterior al inicio del proyecto; BUG-10: posterior al fin estimado). No es un error.
  *  - no-changes: el backend detectó que no hay nada que guardar. Es un aviso suave, no un error.
  *  - forbidden:  sin permiso económico (RN-25).
  *  - validation: el dato enviado no cumple una regla de negocio (el usuario puede corregirlo).
@@ -37,6 +37,7 @@ const BY_CODE: Record<string, { kind: EconomicErrorKind; message: string }> = {
   COST_NO_CHANGES: { kind: 'no-changes', message: 'No hay cambios para guardar.' },
   COST_NOT_FOUND: { kind: 'not-found', message: 'Este costo ya no existe en el proyecto.' },
   COST_BEFORE_PROJECT_START_CONFIRMATION_REQUIRED: { kind: 'confirmation', message: 'La fecha del costo es anterior al inicio del proyecto.' },
+  COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED: { kind: 'confirmation', message: 'La fecha del costo es posterior a la fecha estimada de finalización del proyecto.' },
   COST_CATEGORY_NOT_IN_CURRENT_BUDGET: { kind: 'validation', message: 'Este rubro no forma parte del presupuesto vigente.' },
   PROJECT_HAS_NO_CURRENT_BUDGET: {
     kind: 'validation',

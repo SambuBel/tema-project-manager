@@ -87,8 +87,12 @@ interface CurrentCost {
  * RN-20 (rubro en el presupuesto, interpretación provisional): el rubro debe existir, estar activo y tener una partida en el
  * presupuesto VIGENTE. El flujo "crear rubro" (visible desde Líder, contradice la matriz de presupuesto) lo resuelve CAT-01.
  *
+ * FECHA DEL COSTO (RN-21 + BUG-10): anterior al inicio del proyecto → 409 COST_BEFORE_PROJECT_START_CONFIRMATION_REQUIRED; posterior al fin
+ * ESTIMADO → 409 COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED; cada una con su flag de confirmación. Una fecha futura NO se rechaza por serlo.
+ * Sin fecha de inicio / de fin del proyecto, esa comparación no se hace.
+ *
  * PENDIENTES CON TEMA (no se inventa regla): proyecto sin fecha de inicio (hoy no se compara ni se pide confirmación);
- * fecha de costo futura (hoy se acepta); estado del proyecto o de la tarea (hoy sin restricciones); qué hacer al quitar
+ * estado del proyecto o de la tarea (hoy sin restricciones); qué hacer al quitar
  * un rubro con costos incurridos al versionar el presupuesto; rubro inactivo que sigue en el presupuesto vigente (hoy se rechaza).
  *
  * EDICIÓN (PATCH): `expectedRevision` se compara DENTRO del lock de la fila y ANTES de "sin cambios"; cada edición suma 1 a
@@ -123,14 +127,16 @@ export class CostsService {
 
     return this.dataSource.transaction(async (manager) => {
       // 1) Proyecto FOR SHARE. La fecha de inicio se lee BAJO el lock: nadie puede cambiarla mientras se valida.
-      const locked: Array<{ startDate: string | null; economicCurrency: string }> = await manager.query(
-        'SELECT start_date::text AS "startDate", economic_currency AS "economicCurrency" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE',
+      const locked: Array<{ startDate: string | null; projectEndDate?: string | null; economicCurrency: string }> = await manager.query(
+        'SELECT start_date::text AS "startDate", estimated_end_date::text AS "projectEndDate", economic_currency AS "economicCurrency" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE',
         [projectId],
       );
       if (locked.length === 0) {
         throw new NotFoundException(`Project ${projectId} no encontrado`);
       }
       const projectStartDate = locked[0]!.startDate;
+      // Fin ESTIMADO del proyecto (BUG-10). Sin fecha de fin no se aplica la validación de "posterior al fin".
+      const projectEndDate = locked[0]!.projectEndDate ?? null;
       // Moneda ÚNICA del proyecto (leída bajo el lock FOR SHARE: el cambio de moneda toma FOR UPDATE y espera). El costo siempre
       // se registra en ella; si el cliente mandó otra, 400 PROJECT_CURRENCY_MISMATCH. Nunca se convierte.
       const currency = resolveProjectCurrency(dto.currency, locked[0]!.economicCurrency, 'El costo');
@@ -213,6 +219,19 @@ export class CostsService {
         });
       }
 
+      // BUG-10: fecha posterior al fin ESTIMADO del proyecto requiere confirmación explícita (flag propio, aparte de RN-21).
+      // No se bloquean las fechas futuras en sí: solo importa el fin del proyecto. Sin fecha de fin no se compara. Fechas como texto.
+      const afterEnd = projectEndDate !== null && dto.costDate > projectEndDate;
+      const confirmedAfterProjectEnd = afterEnd && dto.confirmAfterProjectEnd === true;
+      if (afterEnd && !confirmedAfterProjectEnd) {
+        throw new ConflictException({
+          code: 'COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED',
+          message: 'La fecha del costo es posterior a la fecha estimada de finalización del proyecto. Confirmalo explícitamente para registrarlo.',
+          costDate: dto.costDate,
+          projectEndDate,
+        });
+      }
+
       const saved = await manager.save(
         manager.create(CostEntity, {
           projectId,
@@ -246,6 +265,7 @@ export class CostsService {
             // Versión del presupuesto vigente contra la que se validó el rubro (el costo NO referencia a budgets).
             budgetVersion: budget.version,
             confirmedBeforeProjectStart,
+            confirmedAfterProjectEnd,
           },
         }),
       );
@@ -345,14 +365,16 @@ export class CostsService {
 
     return this.dataSource.transaction(async (manager) => {
       // 1) Proyecto FOR SHARE (coordina con el FOR UPDATE del versionado de presupuesto; la fecha de inicio se lee bajo el lock).
-      const locked: Array<{ startDate: string | null; economicCurrency: string }> = await manager.query(
-        'SELECT start_date::text AS "startDate", economic_currency AS "economicCurrency" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE',
+      const locked: Array<{ startDate: string | null; projectEndDate?: string | null; economicCurrency: string }> = await manager.query(
+        'SELECT start_date::text AS "startDate", estimated_end_date::text AS "projectEndDate", economic_currency AS "economicCurrency" FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE',
         [projectId],
       );
       if (locked.length === 0) {
         throw new NotFoundException(`Project ${projectId} no encontrado`);
       }
       const projectStartDate = locked[0]!.startDate;
+      // Fin ESTIMADO del proyecto (BUG-10). Sin fecha de fin no se aplica la validación de "posterior al fin".
+      const projectEndDate = locked[0]!.projectEndDate ?? null;
       // La moneda de un costo NO se edita: es la del proyecto. Si el cliente manda otra, 400 PROJECT_CURRENCY_MISMATCH; si manda la
       // misma no hay cambio. Nunca se convierte.
       resolveProjectCurrency(dto.currency, locked[0]!.economicCurrency, 'El costo');
@@ -471,6 +493,18 @@ export class CostsService {
         });
       }
 
+      // BUG-10: igual que RN-21, SOLO si cambia la fecha (corregir otro dato de un costo ya posterior al fin no la vuelve a pedir).
+      const dateMovedAfterEnd = changedFields.includes('costDate') && projectEndDate !== null && next.costDate > projectEndDate;
+      const confirmedAfterProjectEnd = dateMovedAfterEnd && dto.confirmAfterProjectEnd === true;
+      if (dateMovedAfterEnd && !confirmedAfterProjectEnd) {
+        throw new ConflictException({
+          code: 'COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED',
+          message: 'La fecha del costo es posterior a la fecha estimada de finalización del proyecto. Confirmalo explícitamente para guardarla.',
+          costDate: next.costDate,
+          projectEndDate,
+        });
+      }
+
       // UPDATE: solo las columnas que cambian + updated_at (instante real de la edición) + revision = revision + 1, en una
       // sola sentencia bajo el lock de la fila. `deleted_at IS NULL` en el WHERE: una baja nunca se revierte desde acá.
       const assignments: string[] = [];
@@ -513,7 +547,7 @@ export class CostsService {
           oldValues: snapshot(current, current.categoryName, current.revision),
           newValues: {
             ...snapshot(next, categoryName, newRevision),
-            change: { changedFields, categoryValidatedAgainstBudgetVersion, confirmedBeforeProjectStart },
+            change: { changedFields, categoryValidatedAgainstBudgetVersion, confirmedBeforeProjectStart, confirmedAfterProjectEnd },
           },
         }),
       );

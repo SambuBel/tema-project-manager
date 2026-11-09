@@ -35,6 +35,8 @@ type Opts = {
   projectCurrency?: string;
   projectExists?: boolean;
   startDate?: string | null;
+  /** Fin estimado del proyecto (BUG-10). Por defecto null: sin fecha de fin no se aplica la validación. */
+  endDate?: string | null;
   cost?: typeof current | null;
   category?: { id: string; name: string; active: boolean } | null;
   budget?: { id: string; version: number } | null;
@@ -56,7 +58,7 @@ function build(opts: Opts = {}) {
       if (sql.includes('FROM projects')) {
         calls.push('lock-project');
         expect(sql).toContain('FOR SHARE');
-        return [{ startDate: opts.startDate === undefined ? '2026-10-01' : opts.startDate, economicCurrency: opts.projectCurrency ?? 'ARS' }];
+        return [{ startDate: opts.startDate === undefined ? '2026-10-01' : opts.startDate, projectEndDate: opts.endDate === undefined ? null : opts.endDate, economicCurrency: opts.projectCurrency ?? 'ARS' }];
       }
       if (sql.includes('FOR UPDATE OF c')) {
         calls.push('lock-cost');
@@ -113,7 +115,7 @@ function build(opts: Opts = {}) {
 const errorOf = async (p: Promise<unknown>) => p.catch((e: unknown) => e);
 const WRITES = ['update-cost', 'save-audit'];
 type AuditSaved = {
-  newValues: { categoryName: string; change: { changedFields: string[]; categoryValidatedAgainstBudgetVersion: number | null; confirmedBeforeProjectStart: boolean } };
+  newValues: { categoryName: string; change: { changedFields: string[]; categoryValidatedAgainstBudgetVersion: number | null; confirmedBeforeProjectStart: boolean; confirmedAfterProjectEnd: boolean } };
 };
 const auditOf = (saved: Array<Record<string, unknown>>) => saved.find((r) => r.__entity === AuditLogEntity) as unknown as AuditSaved;
 
@@ -334,6 +336,51 @@ describe('CostsService.update', () => {
     it('proyecto sin fecha de inicio: no se compara (decisión provisional pendiente de TEMA)', async () => {
       const { service } = build({ startDate: null });
       await expect(service.update(PROJECT_ID, COST_ID, patch({ costDate: '1990-01-01' }), admin)).resolves.toBeDefined();
+    });
+  });
+
+  describe('BUG-10 al editar: fecha posterior al fin ESTIMADO (inicio 2026-10-01, fin 2026-12-31; el costo actual es del 2026-09-15)', () => {
+    const project = { startDate: '2026-10-01', endDate: '2026-12-31' };
+
+    it('8. mover la fecha a una posterior al fin sin confirmar: 409 con code, costDate y projectEndDate (sin importes), sin escrituras', async () => {
+      const { service, calls } = build(project);
+      const error = (await errorOf(service.update(PROJECT_ID, COST_ID, patch({ costDate: '2027-01-01' }), admin))) as ConflictException;
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(error.getResponse()).toEqual({
+        code: 'COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED', message: expect.any(String), costDate: '2027-01-01', projectEndDate: '2026-12-31',
+      });
+      for (const write of WRITES) expect(calls).not.toContain(write);
+    });
+    it('8b. con confirmación: se guarda y la auditoría deja confirmedAfterProjectEnd = true', async () => {
+      const { service, saved } = build(project);
+      await service.update(PROJECT_ID, COST_ID, patch({ costDate: '2027-01-01', confirmAfterProjectEnd: true }), admin);
+      expect(auditOf(saved).newValues.change).toMatchObject({ confirmedAfterProjectEnd: true, confirmedBeforeProjectStart: false });
+    });
+    it('confirmBeforeProjectStart NO habilita una fecha posterior al fin (confirmaciones independientes)', async () => {
+      const { service } = build(project);
+      await expect(service.update(PROJECT_ID, COST_ID, patch({ costDate: '2027-01-01', confirmBeforeProjectStart: true }), admin)).rejects.toBeInstanceOf(ConflictException);
+    });
+    it.each([['igual al fin', '2026-12-31'], ['dentro del período', '2026-11-15']])('fecha %s: se guarda sin confirmación y el flag queda en false', async (_n, costDate) => {
+      const { service, saved } = build(project);
+      await service.update(PROJECT_ID, COST_ID, patch({ costDate, confirmAfterProjectEnd: true }), admin);
+      expect(auditOf(saved).newValues.change.confirmedAfterProjectEnd).toBe(false);
+    });
+    it('9. editar OTRO dato de un costo ya posterior al fin NO dispara la regla (la fecha no cambió)', async () => {
+      const { service } = build({ ...project, cost: { ...current, costDate: '2027-02-01' } });
+      await expect(service.update(PROJECT_ID, COST_ID, patch({ description: 'Corrección' }), admin)).resolves.toBeDefined();
+    });
+    it('9b. reenviar la MISMA fecha posterior al fin tampoco la pide', async () => {
+      const { service } = build({ ...project, cost: { ...current, costDate: '2027-02-01' } });
+      await expect(service.update(PROJECT_ID, COST_ID, patch({ costDate: '2027-02-01', description: 'x' }), admin)).resolves.toBeDefined();
+    });
+    it('RN-21 intacto: mover la fecha a una anterior al inicio sigue pidiendo SU confirmación', async () => {
+      const { service } = build(project);
+      const error = (await errorOf(service.update(PROJECT_ID, COST_ID, patch({ costDate: '2026-09-01' }), admin))) as ConflictException;
+      expect(error.getResponse()).toMatchObject({ code: 'COST_BEFORE_PROJECT_START_CONFIRMATION_REQUIRED', projectStartDate: '2026-10-01' });
+    });
+    it('proyecto SIN fecha de fin: una fecha futura se acepta', async () => {
+      const { service } = build({ startDate: '2026-10-01', endDate: null });
+      await expect(service.update(PROJECT_ID, COST_ID, patch({ costDate: '2099-12-31' }), admin)).resolves.toBeDefined();
     });
   });
 

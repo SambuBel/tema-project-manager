@@ -166,9 +166,37 @@ interface CostFormBodyProps {
   blockCloseRef: React.MutableRefObject<boolean>;
 }
 
+/**
+ * Qué confirmación pide el backend para la fecha del costo: RN-21 (anterior al inicio del proyecto) o BUG-10 (posterior al fin
+ * ESTIMADO). Un solo diálogo y un solo flujo (409 → confirmar → un único reenvío con el flag que corresponde), con textos por caso.
+ */
+type DateConfirmationKind = 'before-start' | 'after-end';
+
+const DATE_CONFIRMATIONS: Record<DateConfirmationKind, { code: string; title: string; description: string; boundaryLabel: string; boundaryField: string }> = {
+  'before-start': {
+    code: 'COST_BEFORE_PROJECT_START_CONFIRMATION_REQUIRED',
+    title: 'Fecha anterior al inicio del proyecto',
+    description: 'La fecha del costo es anterior al inicio del proyecto.',
+    boundaryLabel: 'Inicio del proyecto:',
+    boundaryField: 'projectStartDate',
+  },
+  'after-end': {
+    code: 'COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED',
+    title: 'Fecha posterior al fin del proyecto',
+    description: 'La fecha del costo es posterior a la fecha estimada de finalización del proyecto. ¿Querés registrarlo de todos modos?',
+    boundaryLabel: 'Fin estimado del proyecto:',
+    boundaryField: 'projectEndDate',
+  },
+};
+
+const confirmationKindOf = (code: string | undefined): DateConfirmationKind | undefined =>
+  (Object.keys(DATE_CONFIRMATIONS) as DateConfirmationKind[]).find((kind) => DATE_CONFIRMATIONS[kind].code === code);
+
 interface PendingConfirmation {
+  kind: DateConfirmationKind;
   costDate: string;
-  projectStartDate: string | null;
+  /** Inicio del proyecto (before-start) o fin estimado (after-end), según el caso; null si el backend no lo informó. */
+  boundaryDate: string | null;
 }
 
 function CostFormBody({ mode, project, currency, cost, budgetCategories, tasks, tasksLoading, tasksFailed, onRetryTasks, onClose, onReload, blockCloseRef }: CostFormBodyProps) {
@@ -190,8 +218,11 @@ function CostFormBody({ mode, project, currency, cost, budgetCategories, tasks, 
 
   const save = useMutation({
     retry: false,
-    mutationFn: ({ confirm }: { confirm: boolean }) =>
-      isEdit ? api.updateProjectCost(project.id, cost.id, toUpdateCostDto(form, cost, confirm)) : api.createProjectCost(project.id, toCreateCostDto(form, confirm)),
+    // `confirmed`: la confirmación que ya dio el usuario (null en el primer envío, que nunca lleva ninguna).
+    mutationFn: ({ confirmed }: { confirmed: DateConfirmationKind | null }) =>
+      isEdit
+        ? api.updateProjectCost(project.id, cost.id, toUpdateCostDto(form, cost, confirmed === 'before-start', confirmed === 'after-end'))
+        : api.createProjectCost(project.id, toCreateCostDto(form, confirmed === 'before-start', confirmed === 'after-end')),
     onSuccess: async () => {
       // Nada de insertar una copia parcial en la caché: se vuelve a pedir lo que devuelve el backend.
       await Promise.all([
@@ -202,13 +233,14 @@ function CostFormBody({ mode, project, currency, cost, budgetCategories, tasks, 
     },
     onError: (error, variables) => {
       const described = describeEconomicError(error);
-      // RN-21: el PRIMER envío nunca lleva confirmación; solo si el backend la pide se abre el diálogo. Si ya se envió confirmada
-      // y aun así la pide, se muestra como problema (no hay un segundo reenvío).
-      if (described.kind === 'confirmation' && !variables.confirm) {
+      // RN-21 / BUG-10: el PRIMER envío nunca lleva confirmación; solo si el backend la pide se abre el diálogo. Si ya se envió
+      // con ESA misma confirmación y aun así la pide, se muestra como problema (no hay un segundo reenvío ni bucle).
+      const requested = confirmationKindOf(described.code);
+      if (described.kind === 'confirmation' && requested && variables.confirmed !== requested) {
         const data = error instanceof Error && 'data' in error ? (error as { data?: Record<string, unknown> }).data : undefined;
         const costDate = typeof data?.costDate === 'string' ? data.costDate : form.costDate;
-        const projectStartDate = typeof data?.projectStartDate === 'string' ? data.projectStartDate : null;
-        setPending({ costDate, projectStartDate });
+        const boundary = data?.[DATE_CONFIRMATIONS[requested].boundaryField];
+        setPending({ kind: requested, costDate, boundaryDate: typeof boundary === 'string' ? boundary : null });
         return;
       }
       setPending(null);
@@ -233,16 +265,16 @@ function CostFormBody({ mode, project, currency, cost, budgetCategories, tasks, 
     isEdit && !budgetCategories.some((c) => c.id === cost.costCategoryId) ? { id: cost.costCategoryId, name: cost.categoryName } : null;
   const historicalTask: Option | null = isEdit && cost.taskId && !tasks.some((t) => t.id === cost.taskId) ? { id: cost.taskId, name: cost.taskTitle ?? 'Tarea' } : null;
 
-  const submit = (confirm: boolean) => {
+  const submit = (confirmed: DateConfirmationKind | null) => {
     setProblem(null);
     setPending(null);
-    save.mutate({ confirm });
+    save.mutate({ confirmed });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
-    submit(false);
+    submit(null);
   };
 
   const handleReload = async () => {
@@ -450,13 +482,13 @@ function CostFormBody({ mode, project, currency, cost, budgetCategories, tasks, 
 
       <ConfirmDialog
         open={pending !== null}
-        title="Fecha anterior al inicio del proyecto"
-        description="La fecha del costo es anterior al inicio del proyecto."
+        title={DATE_CONFIRMATIONS[pending?.kind ?? 'before-start'].title}
+        description={DATE_CONFIRMATIONS[pending?.kind ?? 'before-start'].description}
         confirmLabel={isEdit ? 'Guardar igualmente' : 'Registrar igualmente'}
         variant="warning"
         isConfirming={save.isPending}
         onCancel={() => setPending(null)}
-        onConfirm={() => submit(true)}
+        onConfirm={() => pending && submit(pending.kind)}
       >
         {pending && (
           <dl className="text-sm text-[#172B42]">
@@ -464,10 +496,10 @@ function CostFormBody({ mode, project, currency, cost, budgetCategories, tasks, 
               <dt className="text-[#607185]">Fecha del costo:</dt>
               <dd>{formatLocalDate(pending.costDate)}</dd>
             </div>
-            {pending.projectStartDate && (
+            {pending.boundaryDate && (
               <div className="flex gap-2">
-                <dt className="text-[#607185]">Inicio del proyecto:</dt>
-                <dd>{formatLocalDate(pending.projectStartDate)}</dd>
+                <dt className="text-[#607185]">{DATE_CONFIRMATIONS[pending.kind].boundaryLabel}</dt>
+                <dd>{formatLocalDate(pending.boundaryDate)}</dd>
               </div>
             )}
           </dl>

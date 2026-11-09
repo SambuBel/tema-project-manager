@@ -59,4 +59,9 @@ export class UpdateCostDto implements IUpdateCostDto {
   @IsOptional()
   @IsBoolean({ message: 'confirmBeforeProjectStart debe ser true o false' })
   confirmBeforeProjectStart?: boolean;
+
+  /** BUG-10: confirma explícitamente una fecha posterior al fin estimado del proyecto. Solo se mira si la edición cambia `costDate`. */
+  @IsOptional()
+  @IsBoolean({ message: 'confirmAfterProjectEnd debe ser true o false' })
+  confirmAfterProjectEnd?: boolean;
 }

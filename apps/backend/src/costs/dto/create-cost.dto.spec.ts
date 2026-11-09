@@ -110,6 +110,17 @@ describe('CreateCostDto', () => {
     });
   });
 
+  describe('confirmAfterProjectEnd (BUG-10)', () => {
+    it('es opcional y acepta true/false', async () => {
+      expect((await parse(valid)).confirmAfterProjectEnd).toBeUndefined();
+      expect((await parse({ ...valid, confirmAfterProjectEnd: true })).confirmAfterProjectEnd).toBe(true);
+      expect((await parse({ ...valid, confirmAfterProjectEnd: false })).confirmAfterProjectEnd).toBe(false);
+    });
+    it.each(['true', 1, 'yes', {}])('rechaza %j (debe ser un booleano real)', async (input) => {
+      expect(await messages({ ...valid, confirmAfterProjectEnd: input })).toMatch(/confirmAfterProjectEnd/);
+    });
+  });
+
   it('descarta lo que decide el servidor o no se acepta del cliente', async () => {
     const result = (await pipe.transform(
       { ...valid, projectId: 'x', createdBy: 'x', updatedAt: 'x', deletedAt: 'x', id: 'x', createdAt: 'x' },

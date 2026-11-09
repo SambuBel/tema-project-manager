@@ -95,6 +95,13 @@ describe('UpdateCostDto', () => {
     });
   });
 
+  describe('confirmAfterProjectEnd (BUG-10)', () => {
+    it('booleano real y opcional', async () => {
+      expect((await parse({ expectedRevision: 1, confirmAfterProjectEnd: true })).confirmAfterProjectEnd).toBe(true);
+      for (const value of ['true', 1, {}]) expect(await messages({ expectedRevision: 1, confirmAfterProjectEnd: value })).toMatch(/confirmAfterProjectEnd/);
+    });
+  });
+
   it('descarta lo que no es editable (id, projectId, createdBy, createdAt, updatedAt, deletedAt, revision)', async () => {
     const parsed = await parse({
       expectedRevision: 2, description: 'x', id: 'x', projectId: 'x', createdBy: 'x', createdAt: 'x', updatedAt: 'x', deletedAt: 'x', revision: 99,

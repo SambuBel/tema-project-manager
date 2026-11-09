@@ -16,7 +16,7 @@ export const MAX_COST_DESCRIPTION_LENGTH = 500;
  * whitelist descarta cualquier otro campo que mande el cliente (createdBy, projectId, updatedAt, deletedAt...).
  */
 export class CreateCostDto implements ICreateCostDto {
-  /** Exactamente YYYY-MM-DD y una fecha de calendario real. Se acepta una fecha futura (TEMA no la prohíbe). */
+  /** Exactamente YYYY-MM-DD y una fecha de calendario real. Una fecha futura NO se rechaza por serlo; solo pide confirmación si pasa del fin estimado del proyecto. */
   @Transform(trimmed)
   @IsString({ message: 'La fecha del costo debe ser texto con formato AAAA-MM-DD' })
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'La fecha del costo debe tener formato AAAA-MM-DD' })
@@ -58,4 +58,9 @@ export class CreateCostDto implements ICreateCostDto {
   @IsOptional()
   @IsBoolean({ message: 'confirmBeforeProjectStart debe ser true o false' })
   confirmBeforeProjectStart?: boolean;
+
+  /** BUG-10: confirma explícitamente un costo con fecha posterior al fin ESTIMADO del proyecto. Debe ser un booleano real. */
+  @IsOptional()
+  @IsBoolean({ message: 'confirmAfterProjectEnd debe ser true o false' })
+  confirmAfterProjectEnd?: boolean;
 }
