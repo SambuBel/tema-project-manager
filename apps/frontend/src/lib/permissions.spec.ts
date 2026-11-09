@@ -10,6 +10,7 @@ import {
   canCreateTaskUI,
   canDeleteTaskUI,
   canEditTaskUI,
+  canExportTasksUI,
   canManageGlobalRolesUI,
   canManageProjectUI,
   canManageTaskPlanningUI,
@@ -232,6 +233,30 @@ describe('canAddSubtaskUI (BUG-07: agregar una subtarea es editar la tarea padre
   it('una subtarea (tiene parentTaskId) no admite subtareas propias', () => {
     const child = makeTask({ createdBy: 'u1', parentTaskId: 'padre-1' });
     expect(canAddSubtaskUI(collab, child, project, makeMembership('COLLABORATOR'))).toBe(false);
+  });
+});
+
+describe('canExportTasksUI (BUG-14: espeja ExportService.checkExportPermission)', () => {
+  const project = makeProject();
+
+  it('ADMIN, PROGRAM_MANAGER y líder real exportan, sean o no miembros', () => {
+    expect(canExportTasksUI(makeUser('admin-1', ['ADMIN']), project, null)).toBe(true);
+    expect(canExportTasksUI(makeUser('pm-1', ['PROGRAM_MANAGER']), project, null)).toBe(true);
+    expect(canExportTasksUI(makeUser(LEADER_ID, ['PROJECT_LEADER']), project, null)).toBe(true);
+  });
+
+  it('COLLABORATOR local exporta (el backend le limita el archivo a sus tareas)', () => {
+    expect(canExportTasksUI(makeUser('u1', ['COLLABORATOR']), project, makeMembership('COLLABORATOR'))).toBe(true);
+  });
+
+  it('OBSERVER local no exporta, aunque su rol global sea COLLABORATOR', () => {
+    expect(canExportTasksUI(makeUser('u1', ['COLLABORATOR']), project, makeMembership('OBSERVER'))).toBe(false);
+    expect(canExportTasksUI(makeUser('u1', ['OBSERVER']), project, makeMembership('OBSERVER'))).toBe(false);
+  });
+
+  it('sin membresía no exporta; tampoco un líder de OTRO proyecto', () => {
+    expect(canExportTasksUI(makeUser('u1', ['COLLABORATOR']), project, null)).toBe(false);
+    expect(canExportTasksUI(makeUser('otro-leader', ['PROJECT_LEADER']), project, null)).toBe(false);
   });
 });
 
