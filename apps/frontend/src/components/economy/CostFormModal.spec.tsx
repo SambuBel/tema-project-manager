@@ -29,6 +29,9 @@ const cost = (extra: Partial<Cost> = {}): Cost => ({
 const beforeStart = (data: Record<string, unknown> = { costDate: '2020-01-01', projectStartDate: '2026-01-01' }) =>
   new ApiRequestError(409, 'Conflict', [], 'COST_BEFORE_PROJECT_START_CONFIRMATION_REQUIRED', data);
 
+const afterEnd = (data: Record<string, unknown> = { costDate: '2099-01-01', projectEndDate: '2026-12-31' }) =>
+  new ApiRequestError(409, 'Conflict', [], 'COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED', data);
+
 function renderModal(props: { mode: 'create' | 'edit'; costId?: string }, onClose = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const invalidate = vi.spyOn(client, 'invalidateQueries');
@@ -297,6 +300,122 @@ describe('CostFormModal - RN-21 (fecha anterior al inicio del proyecto)', () => 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(api.updateProjectCost).toHaveBeenCalledTimes(2);
     expect(api.updateProjectCost.mock.calls[1]![2]).toEqual({ expectedRevision: 4, costDate: '2020-01-01', confirmBeforeProjectStart: true });
+  });
+});
+
+describe('CostFormModal - BUG-10: fecha posterior al fin estimado del proyecto', () => {
+  it('el backend pide confirmación: diálogo con título y mensaje propios, la fecha del costo y el fin estimado', async () => {
+    api.createProjectCost.mockRejectedValue(afterEnd());
+    renderModal({ mode: 'create' });
+    await fillCreate({ date: '2099-01-01' });
+    submit();
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Fecha posterior al fin del proyecto')).toBeTruthy();
+    expect(
+      within(dialog).getByText('La fecha del costo es posterior a la fecha estimada de finalización del proyecto. ¿Querés registrarlo de todos modos?'),
+    ).toBeTruthy();
+    expect(within(dialog).getByText('Fecha del costo:').nextSibling?.textContent).toBe('01/01/2099');
+    expect(within(dialog).getByText('Fin estimado del proyecto:').nextSibling?.textContent).toBe('31/12/2026');
+    expect(dialog.textContent).not.toContain('Inicio del proyecto:');
+    expect(screen.queryByRole('alert')).toBeNull(); // es una confirmación, no un error
+  });
+
+  it('"Registrar igualmente" reenvía EXACTAMENTE una vez con confirmAfterProjectEnd=true (y sin confirmBeforeProjectStart), y cierra', async () => {
+    api.createProjectCost.mockRejectedValueOnce(afterEnd()).mockResolvedValueOnce(cost());
+    const { onClose } = renderModal({ mode: 'create' });
+    await fillCreate({ date: '2099-01-01' });
+    submit();
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Registrar igualmente' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+
+    expect(api.createProjectCost).toHaveBeenCalledTimes(2);
+    const [first, second] = api.createProjectCost.mock.calls.map((c) => c[1]);
+    expect(first).not.toHaveProperty('confirmAfterProjectEnd');
+    expect(second).toEqual({ ...first, confirmAfterProjectEnd: true });
+    expect(second).not.toHaveProperty('confirmBeforeProjectStart');
+  });
+
+  it('cancelar la confirmación no reenvía nada y deja el formulario abierto', async () => {
+    api.createProjectCost.mockRejectedValue(afterEnd());
+    const { onClose } = renderModal({ mode: 'create' });
+    await fillCreate({ date: '2099-01-01' });
+    submit();
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(api.createProjectCost).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('si aun confirmado el backend vuelve a pedirla: no hay bucle, se muestra como problema', async () => {
+    api.createProjectCost.mockRejectedValue(afterEnd());
+    renderModal({ mode: 'create' });
+    await fillCreate({ date: '2099-01-01' });
+    submit();
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Registrar igualmente' }));
+    await screen.findByRole('alert');
+    expect(api.createProjectCost).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('sin fin estimado en el error: muestra solo la fecha del costo', async () => {
+    api.createProjectCost.mockRejectedValue(afterEnd({ costDate: '2099-01-01' }));
+    renderModal({ mode: 'create' });
+    await fillCreate({ date: '2099-01-01' });
+    submit();
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Fecha del costo:').nextSibling?.textContent).toBe('01/01/2099');
+    expect(dialog.textContent).not.toContain('Fin estimado del proyecto:');
+  });
+
+  it('RN-21 no cambia: la fecha anterior al inicio sigue mostrando SU título y su fecha de inicio', async () => {
+    api.createProjectCost.mockRejectedValue(beforeStart());
+    renderModal({ mode: 'create' });
+    await fillCreate({ date: '2020-01-01' });
+    submit();
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Fecha anterior al inicio del proyecto')).toBeTruthy();
+    expect(within(dialog).getByText('Inicio del proyecto:').nextSibling?.textContent).toBe('01/01/2026');
+    expect(dialog.textContent).not.toContain('posterior');
+  });
+
+  it('si ya confirmó RN-21 y el backend pide la OTRA confirmación: se abre ese diálogo (no queda como error)', async () => {
+    api.createProjectCost.mockRejectedValueOnce(beforeStart()).mockRejectedValueOnce(afterEnd()).mockResolvedValueOnce(cost());
+    const { onClose } = renderModal({ mode: 'create' });
+    await fillCreate({ date: '2020-01-01' });
+    submit();
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Registrar igualmente' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Fecha posterior al fin del proyecto')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Registrar igualmente' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(api.createProjectCost.mock.calls[2]![1]).toMatchObject({ confirmAfterProjectEnd: true });
+  });
+
+  it('en la edición: PATCH → 409 → confirmar → un solo reenvío con confirmAfterProjectEnd', async () => {
+    api.getProjectCost.mockResolvedValue(cost());
+    api.updateProjectCost.mockRejectedValueOnce(afterEnd()).mockResolvedValueOnce(cost({ revision: 5 }));
+    const { onClose } = renderModal({ mode: 'edit', costId: 'c1' });
+    await screen.findByDisplayValue('Honorarios');
+    fireEvent.change(input('Fecha'), { target: { value: '2099-01-01' } });
+    submit();
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Fecha posterior al fin del proyecto')).toBeTruthy();
+    expect(api.updateProjectCost.mock.calls[0]![2]).toEqual({ expectedRevision: 4, costDate: '2099-01-01' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Guardar igualmente' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(api.updateProjectCost).toHaveBeenCalledTimes(2);
+    expect(api.updateProjectCost.mock.calls[1]![2]).toEqual({ expectedRevision: 4, costDate: '2099-01-01', confirmAfterProjectEnd: true });
+  });
+
+  it('el frontend no decide: una fecha futura se envía igual y es el backend quien pide (o no) la confirmación', async () => {
+    api.createProjectCost.mockResolvedValue(cost());
+    renderModal({ mode: 'create' });
+    await fillCreate({ date: '2999-01-01' });
+    submit();
+    await waitFor(() => expect(api.createProjectCost).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });
 

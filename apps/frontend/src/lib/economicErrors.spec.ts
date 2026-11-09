@@ -27,6 +27,7 @@ describe('describeEconomicError', () => {
     ['COST_NO_CHANGES', 409, 'no-changes', 'No hay cambios para guardar.'],
     ['COST_NOT_FOUND', 404, 'not-found', 'Este costo ya no existe en el proyecto.'],
     ['COST_BEFORE_PROJECT_START_CONFIRMATION_REQUIRED', 409, 'confirmation', 'La fecha del costo es anterior al inicio del proyecto.'],
+    ['COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED', 409, 'confirmation', 'La fecha del costo es posterior a la fecha estimada de finalización del proyecto.'],
     ['COST_CATEGORY_NOT_IN_CURRENT_BUDGET', 400, 'validation', 'Este rubro no forma parte del presupuesto vigente.'],
     ['PROJECT_HAS_NO_CURRENT_BUDGET', 409, 'validation', 'No se puede registrar un costo porque el proyecto no tiene un presupuesto vigente con rubros disponibles.'],
     ['TASK_NOT_AVAILABLE_FOR_PROJECT', 400, 'validation', 'La tarea no existe o no pertenece a este proyecto.'],

@@ -49,9 +49,16 @@ describe('toCreateCostDto', () => {
     expect(typeof dto.amount).toBe('string');
     expect('taskId' in dto).toBe(false);
     expect('confirmBeforeProjectStart' in dto).toBe(false);
+    expect('confirmAfterProjectEnd' in dto).toBe(false);
   });
   it('con tarea elegida envía taskId; la confirmación RN-21 solo cuando se pide', () => {
     expect(toCreateCostDto({ ...valid, taskId: 't9' }, true)).toMatchObject({ taskId: 't9', confirmBeforeProjectStart: true });
+  });
+  it('BUG-10: la confirmación de fecha posterior al fin es un flag aparte y solo viaja cuando se pide', () => {
+    const dto = toCreateCostDto(valid, false, true);
+    expect(dto.confirmAfterProjectEnd).toBe(true);
+    expect('confirmBeforeProjectStart' in dto).toBe(false);
+    expect('confirmAfterProjectEnd' in toCreateCostDto(valid, true)).toBe(false);
   });
 });
 
@@ -89,5 +96,12 @@ describe('edición', () => {
   it('la confirmación RN-21 se agrega solo cuando se pide', () => {
     expect(toUpdateCostDto({ ...costFormFromCost(cost), costDate: '2020-01-01' }, cost, true).confirmBeforeProjectStart).toBe(true);
     expect('confirmBeforeProjectStart' in toUpdateCostDto({ ...costFormFromCost(cost), costDate: '2020-01-01' }, cost)).toBe(false);
+  });
+  it('BUG-10: la confirmación de fecha posterior al fin es un flag aparte y solo viaja cuando se pide', () => {
+    const changed = { ...costFormFromCost(cost), costDate: '2099-01-01' };
+    const dto = toUpdateCostDto(changed, cost, false, true);
+    expect(dto.confirmAfterProjectEnd).toBe(true);
+    expect('confirmBeforeProjectStart' in dto).toBe(false);
+    expect('confirmAfterProjectEnd' in toUpdateCostDto(changed, cost, true)).toBe(false);
   });
 });

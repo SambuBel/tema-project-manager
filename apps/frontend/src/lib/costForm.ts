@@ -79,7 +79,7 @@ function canonicalAmount(raw: string): string {
 
 /**
  * Alta. NO envía moneda: el costo siempre se registra en la ÚNICA moneda del proyecto y la deriva el backend. `taskId` solo viaja si se eligió una tarea; `confirmBeforeProjectStart` solo en el reenvío confirmado de RN-21. */
-export function toCreateCostDto(state: CostFormState, confirmBeforeProjectStart = false): CreateCostDto {
+export function toCreateCostDto(state: CostFormState, confirmBeforeProjectStart = false, confirmAfterProjectEnd = false): CreateCostDto {
   const dto: CreateCostDto = {
     costDate: state.costDate,
     amount: canonicalAmount(state.amount),
@@ -88,6 +88,7 @@ export function toCreateCostDto(state: CostFormState, confirmBeforeProjectStart 
   };
   if (state.taskId !== '') dto.taskId = state.taskId;
   if (confirmBeforeProjectStart) dto.confirmBeforeProjectStart = true;
+  if (confirmAfterProjectEnd) dto.confirmAfterProjectEnd = true;
   return dto;
 }
 
@@ -108,7 +109,7 @@ export function changedCostFields(state: CostFormState, original: Cost): Array<k
  * Edición parcial: solo lo que cambió, más `expectedRevision` (el del detalle recién traído). `taskId: null` quita la tarea;
  * omitirlo la conserva. Sin cambios se envía igual: el backend responde COST_NO_CHANGES y la UI lo muestra como aviso.
  */
-export function toUpdateCostDto(state: CostFormState, original: Cost, confirmBeforeProjectStart = false): UpdateCostDto {
+export function toUpdateCostDto(state: CostFormState, original: Cost, confirmBeforeProjectStart = false, confirmAfterProjectEnd = false): UpdateCostDto {
   const dto: UpdateCostDto = { expectedRevision: original.revision };
   for (const field of changedCostFields(state, original)) {
     switch (field) {
@@ -130,5 +131,6 @@ export function toUpdateCostDto(state: CostFormState, original: Cost, confirmBef
     }
   }
   if (confirmBeforeProjectStart) dto.confirmBeforeProjectStart = true;
+  if (confirmAfterProjectEnd) dto.confirmAfterProjectEnd = true;
   return dto;
 }

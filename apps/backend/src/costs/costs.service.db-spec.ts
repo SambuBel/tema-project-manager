@@ -48,11 +48,11 @@ async function createUser(label: string, roles: RoleName[]): Promise<RequestUser
   return { id, name: label, roles } as RequestUser;
 }
 
-async function createProject(leaderId: string, startDate: string | null = null): Promise<string> {
+async function createProject(leaderId: string, startDate: string | null = null, estimatedEndDate: string | null = null): Promise<string> {
   const n = `${SUFFIX}-${projectIds.length}`;
   const [{ id }] = await dataSource.query(
-    `INSERT INTO projects (name, slug, status, leader_id, created_by, start_date) VALUES ($1, $2, 'PLANNED', $3, $3, $4) RETURNING id`,
-    [`Test ${n}`, `test-${n}`, leaderId, startDate],
+    `INSERT INTO projects (name, slug, status, leader_id, created_by, start_date, estimated_end_date) VALUES ($1, $2, 'PLANNED', $3, $3, $4, $5) RETURNING id`,
+    [`Test ${n}`, `test-${n}`, leaderId, startDate, estimatedEndDate],
   );
   projectIds.push(id);
   return id as string;
@@ -271,7 +271,7 @@ describe('RN-21: fecha anterior al inicio del proyecto (inicio = 2026-10-01)', (
     const [audit] = await dataSource.query(`SELECT new_values FROM audit_logs WHERE entity_id = $1`, [created.id]);
     expect(audit.new_values.confirmedBeforeProjectStart).toBe(true);
   });
-  it.each(['2026-10-01', '2026-10-02', '2099-01-01'])('fecha %s (igual, posterior o futura): sin confirmación y flag en false', async (costDate) => {
+  it.each(['2026-10-01', '2026-10-02', '2099-01-01'])('fecha %s (igual, posterior o futura; este proyecto NO tiene fecha de fin): sin confirmación y flag en false', async (costDate) => {
     const created = await costs.create(projectId, cost({ costDate }), admin);
     const [audit] = await dataSource.query(`SELECT new_values FROM audit_logs WHERE entity_id = $1`, [created.id]);
     expect(audit.new_values.confirmedBeforeProjectStart).toBe(false);
@@ -280,6 +280,66 @@ describe('RN-21: fecha anterior al inicio del proyecto (inicio = 2026-10-01)', (
     const noStart = await createProject(leader.id, null);
     await withBudget(noStart);
     await expect(costs.create(noStart, cost({ costDate: '1990-01-01' }), admin)).resolves.toMatchObject({ costDate: '1990-01-01' });
+  });
+});
+
+describe('BUG-10: fecha posterior al fin ESTIMADO del proyecto (inicio 2026-10-01, fin 2026-12-31)', () => {
+  let proj: string;
+  beforeEach(async () => {
+    proj = await createProject(leader.id, '2026-10-01', '2026-12-31');
+    await withBudget(proj);
+  });
+  const lastCostAudit = async (id: string) => (await dataSource.query(`SELECT new_values FROM audit_logs WHERE entity_id = $1`, [id]))[0].new_values;
+
+  it('posterior al fin SIN confirmar: 409 con code, costDate y projectEndDate, y no se crea nada', async () => {
+    const error = (await costs.create(proj, cost({ costDate: '2027-01-01' }), admin).catch((e: unknown) => e)) as ConflictException;
+    expect(error).toBeInstanceOf(ConflictException);
+    expect(error.getResponse()).toEqual({
+      code: 'COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED',
+      message: expect.any(String),
+      costDate: '2027-01-01',
+      projectEndDate: '2026-12-31',
+    });
+    expect(await costsOf(proj)).toBe(0);
+  });
+  it('2099-01-01 con fin estimado en 2026: pide confirmación', async () => {
+    await expect(costs.create(proj, cost({ costDate: '2099-01-01' }), admin)).rejects.toMatchObject({ response: { code: 'COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED' } });
+  });
+  it('posterior al fin CON confirmación: se registra y la auditoría deja confirmedAfterProjectEnd = true', async () => {
+    const created = await costs.create(proj, cost({ costDate: '2027-01-01', confirmAfterProjectEnd: true }), admin);
+    expect(created).toMatchObject({ costDate: '2027-01-01' });
+    expect(await lastCostAudit(created.id)).toMatchObject({ confirmedAfterProjectEnd: true, confirmedBeforeProjectStart: false });
+  });
+  it.each(['2026-10-01', '2026-11-15', '2026-12-31'])('fecha %s (igual al inicio, dentro del período, igual al fin): se registra sin confirmación', async (costDate) => {
+    const created = await costs.create(proj, cost({ costDate }), admin);
+    expect(await lastCostAudit(created.id)).toMatchObject({ confirmedAfterProjectEnd: false, confirmedBeforeProjectStart: false });
+  });
+  it('anterior al inicio: RN-21 sigue pidiendo SU confirmación', async () => {
+    await expect(costs.create(proj, cost({ costDate: '2026-09-30' }), admin)).rejects.toMatchObject({ response: { code: 'COST_BEFORE_PROJECT_START_CONFIRMATION_REQUIRED' } });
+  });
+  it('proyecto SIN fecha de fin: una fecha futura se registra sin confirmación', async () => {
+    const noEnd = await createProject(leader.id, '2026-10-01', null);
+    await withBudget(noEnd);
+    await expect(costs.create(noEnd, cost({ costDate: '2099-01-01' }), admin)).resolves.toMatchObject({ costDate: '2099-01-01' });
+  });
+
+  describe('al editar', () => {
+    const seed = () => costs.create(proj, cost({ costDate: '2026-11-15' }), admin);
+
+    it('mover la fecha a una posterior al fin sin confirmar: 409 y nada cambia; con confirmación se guarda y se audita', async () => {
+      const created = await seed();
+      const error = (await costs.update(proj, created.id, { expectedRevision: 1, costDate: '2027-01-01' }, admin).catch((e: unknown) => e)) as ConflictException;
+      expect(error.getResponse()).toEqual({ code: 'COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED', message: expect.any(String), costDate: '2027-01-01', projectEndDate: '2026-12-31' });
+      expect((await dataSource.query(`SELECT revision FROM costs WHERE id = $1`, [created.id]))[0].revision).toBe(1);
+
+      await costs.update(proj, created.id, { expectedRevision: 1, costDate: '2027-01-01', confirmAfterProjectEnd: true }, admin);
+      const [audit] = await dataSource.query(`SELECT new_values FROM audit_logs WHERE entity_id = $1 AND action = 'COST_UPDATED'`, [created.id]);
+      expect(audit.new_values.change.confirmedAfterProjectEnd).toBe(true);
+    });
+    it('editar OTRO dato de un costo que ya está posterior al fin NO vuelve a pedir confirmación', async () => {
+      const created = await costs.create(proj, cost({ costDate: '2027-02-01', confirmAfterProjectEnd: true }), admin);
+      await expect(costs.update(proj, created.id, { expectedRevision: 1, description: 'Corrección' }, admin)).resolves.toMatchObject({ description: 'Corrección', revision: 2 });
+    });
   });
 });
 
@@ -299,7 +359,7 @@ describe('auditoría y atomicidad', () => {
       old_values: null,
       new_values: {
         projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '150000.50', currency: 'ARS',
-        costDate: '2026-10-25', description: 'Licencias de software', budgetVersion: 1, confirmedBeforeProjectStart: false,
+        costDate: '2026-10-25', description: 'Licencias de software', budgetVersion: 1, confirmedBeforeProjectStart: false, confirmedAfterProjectEnd: false,
       },
     });
     const [{ same }] = await dataSource.query(
@@ -518,7 +578,7 @@ describe('COST-02: detalle y edición', () => {
     revision: number; deleted_at: Date | null; updated_micro: string; created_by: string;
   };
   type Json = Record<string, unknown>;
-  type AuditRow = { old_values: Json; new_values: Json & { change: { changedFields: string[]; categoryValidatedAgainstBudgetVersion: number | null; confirmedBeforeProjectStart: boolean } }; user_id: string; origin: string };
+  type AuditRow = { old_values: Json; new_values: Json & { change: { changedFields: string[]; categoryValidatedAgainstBudgetVersion: number | null; confirmedBeforeProjectStart: boolean; confirmedAfterProjectEnd: boolean } }; user_id: string; origin: string };
   const raw = async (id: string) =>
     (
       await dataSource.query(
@@ -756,7 +816,7 @@ describe('COST-02: detalle y edición', () => {
       expect(audit.new_values).toEqual({
         projectId, taskId: null, costCategoryId: cats.rrhh, categoryName: 'Recursos humanos', amount: '200.50', currency: 'ARS',
         costDate: '2026-10-25', description: 'Nueva', revision: 2,
-        change: { changedFields: ['amount', 'description'], categoryValidatedAgainstBudgetVersion: null, confirmedBeforeProjectStart: false },
+        change: { changedFields: ['amount', 'description'], categoryValidatedAgainstBudgetVersion: null, confirmedBeforeProjectStart: false, confirmedAfterProjectEnd: false },
       });
       const [{ same }] = await dataSource.query(
         `SELECT (SELECT xmin::text FROM costs WHERE id = $1) = (SELECT xmin::text FROM audit_logs WHERE entity_id = $1 AND action = 'COST_UPDATED') AS same`,

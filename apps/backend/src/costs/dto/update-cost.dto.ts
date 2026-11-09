@@ -59,4 +59,8 @@ export class UpdateCostDto implements IUpdateCostDto {
   @IsOptional()
   @IsBoolean({ message: 'confirmBeforeProjectStart debe ser true o false' })
   confirmBeforeProjectStart?: boolean;
+
+  @IsOptional()
+  @IsBoolean({ message: 'confirmAfterProjectEnd debe ser true o false' })
+  confirmAfterProjectEnd?: boolean;
 }

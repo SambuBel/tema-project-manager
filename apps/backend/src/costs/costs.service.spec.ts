@@ -30,6 +30,8 @@ type Opts = {
   projectExists?: boolean;
   lockedProjectExists?: boolean;
   startDate?: string | null;
+  /** Fin estimado del proyecto (BUG-10). Por defecto null: sin fecha de fin no se aplica la validación. */
+  endDate?: string | null;
   category?: { id: string; name: string; active: boolean } | null;
   budget?: { id: string; version: number } | null;
   budgetVersions?: number;
@@ -51,7 +53,7 @@ function build(opts: Opts = {}) {
         calls.push('lock-project');
         expect(sql).toContain('FOR SHARE');
         expect(sql).not.toContain('FOR UPDATE');
-        return opts.lockedProjectExists === false ? [] : [{ startDate: opts.startDate === undefined ? '2026-10-01' : opts.startDate, economicCurrency: opts.projectCurrency ?? 'ARS' }];
+        return opts.lockedProjectExists === false ? [] : [{ startDate: opts.startDate === undefined ? '2026-10-01' : opts.startDate, projectEndDate: opts.endDate === undefined ? null : opts.endDate, economicCurrency: opts.projectCurrency ?? 'ARS' }];
       }
       if (sql.includes('FROM cost_categories')) {
         calls.push('lock-category');
@@ -297,9 +299,75 @@ describe('CostsService.create', () => {
       const { service } = build({ startDate: null });
       await expect(service.create(PROJECT_ID, { ...dto, costDate: '1999-01-01' }, admin)).resolves.toBeDefined();
     });
-    it('una fecha futura se acepta', async () => {
+    it('proyecto SIN fecha de fin: una fecha futura se acepta (no se bloquea por ser posterior a hoy)', async () => {
       const { service } = build();
       await expect(service.create(PROJECT_ID, { ...dto, costDate: '2099-12-31' }, admin)).resolves.toBeDefined();
+    });
+  });
+
+  describe('BUG-10: fecha posterior al fin ESTIMADO del proyecto (inicio 2026-10-01, fin 2026-12-31)', () => {
+    const project = { startDate: '2026-10-01', endDate: '2026-12-31' };
+    const audit = (saved: Array<Record<string, unknown>>) => saved.find((r) => r.__entity === AuditLogEntity)!.newValues;
+
+    it('1. anterior al inicio: RN-21 sigue pidiendo confirmación (con su código, no el nuevo)', async () => {
+      const { service } = build(project);
+      const error = (await errorOf(service.create(PROJECT_ID, { ...dto, costDate: '2026-09-30' }, admin))) as ConflictException;
+      expect(error.getResponse()).toMatchObject({ code: 'COST_BEFORE_PROJECT_START_CONFIRMATION_REQUIRED', projectStartDate: '2026-10-01' });
+    });
+    it.each([['2. igual al inicio', '2026-10-01'], ['3. dentro del período', '2026-11-15'], ['4. igual al fin', '2026-12-31']])('%s (%s): se registra sin confirmación y ambos flags quedan en false', async (_n, costDate) => {
+      const { service, saved } = build(project);
+      await service.create(PROJECT_ID, { ...dto, costDate }, admin);
+      expect(audit(saved)).toMatchObject({ confirmedBeforeProjectStart: false, confirmedAfterProjectEnd: false });
+    });
+    it('5. posterior al fin sin confirmar: 409 con code, costDate y projectEndDate (sin importes) y sin escrituras', async () => {
+      const { service, calls } = build(project);
+      const error = (await errorOf(service.create(PROJECT_ID, { ...dto, costDate: '2027-01-01' }, admin))) as ConflictException;
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(error.getResponse()).toEqual({
+        code: 'COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED',
+        message: expect.any(String),
+        costDate: '2027-01-01',
+        projectEndDate: '2026-12-31',
+      });
+      expect(JSON.stringify(error.getResponse())).not.toMatch(/150000|amount/);
+      for (const write of WRITES) expect(calls).not.toContain(write);
+    });
+    it('5b. una fecha como 2099-01-01 también pide confirmación (está después del fin)', async () => {
+      const { service } = build(project);
+      await expect(service.create(PROJECT_ID, { ...dto, costDate: '2099-01-01' }, admin)).rejects.toMatchObject({
+        response: { code: 'COST_AFTER_PROJECT_END_CONFIRMATION_REQUIRED' },
+      });
+    });
+    it('6. posterior al fin CON confirmación: se registra y la auditoría deja confirmedAfterProjectEnd = true', async () => {
+      const { service, saved } = build(project);
+      await service.create(PROJECT_ID, { ...dto, costDate: '2027-01-01', confirmAfterProjectEnd: true }, admin);
+      expect(audit(saved)).toMatchObject({ confirmedAfterProjectEnd: true, confirmedBeforeProjectStart: false });
+    });
+    it('confirmAfterProjectEnd = false equivale a no confirmar', async () => {
+      const { service } = build(project);
+      await expect(service.create(PROJECT_ID, { ...dto, costDate: '2027-01-01', confirmAfterProjectEnd: false }, admin)).rejects.toBeInstanceOf(ConflictException);
+    });
+    it('cada confirmación es independiente: confirmBeforeProjectStart NO habilita una fecha posterior al fin', async () => {
+      const { service } = build(project);
+      await expect(service.create(PROJECT_ID, { ...dto, costDate: '2027-01-01', confirmBeforeProjectStart: true }, admin)).rejects.toBeInstanceOf(ConflictException);
+    });
+    it('confirmar sin necesidad no deja el flag en true', async () => {
+      const { service, saved } = build(project);
+      await service.create(PROJECT_ID, { ...dto, costDate: '2026-11-15', confirmAfterProjectEnd: true }, admin);
+      expect(audit(saved)).toMatchObject({ confirmedAfterProjectEnd: false });
+    });
+    it('7. proyecto SIN fecha de fin: una fecha futura se acepta y el flag queda en false', async () => {
+      const { service, saved } = build({ startDate: '2026-10-01', endDate: null });
+      await service.create(PROJECT_ID, { ...dto, costDate: '2099-12-31' }, admin);
+      expect(audit(saved)).toMatchObject({ confirmedAfterProjectEnd: false });
+    });
+    it('la fecha de fin se lee del proyecto bajo el mismo lock FOR SHARE (no una consulta aparte)', async () => {
+      const { manager, service } = build(project);
+      await service.create(PROJECT_ID, dto, admin);
+      const projectQueries = manager.query.mock.calls.map((c) => String(c[0])).filter((sql) => sql.includes('FROM projects'));
+      expect(projectQueries).toHaveLength(1);
+      expect(projectQueries[0]).toMatch(/estimated_end_date/);
+      expect(projectQueries[0]).toContain('FOR SHARE');
     });
   });
 
