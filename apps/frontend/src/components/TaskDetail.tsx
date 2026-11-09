@@ -20,6 +20,7 @@ import { MilestoneStatusBadge } from './milestones/MilestoneStatusBadge';
 
 import { TaskStatusDropdown } from './TaskStatusDropdown';
 import { TaskTimeline } from './TaskTimeline';
+import { taskLoadErrorMessage } from '../lib/loadErrors';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
 import { TaskAttachments } from './TaskAttachments';
 
@@ -60,7 +61,7 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
   const [milestoneError, setMilestoneError] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const { data: task, isLoading, isError } = useQuery({
+  const { data: task, isLoading, isError, error } = useQuery({
     queryKey: ['task', taskId],
     queryFn: () => api.getTask(taskId, projectId),
   });
@@ -182,7 +183,7 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
         <button onClick={onBack} className="self-start text-sm text-[#607185] hover:underline">
           &larr; Volver a tareas
         </button>
-        <p className="text-sm text-red-600">Error al cargar la tarea.</p>
+        <p className="text-sm text-red-600">{taskLoadErrorMessage(error)}</p>
       </div>
     );
   }

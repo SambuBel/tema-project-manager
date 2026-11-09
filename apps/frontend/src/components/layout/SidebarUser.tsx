@@ -58,7 +58,7 @@ export function SidebarUser({ user }: { user: AuthenticatedUser }) {
       <ConfirmDialog
         open={confirmOpen}
         title="Cerrar sesión"
-        description="Vas a tener que volver a iniciar sesión con Google para seguir usando TEMA."
+        description="Vas a tener que volver a iniciar sesión para seguir usando TEMA."
         confirmLabel="Cerrar sesión"
         variant="danger"
         isConfirming={logout.isPending}

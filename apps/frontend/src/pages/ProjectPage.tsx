@@ -14,6 +14,7 @@ import { ProjectGantt } from '../components/gantt/ProjectGantt';
 import { MilestonesManager } from '../components/milestones/MilestonesManager';
 import { EconomyTab } from '../components/economy/EconomyTab';
 import { useCurrentUser } from '../hooks/useCurrentUser';
+import { projectLoadErrorMessage } from '../lib/loadErrors';
 import { canManageProjectUI, canManageTeamUI, canViewEconomicDataUI } from '../lib/permissions';
 import type { ProjectStatus, TaskPriority } from '@tema/shared-types';
 
@@ -104,7 +105,7 @@ export function ProjectPage() {
     });
   };
 
-  const { data: project, isLoading, isError } = useQuery({
+  const { data: project, isLoading, isError, error } = useQuery({
     queryKey: ['project', projectId],
     queryFn: () => api.getProject(projectId),
     enabled: !!projectId,
@@ -142,7 +143,7 @@ export function ProjectPage() {
         <button onClick={() => navigate('/')} className="self-start text-sm text-[#607185] hover:underline">
           &larr; Volver
         </button>
-        <p className="text-red-600">Error al cargar el proyecto.</p>
+        <p className="text-red-600">{projectLoadErrorMessage(error)}</p>
       </div>
     );
   }

@@ -1,5 +1,6 @@
 import { ApiRequestError } from './api';
 import { formatAmount } from './money';
+import { retryUnlessClientError } from './queryRetry';
 
 /**
  * Traduce los errores del backend económico a mensajes para el usuario. Un único mapa, así todas las pantallas (presupuesto
@@ -91,10 +92,7 @@ export function describeEconomicError(error: unknown): DescribedError {
 }
 
 /** Las consultas económicas no se reintentan ante un error del cliente (403, 404, 409...): no se repite lo que va a volver a fallar. */
-export function economicQueryRetry(failureCount: number, error: unknown): boolean {
-  if (error instanceof ApiRequestError && error.status >= 400 && error.status < 500) return false;
-  return failureCount < 1;
-}
+export const economicQueryRetry = retryUnlessClientError;
 
 /** Igual que describeEconomicError, pero el 403 habla de perfiles de recurso (el catálogo es global, no de un proyecto). */
 export function describeResourceProfileError(error: unknown): DescribedError {
