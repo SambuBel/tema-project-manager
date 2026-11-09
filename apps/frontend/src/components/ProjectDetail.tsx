@@ -9,6 +9,8 @@ import type { MilestoneStatus, Project } from '@tema/shared-types';
 interface ProjectDetailProps {
   project: Project;
   onManageTeam: () => void;
+  /** canManageTeamUI: sin permiso no se ofrece "Gestionar equipo" (la pestaña Equipo sigue visible, en solo lectura). */
+  canManageTeam: boolean;
   onViewMilestones?: () => void;
 }
 
@@ -31,7 +33,7 @@ const MILESTONE_STATUS_STYLES: Record<MilestoneStatus, { bg: string; text: strin
   COMPLETED: { bg: 'bg-[#EAF5EA]', text: 'text-[#2E7D32]', label: 'Alcanzado' },
 };
 
-export function ProjectDetail({ project, onManageTeam, onViewMilestones }: ProjectDetailProps) {
+export function ProjectDetail({ project, onManageTeam, canManageTeam, onViewMilestones }: ProjectDetailProps) {
   const { data: upcomingMilestones, isLoading: loadingMilestones, isError: errorMilestones } = useQuery({
     queryKey: ['milestones-upcoming', project.id],
     queryFn: () => api.listMilestones(project.id, { upcoming: true, limit: 3 }),
@@ -124,12 +126,14 @@ export function ProjectDetail({ project, onManageTeam, onViewMilestones }: Proje
             </p>
           </div>
 
-          <button
-            onClick={onManageTeam}
-            className="mt-auto w-full rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
-          >
-            Gestionar equipo
-          </button>
+          {canManageTeam && (
+            <button
+              onClick={onManageTeam}
+              className="mt-auto w-full rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
+            >
+              Gestionar equipo
+            </button>
+          )}
         </div>
       </div>
 

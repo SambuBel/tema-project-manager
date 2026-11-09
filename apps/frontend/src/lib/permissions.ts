@@ -40,6 +40,20 @@ export function canCreateProjectUI(user: AuthenticatedUser): boolean {
   return hasAnyRole(user.roles, ['ADMIN', 'PROGRAM_MANAGER', 'PROJECT_LEADER']);
 }
 
+/**
+ * Espeja ExportService.checkExportPermission (BUG-14): ADMIN, PM y líder real exportan todo; un COLLABORATOR
+ * (rol LOCAL) también, pero el backend le limita el archivo a SUS tareas. OBSERVER local y quien no es miembro
+ * reciben 403, así que no se les ofrece el menú. El Gantt NO usa esta regla (el backend lo permite por ver el proyecto).
+ */
+export function canExportTasksUI(
+  user: AuthenticatedUser,
+  project: Pick<Project, 'leaderId'>,
+  membership: Pick<ProjectMember, 'projectRole'> | null,
+): boolean {
+  if (isAdminPmOrLeader(user, project)) return true;
+  return membership?.projectRole === 'COLLABORATOR';
+}
+
 /** Espeja PermissionsService.canManageProject. */
 export function canManageProjectUI(user: AuthenticatedUser, project: Pick<Project, 'leaderId'>): boolean {
   return isAdminPmOrLeader(user, project);

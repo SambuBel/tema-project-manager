@@ -68,6 +68,7 @@ function renderDetail(upcoming: MilestoneSummaryDto[] = upcomingMilestonesSample
         <ProjectDetail
           project={mockProject}
           onManageTeam={vi.fn()}
+          canManageTeam={true}
           onViewMilestones={vi.fn()}
         />
       </MemoryRouter>

@@ -14,7 +14,7 @@ import { ProjectGantt } from '../components/gantt/ProjectGantt';
 import { MilestonesManager } from '../components/milestones/MilestonesManager';
 import { EconomyTab } from '../components/economy/EconomyTab';
 import { useCurrentUser } from '../hooks/useCurrentUser';
-import { canManageProjectUI, canViewEconomicDataUI } from '../lib/permissions';
+import { canManageProjectUI, canManageTeamUI, canViewEconomicDataUI } from '../lib/permissions';
 import type { ProjectStatus, TaskPriority } from '@tema/shared-types';
 
 /* Helpers */
@@ -310,7 +310,7 @@ export function ProjectPage() {
       {/* Contenido de la vista activa */}
 
       {view === 'resumen' && (
-        <ProjectDetail project={project} onManageTeam={() => setView('equipo')} onViewMilestones={() => setView('hitos')} />
+        <ProjectDetail project={project} onManageTeam={() => setView('equipo')} canManageTeam={canManageTeamUI(user, project)} onViewMilestones={() => setView('hitos')} />
       )}
 
       {view === 'tablero' && (

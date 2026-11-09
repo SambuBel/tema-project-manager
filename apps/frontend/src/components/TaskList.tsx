@@ -4,7 +4,7 @@ import { keepPreviousData, useIsFetching, useQuery, useQueryClient } from '@tans
 import { api, ApiRequestError } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useMyMembership } from '../hooks/useMyMembership';
-import { canAddSubtaskUI, canCreateTaskUI } from '../lib/permissions';
+import { canAddSubtaskUI, canCreateTaskUI, canExportTasksUI } from '../lib/permissions';
 import { SubtaskCreateModal } from './SubtaskCreateModal';
 import { CreateTaskDrawer } from './CreateTaskDrawer';
 import type { Task, TaskStatus, TaskPriority, TaskFilters } from '../types/task';
@@ -582,6 +582,7 @@ export function TaskList({
   const { membership } = useMyMembership(projectId);
   const { blockedIds } = useBlockedTasks(projectId);
   const canCreateSubtask = !!currentUser && !!project.data && canCreateTaskUI(currentUser, project.data, membership);
+  const canExportTasks = !!currentUser && !!project.data && canExportTasksUI(currentUser, project.data, membership);
   const canAddSubtaskTo = (task: Task) =>
     !!currentUser && !!project.data && canAddSubtaskUI(currentUser, task, project.data, membership);
 
@@ -738,13 +739,16 @@ export function TaskList({
           En riesgo ({counts.atRisk})
         </button>
 
-        <ExportDropdown
-          disabled={isExporting}
-          options={[
-            { label: 'Exportar CSV', onClick: handleExportCsv },
-            { label: 'Exportar PDF', onClick: handleExportPdf },
-          ]}
-        />
+        {/* Mismo permiso que el backend (checkExportPermission): el observador y quien no es miembro reciben 403. */}
+        {canExportTasks && (
+          <ExportDropdown
+            disabled={isExporting}
+            options={[
+              { label: 'Exportar CSV', onClick: handleExportCsv },
+              { label: 'Exportar PDF', onClick: handleExportPdf },
+            ]}
+          />
+        )}
 
         {/* Alta de tareas: nunca puede -> no se renderiza (no solo deshabilitado) */}
         {canCreateSubtask && (

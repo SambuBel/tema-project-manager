@@ -13,7 +13,7 @@ import { RolesMatrixPage } from './pages/RolesMatrixPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { RequireRole } from './components/auth/RequireRole';
 import { ResourceProfilesPage } from './pages/ResourceProfilesPage';
-import { canViewResourceProfilesUI, canViewUsersUI } from './lib/permissions';
+import { canCreateProjectUI, canViewResourceProfilesUI, canViewUsersUI } from './lib/permissions';
 import { NotificationsPage } from './pages/NotificationsPage';
 
 export function App() {
@@ -28,7 +28,10 @@ export function App() {
       <Route element={<RequireAuth />}>
         <Route element={<AppLayout />}>
           <Route index element={<HomePage />} />
-          <Route path="projects/new" element={<CreateProjectPage />} />
+          {/* Mismo permiso que POST /projects (ADMIN, PM, PROJECT_LEADER): sin él no se muestra un formulario que el backend rechazaría. */}
+          <Route element={<RequireRole allow={canCreateProjectUI} />}>
+            <Route path="projects/new" element={<CreateProjectPage />} />
+          </Route>
           <Route path="projects/:projectId/edit" element={<EditProjectPage />} />
           <Route path="tasks/:taskId/edit" element={<EditTaskPage />} />
           <Route path="projects/:projectId/*" element={<ProjectPage />} />
