@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Param, Patch, Post, Delete, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Param, ParseUUIDPipe, Patch, Post, Delete, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -29,7 +29,6 @@ export class UsersController {
     private readonly permissions: PermissionsService,
   ) {}
 
-  /** Alta de usuario: solo ADMIN (matriz: "Crear/eliminar usuario"). El login con Google ya no crea cuentas. */
   @Post()
   @UseGuards(RolesGuard)
   @Roles(RoleName.ADMIN)
@@ -46,7 +45,7 @@ export class UsersController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string, @CurrentUser() user: RequestUser) {
+  async findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: RequestUser) {
     if (!this.permissions.canViewUsers(user)) {
       throw new ForbiddenException('No tenés permiso para ver este usuario.');
     }
@@ -54,17 +53,17 @@ export class UsersController {
   }
 
   @Patch(':id/status')
-  updateStatus(@Param('id') id: string, @Body() dto: UpdateUserStatusDto, @CurrentUser() user: RequestUser) {
+  updateStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateUserStatusDto, @CurrentUser() user: RequestUser) {
     return this.usersService.setActive(id, dto.active, user);
   }
 
   @Post(':id/roles')
-  assignRole(@Param('id') id: string, @Body() dto: AssignRoleDto, @CurrentUser() user: RequestUser) {
+  assignRole(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AssignRoleDto, @CurrentUser() user: RequestUser) {
     return this.usersService.assignRole(id, dto.role, user);
   }
 
   @Delete(':id/roles/:role')
-  removeRole(@Param('id') id: string, @Param('role') role: string, @CurrentUser() user: RequestUser) {
+  removeRole(@Param('id', ParseUUIDPipe) id: string, @Param('role') role: string, @CurrentUser() user: RequestUser) {
     // Validación real del valor de `role` pasa por el catálogo en UsersService
     // (si no existe, 400) — acá solo se castea para que el tipo coincida.
     return this.usersService.removeRole(id, role as RoleName, user);

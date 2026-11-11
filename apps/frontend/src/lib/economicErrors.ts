@@ -1,3 +1,4 @@
+import type { BudgetErrorCode, CostCategoryErrorCode } from '@tema/shared-types';
 import { ApiRequestError } from './api';
 import { formatAmount } from './money';
 import { retryUnlessClientError } from './queryRetry';
@@ -24,7 +25,8 @@ export interface DescribedError {
 export const FORBIDDEN_RESOURCE_PROFILES_MESSAGE = 'No tenés permisos para acceder a los perfiles de recurso.';
 export const FORBIDDEN_ECONOMIC_MESSAGE = 'No tenés permisos para acceder a la información económica de este proyecto.';
 
-const BY_CODE: Record<string, { kind: EconomicErrorKind; message: string }> = {
+/** Completo a propósito: si el backend suma un código de presupuesto o de rubro, esto deja de compilar hasta traducirlo. */
+const BUDGET_ERRORS: Record<BudgetErrorCode | CostCategoryErrorCode, { kind: EconomicErrorKind; message: string }> = {
   BUDGET_VERSION_CONFLICT: { kind: 'conflict', message: 'El presupuesto fue modificado por otro usuario mientras estabas editando.' },
   BUDGET_ALREADY_EXISTS: { kind: 'conflict', message: 'Este proyecto ya tiene un presupuesto: otro usuario lo creó mientras estabas editando.' },
   BUDGET_NO_CHANGES: { kind: 'no-changes', message: 'No hay cambios para guardar.' },
@@ -33,6 +35,12 @@ const BY_CODE: Record<string, { kind: EconomicErrorKind; message: string }> = {
   BUDGET_ITEM_DUPLICATED_CATEGORY: { kind: 'validation', message: 'Un rubro no puede aparecer más de una vez.' },
   COST_CATEGORY_NOT_FOUND: { kind: 'validation', message: 'El rubro seleccionado ya no está disponible.' },
   COST_CATEGORY_INACTIVE: { kind: 'validation', message: 'El rubro seleccionado está inactivo.' },
+  BUDGET_NO_CURRENT_VERSION: { kind: 'server', message: 'El presupuesto de este proyecto está en un estado inconsistente. Avisá a un administrador.' },
+  BUDGET_VERSION_STATE_INVALID: { kind: 'server', message: 'El presupuesto de este proyecto está en un estado inconsistente. Avisá a un administrador.' },
+};
+
+const BY_CODE: Record<string, { kind: EconomicErrorKind; message: string }> = {
+  ...BUDGET_ERRORS,
   COST_VERSION_CONFLICT: { kind: 'conflict', message: 'Este costo fue modificado por otro usuario mientras estabas editando.' },
   COST_NO_CHANGES: { kind: 'no-changes', message: 'No hay cambios para guardar.' },
   COST_NOT_FOUND: { kind: 'not-found', message: 'Este costo ya no existe en el proyecto.' },
@@ -55,8 +63,6 @@ const BY_CODE: Record<string, { kind: EconomicErrorKind; message: string }> = {
   PROJECT_CURRENCY_MISMATCH: { kind: 'validation', message: 'Los importes deben expresarse en la moneda del proyecto.' },
   RESOURCE_PROFILE_CURRENCY_MISMATCH: { kind: 'validation', message: 'El perfil seleccionado utiliza una moneda diferente a la del proyecto.' },
   PROJECT_CURRENCY_IN_USE: { kind: 'validation', message: 'La moneda del proyecto ya no puede modificarse porque existen datos económicos.' },
-  BUDGET_NO_CURRENT_VERSION: { kind: 'server', message: 'El presupuesto de este proyecto está en un estado inconsistente. Avisá a un administrador.' },
-  BUDGET_VERSION_STATE_INVALID: { kind: 'server', message: 'El presupuesto de este proyecto está en un estado inconsistente. Avisá a un administrador.' },
 };
 
 function asText(value: unknown): string | null {

@@ -209,12 +209,10 @@ export class UsersService {
     }
 
     if (active) {
-      // Reactivar no puede dejar ningún proyecto sin líder: sin chequeo RN-23.
       target.active = true;
       target.deletedAt = null;
       await this.usersRepository.save(target);
     } else {
-      // Desactivar: chequeo + escritura en una transacción con lock (ver lockUser).
       await this.dataSource.transaction(async (manager) => {
         await this.lockUser(manager, id);
         await this.assertDoesNotLeadProjects(manager, id, 'desactivarlo');

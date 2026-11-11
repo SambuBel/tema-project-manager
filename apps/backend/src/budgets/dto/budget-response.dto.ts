@@ -1,5 +1,5 @@
 import type { Budget, BudgetHistoryEntry } from '@tema/shared-types';
-import { BudgetItemView } from './budget-snapshot';
+import { BudgetItemView, sortItems } from './budget-snapshot';
 import { BudgetEntity } from '../../database/entities/budget.entity';
 
 /** Contrato de respuesta (la forma vive en @tema/shared-types). `totalAmount` sigue siendo texto con 2 decimales. */
@@ -37,4 +37,36 @@ export function toBudgetResponse(budget: BudgetEntity, items: BudgetItemView[]):
 /** Versión del historial: la misma forma que `Budget` más el creador (id y nombre). */
 export class BudgetHistoryEntryDto extends BudgetResponseDto implements BudgetHistoryEntry {
   createdByUser!: { id: string; name: string };
+}
+
+/** Fila cruda de una versión tal como la devuelve la consulta del historial (fechas como las entrega el driver). */
+export interface BudgetVersionRow {
+  id: string;
+  projectId: string;
+  version: number;
+  totalAmount: string;
+  currency: string;
+  approvalDate: string;
+  isCurrent: boolean;
+  supersededAt: Date | null;
+  createdBy: string;
+  createdAt: Date;
+  createdByName: string;
+}
+
+export function toHistoryEntry(row: BudgetVersionRow, items: BudgetItemView[]): BudgetHistoryEntryDto {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    version: row.version,
+    totalAmount: row.totalAmount,
+    currency: row.currency,
+    approvalDate: row.approvalDate,
+    isCurrent: row.isCurrent,
+    supersededAt: row.supersededAt ? new Date(row.supersededAt).toISOString() : null,
+    createdBy: row.createdBy,
+    createdAt: new Date(row.createdAt).toISOString(),
+    items: sortItems(items),
+    createdByUser: { id: row.createdBy, name: row.createdByName },
+  };
 }
