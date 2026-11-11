@@ -1,5 +1,7 @@
 # Economía: moneda única por proyecto
 
+Ver también: [economia-presupuesto.md](economia-presupuesto.md).
+
 **Decisión funcional definitiva:** cada proyecto trabaja con **una única moneda económica** (`projects.economic_currency`).
 
 - Presupuesto (todas sus versiones), partidas, costos y costo estimado de recursos están **siempre** en esa moneda.

@@ -21,6 +21,7 @@ import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { UpdateMemberResourceAllocationDto } from './dto/update-member-resource-allocation.dto';
 import { calculateEstimatedCost, normalizeHours, sumEstimatedCosts } from './dto/estimated-cost';
+import { currentNotLatestError, noCurrentVersionError } from '../budgets/budget-integrity.errors';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -349,20 +350,14 @@ export class ResourceAllocationsService {
     if (budget) {
       if (budget.version !== budget.maxVersion) {
         this.logger.error(`Inconsistencia: el proyecto ${projectId} tiene como vigente la versión ${budget.version} pero la máxima es ${budget.maxVersion}.`);
-        throw new InternalServerErrorException({
-          code: 'BUDGET_VERSION_STATE_INVALID',
-          message: 'La versión vigente del presupuesto no es la de mayor número. Hay que corregirlo.',
-        });
+        throw currentNotLatestError();
       }
       return budget.id;
     }
     const [counted]: Array<{ total: number }> = await manager.query('SELECT COUNT(*)::int AS total FROM budgets WHERE project_id = $1', [projectId]);
     if (counted!.total > 0) {
       this.logger.error(`Inconsistencia: el proyecto ${projectId} tiene ${counted!.total} versión(es) de presupuesto pero NINGUNA vigente; no se crea la revisión.`);
-      throw new InternalServerErrorException({
-        code: 'BUDGET_NO_CURRENT_VERSION',
-        message: 'El proyecto tiene versiones de presupuesto pero ninguna vigente. Hay que corregirlo.',
-      });
+      throw noCurrentVersionError();
     }
     return null;
   }

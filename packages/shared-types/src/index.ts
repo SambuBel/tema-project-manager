@@ -643,3 +643,20 @@ export interface UpdateMilestoneDto {
   dueDate?: string;
   description?: string;
 }
+
+/**
+ * Códigos de error (`code` del cuerpo de la respuesta) del presupuesto. Solo tipo: el backend los lanza y el frontend los traduce a
+ * mensajes; si uno se agrega, renombra o borra, ambos dejan de compilar hasta alinearse.
+ */
+export type BudgetErrorCode =
+  | 'BUDGET_NOT_FOUND'
+  | 'BUDGET_ALREADY_EXISTS'
+  | 'BUDGET_VERSION_CONFLICT'
+  | 'BUDGET_NO_CHANGES'
+  | 'BUDGET_ITEMS_TOTAL_MISMATCH'
+  | 'BUDGET_ITEM_DUPLICATED_CATEGORY'
+  | 'BUDGET_NO_CURRENT_VERSION'
+  | 'BUDGET_VERSION_STATE_INVALID';
+
+/** Errores de rubro que comparten presupuesto y costos. */
+export type CostCategoryErrorCode = 'COST_CATEGORY_NOT_FOUND' | 'COST_CATEGORY_INACTIVE';
