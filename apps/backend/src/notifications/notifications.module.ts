@@ -47,6 +47,6 @@ import { EmailNotificationService } from './email-notification.service';
     ProjectAlertsService,
     NotificationJobsService,
   ],
-  exports: [NotificationsService, NotificationEventsService],
+  exports: [NotificationsService, NotificationEventsService, ProjectAlertsService],
 })
 export class NotificationsModule {}

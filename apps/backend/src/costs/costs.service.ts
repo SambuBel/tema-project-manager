@@ -19,6 +19,7 @@ import { ListCostsQueryDto } from './dto/list-costs-query.dto';
 import { UpdateCostDto } from './dto/update-cost.dto';
 import { CostResponseDto, CostRow, toCostResponse } from './dto/cost-response.dto';
 import { resolveProjectCurrency } from '../economy/project-currency';
+import { ProjectAlertsService } from '../notifications/project-alerts.service';
 import { noCurrentVersionError } from '../budgets/budget-integrity.errors';
 import { CostCategoryCode } from '../budgets/budget-error-codes';
 import { COST_SELECT, EDITABLE_COLUMNS, EDITABLE_FIELDS, EditableField } from './cost-queries';
@@ -43,6 +44,7 @@ export class CostsService {
     @InjectRepository(ProjectEntity) private readonly projectRepo: Repository<ProjectEntity>,
     private readonly permissions: PermissionsService,
     private readonly dataSource: DataSource,
+    private readonly projectAlerts: ProjectAlertsService,
   ) {}
 
   /** Registra un costo. 404 de proyecto ANTES que el 403 (los permisos dependen del proyecto, igual que GET /budget). */
@@ -55,7 +57,7 @@ export class CostsService {
     // Una sola transacción. El orden de los pasos es el orden de locks de la cabecera: proyecto FOR SHARE → rubro FOR SHARE →
     // lecturas (presupuesto, partida, tarea) → INSERT del costo → auditoría. Los errores salen en ESE orden (ej. los de presupuesto
     // antes que los de rubro), así que no reordenar.
-    return this.dataSource.transaction(async (manager) => {
+    const response = await this.dataSource.transaction(async (manager) => {
       const lockedProject = await this.lockProject(manager, projectId, dto.currency);
       const lockedCategory = await this.lockCategory(manager, dto.costCategoryId);
       const budget = await this.getCurrentBudgetOrThrow(manager, projectId, CREATE_TEXTS);
@@ -69,6 +71,8 @@ export class CostsService {
       const [row]: CostRow[] = await manager.query(`${COST_SELECT} WHERE c.id = $1 AND c.deleted_at IS NULL`, [saved.id]);
       return toCostResponse({ ...row!, taskTitle });
     });
+    await this.projectAlerts.checkBudgetAfterCostChange(projectId);
+    return response;
   }
 
   /**
@@ -303,7 +307,7 @@ export class CostsService {
 
     const texts = updateTexts(costId);
 
-    return this.dataSource.transaction(async (manager) => {
+    const response = await this.dataSource.transaction(async (manager) => {
       // 1) Proyecto FOR SHARE. La moneda de un costo NO se edita: es la del proyecto. Si el cliente manda otra, 400
       // PROJECT_CURRENCY_MISMATCH; si manda la misma no hay cambio. Nunca se convierte.
       const lockedProject = await this.lockProject(manager, projectId, dto.currency);
@@ -356,6 +360,8 @@ export class CostsService {
       const [row]: CostRow[] = await manager.query(`${COST_SELECT} WHERE c.id = $1 AND c.deleted_at IS NULL`, [costId]);
       return toCostResponse(row!);
     });
+    await this.projectAlerts.checkBudgetAfterCostChange(projectId);
+    return response;
   }
 
   /** 2) El costo con su rubro, FOR UPDATE OF c (importes y fechas como texto). 404 si no existe, es de otro proyecto o está dado de baja. */

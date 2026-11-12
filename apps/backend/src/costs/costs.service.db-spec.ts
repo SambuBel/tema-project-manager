@@ -13,6 +13,7 @@ import { RoleName } from '../database/enums';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { CreateCostDto } from './dto/create-cost.dto';
 import { ProjectsService } from '../projects/projects.service';
+import { ProjectAlertsService } from '../notifications/project-alerts.service';
 
 /**
  * CostsService contra PostgreSQL REAL: RN-20, RN-21, auditoría atómica, listado y concurrencia con el versionado de presupuesto.
@@ -39,7 +40,13 @@ let projectId: string;
 let costs: CostsService;
 const permissions = () => new PermissionsService(dataSource.getRepository(ProjectMemberEntity));
 
-const buildCosts = (ds: object = dataSource) => new CostsService(dataSource.getRepository(ProjectEntity), permissions(), ds as DataSource);
+const buildCosts = (ds: object = dataSource) =>
+  new CostsService(
+    dataSource.getRepository(ProjectEntity),
+    permissions(),
+    ds as DataSource,
+    { checkBudgetAfterCostChange: jest.fn().mockResolvedValue(undefined) } as unknown as ProjectAlertsService,
+  );
 const buildBudgets = () => new BudgetsService(dataSource.getRepository(BudgetEntity), dataSource.getRepository(ProjectEntity), permissions(), dataSource);
 
 async function createUser(label: string, roles: RoleName[]): Promise<RequestUser> {

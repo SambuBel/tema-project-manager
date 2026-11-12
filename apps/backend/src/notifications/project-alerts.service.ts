@@ -64,6 +64,23 @@ export class ProjectAlertsService {
     return { budgetAlerts, redAlerts };
   }
 
+  /** Reevalúa el presupuesto inmediatamente después de registrar o editar un costo. */
+  async checkBudgetAfterCostChange(projectId: string): Promise<void> {
+    try {
+      const project = await this.projects.findOne({
+        where: { id: projectId, status: ProjectStatus.IN_PROGRESS, archivedAt: IsNull() },
+      });
+      if (!project) return;
+
+      const managers = await this.programManagerIds();
+      await this.checkBudget(project, [...new Set([project.leaderId, ...managers])]);
+    } catch (error) {
+      this.logger.error(
+        'Falló la evaluación inmediata del presupuesto para el proyecto ' + projectId + ': ' + String(error),
+      );
+    }
+  }
+
   private async programManagerIds(): Promise<string[]> {
     const rows = await this.userRoles
       .createQueryBuilder('ur')

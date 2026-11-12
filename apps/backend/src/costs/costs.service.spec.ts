@@ -100,8 +100,14 @@ function build(opts: Opts = {}) {
   const dataSource = { transaction: jest.fn(async (fn: (m: typeof manager) => unknown) => fn(manager)), manager };
   const projectRepo = { findOneBy: jest.fn(async () => (opts.projectExists === false ? null : project)) };
   const membersRepo = { findOne: jest.fn() };
-  const service = new CostsService(projectRepo as never, new PermissionsService(membersRepo as never), dataSource as never);
-  return { service, manager, dataSource, calls, saved, projectRepo };
+  const projectAlerts = { checkBudgetAfterCostChange: jest.fn().mockResolvedValue(undefined) };
+  const service = new CostsService(
+    projectRepo as never,
+    new PermissionsService(membersRepo as never),
+    dataSource as never,
+    projectAlerts as never,
+  );
+  return { service, manager, dataSource, calls, saved, projectRepo, projectAlerts };
 }
 
 const errorOf = async (p: Promise<unknown>) => p.catch((e: unknown) => e);
@@ -141,10 +147,11 @@ describe('CostsService.getIncurredTotal', () => {
 
 describe('CostsService.create', () => {
   it.each([['ADMIN', admin], ['PROGRAM_MANAGER', pm], ['líder real del proyecto', realLeader]])('%s: registra el costo', async (_n, actor) => {
-    const { service, saved } = build();
+    const { service, saved, projectAlerts } = build();
     const result = await service.create(PROJECT_ID, dto, actor);
     expect(result).toMatchObject({ id: 'cost-1', projectId: PROJECT_ID, amount: '150000.50', currency: 'ARS', costDate: '2026-10-25', createdByUser: { id: 'admin-1', name: 'Alicia' } });
     expect(saved[0]).toMatchObject({ __entity: CostEntity, projectId: PROJECT_ID, taskId: null, createdBy: actor.id, amount: '150000.50' });
+    expect(projectAlerts.checkBudgetAfterCostChange).toHaveBeenCalledWith(PROJECT_ID);
   });
 
   it.each([['PROJECT_LEADER ajeno', foreignLeader], ['COLLABORATOR', collaborator], ['OBSERVER', observer], ['leaderId histórico sin el rol', staleLeader]])(
@@ -459,7 +466,12 @@ describe('CostsService.list', () => {
       ];
     });
     const projectRepo = { findOneBy: jest.fn(async () => (opts.projectExists === false ? null : project)) };
-    const service = new CostsService(projectRepo as never, new PermissionsService({ findOne: jest.fn() } as never), { manager: { query } } as never);
+    const service = new CostsService(
+      projectRepo as never,
+      new PermissionsService({ findOne: jest.fn() } as never),
+      { manager: { query } } as never,
+      { checkBudgetAfterCostChange: jest.fn() } as never,
+    );
     return { service, query };
   }
 
