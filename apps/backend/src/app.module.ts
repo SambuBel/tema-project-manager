@@ -14,12 +14,12 @@ import { CostCategoriesModule } from './cost-categories/cost-categories.module';
 import { CostsModule } from './costs/costs.module';
 import { ResourceProfilesModule } from './resource-profiles/resource-profiles.module';
 import { ResourceAllocationsModule } from './resource-allocations/resource-allocations.module';
-import { AiModule } from './ai/ai.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { MilestonesModule } from './milestones/milestones.module';
 import { envValidationSchema } from './config/env.validation';
 import { ExportModule } from './export/export.module';
 import { AttachmentsModule } from './attachments/attachments.module';
+import { AiModule } from './ai/ai.module';
 
 @Module({
   imports: [
@@ -50,10 +50,10 @@ import { AttachmentsModule } from './attachments/attachments.module';
     CostsModule,
     ResourceProfilesModule,
     ResourceAllocationsModule,
-    AiModule,
     MilestonesModule,
     NotificationsModule,
     AttachmentsModule,
+    AiModule,
   ],
   controllers: [HealthController],
 })

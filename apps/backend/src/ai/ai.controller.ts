@@ -1,9 +1,18 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { IsArray, IsOptional, IsString } from 'class-validator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RequestUser } from '../auth/types/authenticated-request-user';
-import { AiService } from './ai.service';
-import { ChatMessageDto } from './dto/chat-message.dto';
+import { AiService, MensajeHistorial } from './ai.service';
+
+export class ConsultaChatDto {
+  @IsString()
+  mensaje!: string;
+
+  @IsOptional()
+  @IsArray()
+  historial?: MensajeHistorial[];
+}
 
 @UseGuards(JwtAuthGuard)
 @Controller('ai')
@@ -11,14 +20,14 @@ export class AiController {
   constructor(private readonly aiService: AiService) {}
 
   @Post('chat')
-  async chat(@Body() dto: ChatMessageDto, @CurrentUser() user: RequestUser) {
-    const reply = await this.aiService.answer(dto, user);
-    return { reply };
-  }
-
-  /** Para que el panel muestre si esta en modo demo (reglas) o con Gemini. */
-  @Get('status')
-  status() {
-    return { mode: this.aiService.mode };
+  async chatear(
+    @Body() datos: ConsultaChatDto,
+    @CurrentUser() usuario: RequestUser,
+  ) {
+    return this.aiService.procesarMensaje(
+      datos.mensaje,
+      datos.historial ?? [],
+      usuario,
+    );
   }
 }
