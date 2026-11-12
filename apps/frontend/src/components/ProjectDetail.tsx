@@ -1,6 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import type { MilestoneStatus, Project } from '@tema/shared-types';
+import type { MilestoneStatus, Project, ProjectMemberRole } from '@tema/shared-types';
+
+const ROLE_LABELS: Record<ProjectMemberRole, string> = {
+  COLLABORATOR: 'Colaborador',
+  OBSERVER: 'Observador',
+};
+
+function getInitials(name: string): string {
+  return name
+    .split(' ')
+    .map((n) => n[0])
+    .join('')
+    .substring(0, 2)
+    .toUpperCase();
+}
 
 /**
  * Contenido de la pestaña "Resumen" del proyecto.
@@ -38,6 +52,15 @@ export function ProjectDetail({ project, onManageTeam, canManageTeam, onViewMile
     queryKey: ['milestones-upcoming', project.id],
     queryFn: () => api.listMilestones(project.id, { upcoming: true, limit: 3 }),
   });
+
+  const { data: members } = useQuery({
+    queryKey: ['project-members', project.id],
+    queryFn: () => api.getProjectMembers(project.id),
+  });
+
+  const MAX_VISIBLE_MEMBERS = 3;
+  const visibleMembers = members?.slice(0, MAX_VISIBLE_MEMBERS) ?? [];
+  const remainingCount = (members?.length ?? 0) - visibleMembers.length;
 
   return (
     <>
@@ -106,12 +129,7 @@ export function ProjectDetail({ project, onManageTeam, canManageTeam, onViewMile
             {project.leader ? (
               <div className="flex items-center gap-3">
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EAF2F7] text-xs font-semibold text-[#245B78]">
-                  {project.leader.name
-                    .split(' ')
-                    .map((n) => n[0])
-                    .join('')
-                    .substring(0, 2)
-                    .toUpperCase()}
+                  {getInitials(project.leader.name)}
                 </div>
                 <div className="text-sm text-[#172B42]">
                   {project.leader.name} · Líder
@@ -121,9 +139,29 @@ export function ProjectDetail({ project, onManageTeam, canManageTeam, onViewMile
               <p className="text-sm text-[#607185]">Responsable no disponible</p>
             )}
 
-            <p className="mt-2 text-sm italic text-[#607185]">
-              Los demás integrantes estarán disponibles cuando se integre la gestión de equipo.
-            </p>
+            {visibleMembers.map((member) => {
+              const name = member.user?.name || 'Usuario desconocido';
+              return (
+                <div key={member.id} className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EAF2F7] text-xs font-semibold text-[#245B78]">
+                    {getInitials(name)}
+                  </div>
+                  <div className="text-sm text-[#172B42]">
+                    {name} · {ROLE_LABELS[member.projectRole]}
+                  </div>
+                </div>
+              );
+            })}
+
+            {remainingCount > 0 && (
+              <button
+                type="button"
+                onClick={onManageTeam}
+                className="self-start text-xs font-medium text-[#245B78] hover:underline"
+              >
+                + {remainingCount} {remainingCount === 1 ? 'integrante más' : 'integrantes más'} (ver todos &rarr;)
+              </button>
+            )}
           </div>
 
           {canManageTeam && (
