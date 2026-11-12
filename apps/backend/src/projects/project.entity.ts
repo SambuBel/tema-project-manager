@@ -67,6 +67,13 @@ export class ProjectEntity {
   @Column({ name: 'created_by', type: 'uuid' })
   createdBy!: string;
 
+  @Index('uq_projects_created_by_idempotency_key', ['createdBy', 'idempotencyKey'], {
+    unique: true,
+    where: '"idempotency_key" IS NOT NULL',
+  })
+  @Column({ name: 'idempotency_key', type: 'varchar', length: 100, nullable: true, select: false })
+  idempotencyKey?: string | null;
+
   @ManyToOne(() => UserEntity, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'created_by' })
   creator!: UserEntity;

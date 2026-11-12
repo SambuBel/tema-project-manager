@@ -110,6 +110,8 @@ export interface CreateProjectDto {
   leaderId?: ID;
   /** Moneda única del proyecto (3 letras mayúsculas; la UI ofrece ARS y USD). Omitida = ARS. */
   economicCurrency?: string;
+  /** Clave de idempotencia opcional para evitar proyectos duplicados ante reintentos o doble envío. */
+  idempotencyKey?: string;
 }
 
 export interface UpdateProjectDto {
