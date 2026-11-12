@@ -1,239 +1,389 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Content } from '@google/genai';
-import { ProjectsService } from '../projects/projects.service';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { GoogleGenAI, Content } from '@google/genai';
+import * as dotenv from 'dotenv';
 import { RequestUser } from '../auth/types/authenticated-request-user';
-import { ProjectEntity } from '../projects/project.entity';
-import { TaskStatus } from '../database/enums';
-import { ChatMessageDto } from './dto/chat-message.dto';
-import { AiToolsService, TOOL_NAMES, ToolArgs, ToolContext, ToolResult } from './ai-tools.service';
-import { GeminiClient, GeminiRateLimitError, GeminiTurn } from './gemini.client';
-import { buildSystemPrompt } from './ai.prompt';
+import { BudgetsService } from '../budgets/budgets.service';
+import { CostsService } from '../costs/costs.service';
+import { AuditOrigin, TaskPriority, TaskStatus } from '../database/enums';
+import { ProjectsService } from '../projects/projects.service';
+import { TasksService } from '../tasks/tasks.service';
+import { HERRAMIENTAS_IA } from './herramientas';
 
-/** Vueltas maximas modelo -> tools -> modelo por mensaje (evita loops si el modelo se encapricha). */
-export const MAX_TOOL_ROUNDS = 5;
-
-export const RATE_LIMIT_MESSAGE = 'El asistente recibió muchas consultas seguidas. Esperá un minuto y volvé a intentar';
-
-export type AssistantMode = 'gemini' | 'rules';
-
-interface TaskSummary {
-  title: string;
-  status: string;
-  dueDate: string | null;
-  assignedTo: string | null;
+export interface MensajeHistorial {
+  autor: 'usuario' | 'ia';
+  texto: string;
 }
 
-/**
- * Orquesta el asistente. Con GEMINI_API_KEY usa Gemini con function calling
- * (AiToolsService); sin key, o si Gemini falla, responde con un reconocimiento
- * de intents por palabras clave que llama a las MISMAS tools. Enchufar la key
- * no requiere tocar codigo: solo cargarla en el .env y reiniciar.
- */
+const INSTRUCCIONES_SISTEMA = `Sos el asistente virtual de "TEMA Project Manager", un sistema de gestión de proyectos.
+Respondé siempre en español rioplatense claro, breve y en texto plano (sin asteriscos ni formato markdown).
+Reglas importantes:
+1. Nunca inventes proyectos, tareas ni números. Usá siempre tus herramientas para consultar los datos reales.
+2. Si el usuario menciona un proyecto o una tarea por su nombre, primero buscá el proyecto con "listar_proyectos" o las tareas con "buscar_tareas" para obtener su ID real.
+3. Si una herramienta devuelve un error de permisos (por ejemplo, un Observador intentando crear tareas o ver presupuesto), explicale amablemente que su rol no tiene permiso para esa acción.
+4. Si el usuario pide crear una tarea pero no indicó el título, preguntale primero qué título quiere ponerle (y si desea indicar prioridad, fecha de vencimiento o responsable). Lo mismo si pide comentar sin decir el texto del comentario.
+5. CONFIRMACIÓN OBLIGATORIA ANTES DE CREAR O MODIFICAR: Antes de ejecutar "crear_tarea", "actualizar_tarea" o "agregar_comentario", mostrá un resumen claro de lo que vas a hacer (proyecto, título, prioridad, estado, etc.) y preguntale al usuario "¿Confirmás que realice esta acción?". Recién ejecutá la herramienta cuando el usuario responda que sí ("sí", "dale", "confirmo", "ok").
+6. Al responderle al usuario, traducí siempre los códigos de estado y prioridad al español:
+   - Estados de tarea: PENDING = Pendiente, IN_PROGRESS = En progreso, COMPLETED = Completada, BLOCKED = Bloqueada.
+   - Prioridades: LOW = Baja, MEDIUM = Media, HIGH = Alta, CRITICAL = Crítica.
+   - Estados de proyecto: PLANNING = En planificación, ACTIVE = En curso, ON_HOLD = En pausa, COMPLETED = Finalizado, CANCELLED = Cancelado.
+7. FORMATO DE LISTAS ORDENADO Y PROLIJO: Cuando listes proyectos o tareas, dejá SIEMPRE un renglón en blanco entre cada ítem, numeralos (1., 2., 3.) y poné sus detalles debajo con viñetas "•", siguiendo estos ejemplos exactos:
+
+   Ejemplo para tareas:
+   1. Nombre de la tarea
+      • Estado: En progreso | Prioridad: Media
+      • Responsable: Nombre Apellido
+      • Vence: DD/MM/AAAA
+
+   Ejemplo para proyectos:
+   1. Nombre del proyecto
+      • Estado: En curso | Avance: 50%
+      • Líder: Nombre Apellido`;
+
 @Injectable()
 export class AiService {
-  private readonly logger = new Logger(AiService.name);
-
   constructor(
-    private readonly tools: AiToolsService,
+    private readonly configService: ConfigService,
     private readonly projectsService: ProjectsService,
-    private readonly gemini: GeminiClient,
+    private readonly tasksService: TasksService,
+    private readonly budgetsService: BudgetsService,
+    private readonly costsService: CostsService,
   ) {}
 
-  get mode(): AssistantMode {
-    return this.gemini.isConfigured() ? 'gemini' : 'rules';
-  }
-
-  async answer(dto: ChatMessageDto, user: RequestUser): Promise<string> {
-    const ctx: ToolContext = { user, project: await this.resolveCurrentProject(dto.projectId, user), message: dto.message };
-
-    if (this.gemini.isConfigured()) {
-      try {
-        return await this.answerWithGemini(dto, ctx);
-      } catch (error) {
-        if (error instanceof GeminiRateLimitError) {
-          this.logger.warn(`Gemini sigue sin cuota después de reintentar: ${error.message}`);
-          return RATE_LIMIT_MESSAGE;
-        }
-        this.logger.error(`Gemini falló, sigo con el asistente por reglas: ${(error as Error).message}`);
-      }
-    }
-
-    return this.answerWithRules(dto.message, ctx);
-  }
-
-  /** Proyecto abierto en pantalla. Si no existe o no tiene acceso, se sigue sin proyecto (las tools vuelven a chequear). */
-  private async resolveCurrentProject(idOrSlug: string | undefined, user: RequestUser): Promise<ProjectEntity | null> {
-    if (!idOrSlug) return null;
+  async procesarMensaje(
+    mensaje: string,
+    historial: MensajeHistorial[],
+    usuario: RequestUser,
+  ): Promise<{ respuesta: string }> {
     try {
-      return await this.projectsService.findOne(idOrSlug, user);
-    } catch {
-      return null;
-    }
-  }
+      dotenv.config({ override: true });
 
-  // --- Gemini ---
+      const apiKey = process.env.GEMINI_API_KEY ?? this.configService.get<string>('GEMINI_API_KEY') ?? '';
+      const modelo = process.env.GEMINI_MODEL ?? this.configService.get<string>('GEMINI_MODEL') ?? '';
+      const clienteGemini = new GoogleGenAI({ apiKey });
 
-  private async answerWithGemini(dto: ChatMessageDto, ctx: ToolContext): Promise<string> {
-    const systemPrompt = buildSystemPrompt({ user: ctx.user, project: ctx.project, today: new Date() });
-    const contents: Content[] = [
-      ...(dto.history ?? []).map(
-        (turn): Content => ({ role: turn.role === 'assistant' ? 'model' : 'user', parts: [{ text: turn.text }] }),
-      ),
-      { role: 'user', parts: [{ text: dto.message }] },
-    ];
+      // 1. Armamos la conversación con el historial + el mensaje nuevo
+      const conversacion: Content[] = [];
 
-    let lastError: string | null = null;
-    const changes: string[] = [];
-
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      let turn: GeminiTurn;
-      try {
-        turn = await this.gemini.generate(contents, systemPrompt, this.tools.declarations);
-      } catch (error) {
-        // El cambio ya se guardó: si se le pide que reintente, el usuario lo duplica.
-        if (changes.length === 0) throw error;
-        this.logger.error(`Gemini falló después de guardar cambios: ${(error as Error).message}`);
-        return describeSavedChanges(changes);
+      for (const item of historial) {
+        if (!item?.texto) continue;
+        conversacion.push({
+          role: item.autor === 'ia' ? 'model' : 'user',
+          parts: [{ text: item.texto }],
+        });
       }
 
-      if (turn.functionCalls.length === 0) {
-        return turn.text.trim() || 'No tengo una respuesta para eso, ¿podés reformular la pregunta?';
+      conversacion.push({
+        role: 'user',
+        parts: [{ text: mensaje }],
+      });
+
+      // 2. Ciclo de consulta a Gemini (hasta 5 pasos por si necesita encadenar herramientas)
+      for (let paso = 0; paso < 5; paso++) {
+        const resultado = await clienteGemini.models.generateContent({
+          model: modelo,
+          contents: conversacion,
+          config: {
+            systemInstruction: INSTRUCCIONES_SISTEMA,
+            tools: [{ functionDeclarations: HERRAMIENTAS_IA }],
+          },
+        });
+
+        const pedidosDeHerramienta = resultado.functionCalls;
+
+        // Si Gemini no pidió ninguna herramienta, significa que ya tiene la respuesta final de texto
+        if (!pedidosDeHerramienta || pedidosDeHerramienta.length === 0) {
+          return {
+            respuesta: resultado.text ?? 'No pude generar una respuesta.',
+          };
+        }
+
+        // Si Gemini pidió usar herramientas, guardamos su pedido en la conversación
+        const contenidoModelo = resultado.candidates?.[0]?.content;
+        if (contenidoModelo) {
+          conversacion.push(contenidoModelo);
+        }
+
+        // Ejecutamos cada herramienta que pidió Gemini y le devolvemos el resultado
+        for (const pedido of pedidosDeHerramienta) {
+          const nombreHerramienta = pedido.name ?? '';
+          const argumentos = (pedido.args ?? {}) as Record<string, any>;
+
+          const datosResultado = await this.ejecutarHerramienta(
+            nombreHerramienta,
+            argumentos,
+            usuario,
+            mensaje,
+          );
+
+          conversacion.push({
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: nombreHerramienta,
+                  response: datosResultado,
+                },
+              },
+            ],
+          });
+        }
       }
 
-      contents.push(turn.content ?? { role: 'model', parts: turn.functionCalls.map((call) => ({ functionCall: call })) });
+      return {
+        respuesta: 'La consulta requirió demasiados pasos. Intentá ser más específico.',
+      };
+    } catch (error) {
+      console.error('Error al llamar a Gemini:', error);
+      return {
+        respuesta:
+          'No se pudo conectar con el servicio de IA en este momento. Verificá que la API Key sea válida o intentá nuevamente en unos segundos.',
+      };
+    }
+  }
 
-      const responses = [];
-      for (const call of turn.functionCalls) {
-        const name = call.name ?? '';
-        const result = await this.tools.execute(name, (call.args ?? {}) as ToolArgs, ctx);
-        // Una linea por tool en la consola del backend: sin esto no hay forma de saber por que el modelo se trabo.
-        this.logger.log(`tool ${name} ${JSON.stringify(call.args ?? {})} -> ${JSON.stringify(result).slice(0, 300)}`);
-        if (typeof result.error === 'string') lastError = result.error;
-        const change = describeChange(result);
-        if (change) changes.push(change);
-        responses.push({ functionResponse: { id: call.id, name, response: result } });
+  /**
+   * Deriva el pedido de Gemini al método correspondiente según el nombre de la herramienta.
+   */
+  private async ejecutarHerramienta(
+    nombre: string,
+    args: Record<string, any>,
+    usuario: RequestUser,
+    mensajeOriginal: string,
+  ): Promise<Record<string, any>> {
+    try {
+      switch (nombre) {
+        case 'listar_proyectos':
+          return await this.listarProyectos(usuario);
+        case 'obtener_proyecto':
+          return await this.obtenerProyecto(args, usuario);
+        case 'obtener_usuarios_proyecto':
+          return await this.obtenerUsuariosProyecto(args, usuario);
+        case 'buscar_tareas':
+          return await this.buscarTareas(args, usuario);
+        case 'obtener_situacion_presupuestaria':
+          return await this.obtenerSituacionPresupuestaria(args, usuario);
+        case 'crear_tarea':
+          return await this.crearTarea(args, usuario, mensajeOriginal);
+        case 'actualizar_tarea':
+          return await this.actualizarTarea(args, usuario, mensajeOriginal);
+        case 'agregar_comentario':
+          return await this.agregarComentario(args, usuario);
+        default:
+          return { error: `La herramienta ${nombre} no existe.` };
       }
-      contents.push({ role: 'user', parts: responses });
+    } catch (error) {
+      const mensajeError = error instanceof Error ? error.message : String(error);
+      return { error: mensajeError };
     }
-
-    this.logger.warn(`Se agotaron las ${MAX_TOOL_ROUNDS} vueltas de tools sin respuesta final`);
-    if (changes.length > 0) return describeSavedChanges(changes);
-    return lastError
-      ? `No pude completarlo: ${lastError}`
-      : 'No pude resolver la consulta. Probá abriendo el proyecto y preguntando algo más puntual.';
   }
 
-  // --- Asistente por reglas (sin Gemini) ---
+  // ===========================================================================
+  // MÉTODOS DE CADA HERRAMIENTA (cada uno delega en su Service del sistema)
+  // ===========================================================================
 
-  private async answerWithRules(rawMessage: string, ctx: ToolContext): Promise<string> {
-    const message = rawMessage.toLowerCase();
-    const has = (...words: string[]) => words.some((w) => message.includes(w));
-    const onlyMine = has('mis ', 'mías', 'mias', 'asignad');
-
-    if (has('ayuda', 'qué podés', 'que podes', 'qué sabés', 'que sabes')) {
-      return HELP_TEXT;
-    }
-
-    if (has('proyectos')) {
-      const result = await this.tools.execute(TOOL_NAMES.listProjects, {}, ctx);
-      const projects = (result.projects ?? []) as { name: string }[];
-      if (result.error) return String(result.error);
-      if (projects.length === 0) return 'No tenés proyectos activos.';
-      return `Tenés acceso a ${projects.length} proyecto${plural(projects.length)}:\n${projects.map((p) => `- ${p.name}`).join('\n')}`;
-    }
-
-    if (!ctx.project && has('vencid', 'bloquead', 'miembro', 'equipo', 'tarea')) {
-      return 'Para eso necesito saber de qué proyecto — decime el proyecto primero (abrilo y preguntame de nuevo).';
-    }
-
-    if (has('vencid')) {
-      return this.describeTasks(
-        await this.tools.execute(TOOL_NAMES.listOverdueTasks, { onlyMine }, ctx),
-        'vencida',
-        'No hay tareas vencidas en este proyecto.',
-        (t) => `vencía ${t.dueDate}`,
-      );
-    }
-
-    if (has('bloquead')) {
-      return this.describeTasks(
-        await this.tools.execute(TOOL_NAMES.listTasks, { status: TaskStatus.BLOCKED, onlyMine }, ctx),
-        'bloqueada',
-        'No hay tareas bloqueadas en este proyecto.',
-        (t) => t.assignedTo ?? 'sin responsable',
-      );
-    }
-
-    if (has('miembro', 'equipo', 'quién está', 'quien esta')) {
-      const result = await this.tools.execute(TOOL_NAMES.listProjectMembers, {}, ctx);
-      if (result.error) return String(result.error);
-      const members = (result.members ?? []) as { name: string | null; role: string }[];
-      if (members.length === 0) return 'Este proyecto todavía no tiene miembros.';
-      return `El equipo de ${result.project}:\n${members.map((m) => `- ${m.name ?? 'Sin nombre'} (${m.role})`).join('\n')}`;
-    }
-
-    if (has('tarea') && onlyMine) {
-      return this.describeTasks(
-        await this.tools.execute(TOOL_NAMES.listTasks, { onlyMine: true }, ctx),
-        'asignada',
-        'No tenés tareas asignadas en este proyecto.',
-        (t) => STATUS_LABELS[t.status] ?? t.status,
-      );
-    }
-
-    return 'Todavía no sé responder eso — esta es la versión de prueba del asistente. Escribí "ayuda" para ver qué puedo hacer.';
+  // 1. Listar los proyectos accesibles al usuario
+  private async listarProyectos(usuario: RequestUser) {
+    const proyectos = await this.projectsService.findAll({}, usuario);
+    return {
+      proyectos: proyectos.map((p: any) => ({
+        id: p.id,
+        nombre: p.name,
+        estado: p.status,
+        avanceRealPorcentaje: p.progress ?? 0,
+        fechaInicio: p.startDate,
+        fechaFinEstimada: p.estimatedEndDate,
+        lider: p.leader?.name ?? 'Sin asignar',
+      })),
+    };
   }
 
-  private describeTasks(
-    result: ToolResult,
-    adjective: string,
-    emptyMessage: string,
-    detail: (task: TaskSummary) => string,
-  ): string {
-    if (result.error) return String(result.error);
-    const tasks = (result.tasks ?? []) as TaskSummary[];
-    if (tasks.length === 0) return emptyMessage;
-    const s = plural(tasks.length);
-    const list = tasks.map((t) => `- ${t.title} (${detail(t)})`).join('\n');
-    return `Tenés ${tasks.length} tarea${s} ${adjective}${s}:\n${list}`;
+  // 2. Obtener datos, equipo y métricas de avance real, esperado y desvío de un proyecto
+  private async obtenerProyecto(args: Record<string, any>, usuario: RequestUser) {
+    const proyecto: any = await this.projectsService.findOne(args.projectId, usuario);
+    const miembros = await this.projectsService.getMembers(proyecto.id, usuario);
+
+    const avanceReal = proyecto.progress ?? 0;
+    let avanceEsperado = 0;
+
+    if (proyecto.startDate && proyecto.estimatedEndDate) {
+      const inicio = new Date(proyecto.startDate).getTime();
+      const fin = new Date(proyecto.estimatedEndDate).getTime();
+      const hoy = Date.now();
+      if (hoy >= fin) {
+        avanceEsperado = 100;
+      } else if (hoy > inicio && fin > inicio) {
+        avanceEsperado = Math.round(((hoy - inicio) / (fin - inicio)) * 100);
+      }
+    }
+
+    const desvio = avanceReal - avanceEsperado;
+
+    return {
+      id: proyecto.id,
+      nombre: proyecto.name,
+      descripcion: proyecto.description,
+      estado: proyecto.status,
+      fechaInicio: proyecto.startDate,
+      fechaFinEstimada: proyecto.estimatedEndDate,
+      lider: proyecto.leader?.name ?? 'Sin asignar',
+      avanceRealPorcentaje: avanceReal,
+      avanceEsperadoPorcentaje: avanceEsperado,
+      desvioPorcentaje: desvio,
+      miembros: miembros.map((m: any) => ({
+        usuarioId: m.userId,
+        nombre: m.user?.name,
+        rolEnProyecto: m.projectRole,
+      })),
+    };
   }
-}
 
-const STATUS_LABELS: Record<string, string> = {
-  [TaskStatus.PENDING]: 'pendiente',
-  [TaskStatus.IN_PROGRESS]: 'en progreso',
-  [TaskStatus.IN_REVIEW]: 'en revisión',
-  [TaskStatus.BLOCKED]: 'bloqueada',
-  [TaskStatus.COMPLETED]: 'completada',
-};
+  // 3. Obtener los miembros de un proyecto y su carga de tareas
+  private async obtenerUsuariosProyecto(args: Record<string, any>, usuario: RequestUser) {
+    const proyecto: any = await this.projectsService.findOne(args.projectId, usuario);
+    const miembros = await this.projectsService.getMembers(proyecto.id, usuario);
+    const listadoTareas = await this.tasksService.findAllByProject(
+      { projectId: proyecto.id, limit: 100 },
+      usuario,
+    );
 
-const HELP_TEXT = [
-  'Por ahora puedo:',
-  '- Listar tus proyectos ("¿qué proyectos tengo?")',
-  '- Mostrar tareas vencidas ("¿qué tareas están vencidas?")',
-  '- Mostrar tareas bloqueadas ("¿hay tareas bloqueadas?")',
-  '- Mostrar tus tareas ("¿cuáles son mis tareas?")',
-  '- Mostrar el equipo del proyecto ("¿quiénes son los miembros?")',
-  'Las preguntas sobre tareas y equipo son del proyecto que tengas abierto.',
-].join('\n');
+    const usuariosConCarga = miembros.map((m: any) => {
+      const tareasDelMiembro = listadoTareas.data.filter((t) => t.assignedToId === m.userId);
+      const completadas = tareasDelMiembro.filter((t) => t.status === TaskStatus.COMPLETED).length;
+      return {
+        usuarioId: m.userId,
+        nombre: m.user?.name,
+        rolEnProyecto: m.projectRole,
+        totalTareasAsignadas: tareasDelMiembro.length,
+        tareasCompletadas: completadas,
+        tareasPendientesOEnCurso: tareasDelMiembro.length - completadas,
+      };
+    });
 
-/** Qué guardó una tool que modifica datos. Las de consulta y las que devolvieron { error } no guardaron nada. */
-function describeChange(result: ToolResult): string | null {
-  const created = result.created as { title: string; url: string } | undefined;
-  if (created) return `Tarea creada: "${created.title}" ${created.url}`;
-  const updated = result.updated as { title: string } | undefined;
-  if (updated) return `Tarea actualizada: "${updated.title}"`;
-  return result.comment ? 'Comentario agregado' : null;
-}
+    return {
+      proyecto: proyecto.name,
+      lider: {
+        usuarioId: proyecto.leaderId,
+        nombre: proyecto.leader?.name ?? 'Sin asignar',
+      },
+      miembros: usuariosConCarga,
+    };
+  }
 
-function describeSavedChanges(changes: string[]): string {
-  return [
-    'Ya quedó hecho:',
-    ...changes.map((change) => `- ${change}`),
-    'No hace falta repetir el pedido: no pude terminar la respuesta, pero los cambios están guardados.',
-  ].join('\n');
-}
+  // 4. Buscar tareas con filtros por proyecto, responsable, estado, prioridad y vencimiento
+  private async buscarTareas(args: Record<string, any>, usuario: RequestUser) {
+    const listado = await this.tasksService.findAllByProject(
+      {
+        projectId: args.projectId,
+        status: args.estado as TaskStatus | undefined,
+        priority: args.prioridad as TaskPriority | undefined,
+        assignedToId: args.responsableId,
+        atRisk: Boolean(args.soloEnRiesgo),
+        limit: 100,
+      },
+      usuario,
+    );
+    return {
+      total: listado.total,
+      tareas: listado.data.map((t) => ({
+        id: t.id,
+        titulo: t.title,
+        estado: t.status,
+        prioridad: t.priority,
+        fechaInicio: t.startDate,
+        fechaVencimiento: t.dueDate,
+        responsable: t.assignedTo?.name ?? 'Sin asignar',
+      })),
+    };
+  }
 
-function plural(n: number): string {
-  return n === 1 ? '' : 's';
+  // 5. Obtener presupuesto, incurrido, disponible y porcentaje de ejecución
+  private async obtenerSituacionPresupuestaria(args: Record<string, any>, usuario: RequestUser) {
+    const presupuesto = await this.budgetsService.getCurrent(args.projectId, usuario);
+    const totalGastado = await this.costsService.getIncurredTotal(
+      args.projectId,
+      presupuesto.currency,
+      usuario,
+    );
+    const montoPresupuestado = Number(presupuesto.totalAmount);
+    const montoIncurrido = Number(totalGastado);
+    const saldoDisponible = montoPresupuestado - montoIncurrido;
+    const porcentajeEjecucion =
+      montoPresupuestado > 0 ? Math.round((montoIncurrido / montoPresupuestado) * 100) : 0;
+
+    return {
+      moneda: presupuesto.currency,
+      presupuestoTotal: montoPresupuestado,
+      montoIncurrido,
+      saldoDisponible,
+      porcentajeEjecucion,
+    };
+  }
+
+  // 6. Crear una tarea en un proyecto
+  private async crearTarea(args: Record<string, any>, usuario: RequestUser, mensajeOriginal: string) {
+    const nuevaTarea = await this.tasksService.create(
+      {
+        projectId: args.projectId,
+        title: args.titulo,
+        description: args.descripcion,
+        priority: (args.prioridad as TaskPriority) ?? TaskPriority.MEDIUM,
+        startDate: args.fechaInicio,
+        dueDate: args.fechaVencimiento,
+        assignedToId: args.responsableId,
+      },
+      usuario,
+      { origin: AuditOrigin.AI, request: mensajeOriginal },
+    );
+    return {
+      mensaje: 'Tarea creada con éxito',
+      tarea: {
+        id: nuevaTarea.id,
+        titulo: nuevaTarea.title,
+        estado: nuevaTarea.status,
+        prioridad: nuevaTarea.priority,
+      },
+    };
+  }
+
+  // 7. Modificar estado, responsable, prioridad, fecha de inicio o vencimiento de una tarea
+  private async actualizarTarea(args: Record<string, any>, usuario: RequestUser, mensajeOriginal: string) {
+    const tareaActualizada = await this.tasksService.update(
+      args.taskId,
+      {
+        status: args.estado as TaskStatus | undefined,
+        priority: args.prioridad as TaskPriority | undefined,
+        title: args.titulo,
+        startDate: args.fechaInicio,
+        dueDate: args.fechaVencimiento,
+        assignedToId: args.responsableId,
+      },
+      usuario,
+      { origin: AuditOrigin.AI, request: mensajeOriginal },
+    );
+    return {
+      mensaje: 'Tarea actualizada con éxito',
+      tarea: {
+        id: tareaActualizada.id,
+        titulo: tareaActualizada.title,
+        estado: tareaActualizada.status,
+        prioridad: tareaActualizada.priority,
+      },
+    };
+  }
+
+  // 8. Agregar un comentario a una tarea
+  private async agregarComentario(args: Record<string, any>, usuario: RequestUser) {
+    const comentario = await this.tasksService.addComment(
+      args.taskId,
+      args.contenido,
+      usuario,
+    );
+    return {
+      mensaje: 'Comentario agregado con éxito',
+      comentarioId: comentario.id,
+      contenido: comentario.content,
+    };
+  }
 }

@@ -49,12 +49,6 @@ import type { AppNotification, ListNotificationsQuery, NotificationPreference, N
 
 const BASE = '/api';
 
-/** Turno previo del chat del asistente (el backend no guarda la conversacion). */
-export interface ChatTurn {
-  role: 'user' | 'assistant';
-  text: string;
-}
-
 /**
  * Error de la API. `message` sigue siendo "<status> <statusText>" (como siempre); `details`
  * trae los mensajes que mando el backend (ej. validaciones) para poder mostrarselos al usuario.
@@ -359,11 +353,6 @@ export const api = {
   deleteTaskComment: (taskId: string, commentId: string) =>
     request<{ success: boolean }>(`/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' }),
 
-  // --- Asistente ---
-  sendChatMessage: (message: string, projectId?: string, history: ChatTurn[] = []) =>
-    request<{ reply: string }>('/ai/chat', { method: 'POST', body: JSON.stringify({ message, projectId, history }) }),
-  getAssistantStatus: () => request<{ mode: 'gemini' | 'rules' }>('/ai/status'),
-
    // --- Exportaciones ---
   exportTasksCsv: (projectId: string, filters?: TaskFilters) => {
     const params = new URLSearchParams();
@@ -457,4 +446,11 @@ export const api = {
     request<{ id: string; costId: string; fileName: string; mimeType: string; sizeBytes: number; uploadedBy: string; uploaderName: string; createdAt: string }[]>(
       `/projects/${projectId}/cost-attachments`,
   ),
+
+  // --- Asistente de IA ---
+  enviarMensajeIA: (mensaje: string, historial: { autor: 'usuario' | 'ia'; texto: string }[]) =>
+    request<{ respuesta: string }>('/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({ mensaje, historial }),
+    }),
 };
