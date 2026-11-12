@@ -45,7 +45,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         </SidebarSection>
       </div>
 
-      {projectMatch && (
+      {hasProject && (
         <div className="mt-6 max-h-24 overflow-hidden transition-[max-height,opacity,margin] duration-300 ease-in-out lg:group-data-[collapsed=true]/sb:mt-0 lg:group-data-[collapsed=true]/sb:max-h-0 lg:group-data-[collapsed=true]/sb:opacity-0">
           <SidebarSection title="Proyecto actual">
             <li className="truncate px-3 py-1 text-sm text-white" aria-current="page">
