@@ -108,8 +108,14 @@ function build(opts: Opts = {}) {
   };
   const dataSource = { transaction: jest.fn(async (fn: (m: typeof manager) => unknown) => fn(manager)), manager };
   const projectRepo = { findOneBy: jest.fn(async () => (opts.projectExists === false ? null : project)) };
-  const service = new CostsService(projectRepo as never, new PermissionsService({ findOne: jest.fn() } as never), dataSource as never);
-  return { service, manager, dataSource, calls, updates, saved };
+  const projectAlerts = { checkBudgetAfterCostChange: jest.fn().mockResolvedValue(undefined) };
+  const service = new CostsService(
+    projectRepo as never,
+    new PermissionsService({ findOne: jest.fn() } as never),
+    dataSource as never,
+    projectAlerts as never,
+  );
+  return { service, manager, dataSource, calls, updates, saved, projectAlerts };
 }
 
 const errorOf = async (p: Promise<unknown>) => p.catch((e: unknown) => e);
@@ -157,9 +163,10 @@ describe('CostsService.update', () => {
       expect(calls.indexOf('lock-project')).toBeLessThan(calls.indexOf('lock-cost'));
     });
     it('una sola transacción', async () => {
-      const { service, dataSource } = build();
+      const { service, dataSource, projectAlerts } = build();
       await service.update(PROJECT_ID, COST_ID, patch({ amount: '1' }), admin);
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+      expect(projectAlerts.checkBudgetAfterCostChange).toHaveBeenCalledWith(PROJECT_ID);
     });
   });
 
@@ -457,7 +464,12 @@ describe('CostsService.getOne', () => {
       updatedAt: new Date('2026-10-25T16:00:00Z'), revision: 7,
     }] : opts.row ? [opts.row] : []));
     const projectRepo = { findOneBy: jest.fn(async () => (opts.projectExists === false ? null : project)) };
-    const service = new CostsService(projectRepo as never, new PermissionsService({ findOne: jest.fn() } as never), { manager: { query } } as never);
+    const service = new CostsService(
+      projectRepo as never,
+      new PermissionsService({ findOne: jest.fn() } as never),
+      { manager: { query } } as never,
+      { checkBudgetAfterCostChange: jest.fn() } as never,
+    );
     return { service, query };
   }
 
