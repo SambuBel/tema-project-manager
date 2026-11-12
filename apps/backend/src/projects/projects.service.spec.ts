@@ -563,6 +563,37 @@ describe('ProjectsService - create (RN-23: leaderId siempre válido)', () => {
       expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('FOR SHARE'), ['leader1']);
     });
   });
+
+  describe('idempotencia (idempotencyKey)', () => {
+    it('si ya existe un proyecto del mismo creador con esa idempotencyKey, lo devuelve sin duplicar', async () => {
+      const existing = { id: 'p-existing', slug: 'test', name: 'Test', createdBy: 'leader1' } as ProjectEntity;
+      (manager as unknown as { findOne?: jest.Mock }).findOne = jest.fn().mockResolvedValue(existing);
+
+      const result = await service.create(
+        { name: 'Test', idempotencyKey: 'key-123' },
+        makeUser('leader1', leaderRole),
+      );
+
+      expect(result).toBe(existing);
+      expect(manager.save).not.toHaveBeenCalled();
+      expect(activityService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('si ocurre un conflicto único (23505) por carrera concurrente, recupera y devuelve el proyecto existente', async () => {
+      const existing = { id: 'p-winner', slug: 'test', name: 'Test', createdBy: 'leader1' } as ProjectEntity;
+      users.leader1 = candidate('leader1');
+      rolesByUser.leader1 = leaderRole;
+      manager.save.mockRejectedValueOnce({ code: '23505', constraint: 'uq_projects_created_by_idempotency_key' });
+      (service as unknown as { repo: { findOne?: jest.Mock } }).repo.findOne = jest.fn().mockResolvedValue(existing);
+
+      const result = await service.create(
+        { name: 'Test', idempotencyKey: 'key-race' },
+        makeUser('leader1', leaderRole),
+      );
+
+      expect(result).toBe(existing);
+    });
+  });
 });
 
 describe('ProjectsService - update / archive / changeStatus (canManageProject)', () => {

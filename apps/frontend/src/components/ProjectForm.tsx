@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiRequestError } from '../lib/api';
@@ -92,11 +92,26 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
   const activeCandidates = (leaderCandidates ?? []).filter((u) => u.active);
   const selectedLeaderName = activeCandidates.find((u) => u.id === leaderId)?.name ?? (leaderId === user?.id ? user?.name : undefined);
 
+  const isSubmittingRef = useRef(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
+  const getIdempotencyKey = () => {
+    if (!idempotencyKeyRef.current) {
+      idempotencyKeyRef.current =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    return idempotencyKeyRef.current;
+  };
+
   const create = useMutation({
     mutationFn: (data: CreateProjectDto) => api.createProject(data),
     onSuccess: (newProject) => {
       void qc.invalidateQueries({ queryKey: ['projects'] });
       navigate(`/projects/${newProject.slug || newProject.id}`);
+    },
+    onError: () => {
+      isSubmittingRef.current = false;
     },
   });
 
@@ -151,7 +166,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || datesInvalid) return;
+    if (!user || datesInvalid || isPending || isSubmittingRef.current) return;
     
     const payload = {
       name: formData.name.trim(),
@@ -175,9 +190,18 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
           return;
         }
       }
-      await doUpdateProject(payload);
+      isSubmittingRef.current = true;
+      try {
+        await doUpdateProject(payload);
+      } finally {
+        isSubmittingRef.current = false;
+      }
     } else {
-      create.mutate(payload);
+      isSubmittingRef.current = true;
+      create.mutate({
+        ...payload,
+        idempotencyKey: getIdempotencyKey(),
+      });
     }
   };
 

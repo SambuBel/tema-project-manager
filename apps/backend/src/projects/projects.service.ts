@@ -373,8 +373,17 @@ export class ProjectsService {
    *    es ADMIN/PM solo puede ponerse a sí mismo.
    * La autorización de "puede crear proyectos" sigue en @Roles del controller.
    */
+  private isIdempotencyConflict(err: unknown): boolean {
+    if (!err || typeof err !== 'object') return false;
+    const e = err as { code?: string; constraint?: string; driverError?: { code?: string; constraint?: string } };
+    const code = e.code ?? e.driverError?.code;
+    if (code !== '23505') return false;
+    const constraint = e.constraint ?? e.driverError?.constraint;
+    return !constraint || constraint === 'uq_projects_created_by_idempotency_key';
+  }
+
   async create(dto: CreateProjectDto, user: RequestUser): Promise<ProjectEntity> {
-    const { leaderId: requestedLeaderId, ...projectData } = dto;
+    const { leaderId: requestedLeaderId, idempotencyKey, ...projectData } = dto;
     const actorCanLead = this.permissions.hasAnyGlobalRole(user, [RoleName.PROJECT_LEADER]);
     const isAdminOrPm = this.permissions.hasAnyGlobalRole(user, [RoleName.ADMIN, RoleName.PROGRAM_MANAGER]);
 
@@ -392,32 +401,50 @@ export class ProjectsService {
       throw new BadRequestException('La fecha de entrega no puede ser anterior a la de inicio');
     }
 
-    return this.dataSource.transaction(async (manager) => {
-      const leader = await this.getValidProjectLeader(manager, leaderId);
-      const slug = await this.generateUniqueSlug(projectData.name, manager);
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        if (idempotencyKey && typeof manager.findOne === 'function') {
+          const existing = await manager.findOne(ProjectEntity, {
+            where: { createdBy: user.id, idempotencyKey },
+          });
+          if (existing) return existing;
+        }
 
-      const project = manager.create(ProjectEntity, {
-        ...projectData,
-        slug,
-        description: projectData.description ?? null,
-        economicCurrency: projectData.economicCurrency ?? DEFAULT_PROJECT_CURRENCY,
-        leaderId: leader.id,
-        createdBy: user.id,
+        const leader = await this.getValidProjectLeader(manager, leaderId);
+        const slug = await this.generateUniqueSlug(projectData.name, manager);
+
+        const project = manager.create(ProjectEntity, {
+          ...projectData,
+          slug,
+          description: projectData.description ?? null,
+          economicCurrency: projectData.economicCurrency ?? DEFAULT_PROJECT_CURRENCY,
+          leaderId: leader.id,
+          createdBy: user.id,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        });
+        const savedProject = await manager.save(project);
+        await this.activityService.logEvent(
+          {
+            projectId: savedProject.id,
+            actorId: user.id,
+            actionType: ProjectActivityAction.PROJECT_CREATED,
+            entityType: ProjectActivityEntityType.PROJECT,
+            entityId: savedProject.id,
+            metadata: { name: savedProject.name, slug: savedProject.slug },
+          },
+          manager,
+        );
+        return savedProject;
       });
-      const savedProject = await manager.save(project);
-      await this.activityService.logEvent(
-        {
-          projectId: savedProject.id,
-          actorId: user.id,
-          actionType: ProjectActivityAction.PROJECT_CREATED,
-          entityType: ProjectActivityEntityType.PROJECT,
-          entityId: savedProject.id,
-          metadata: { name: savedProject.name, slug: savedProject.slug },
-        },
-        manager,
-      );
-      return savedProject;
-    });
+    } catch (err) {
+      if (idempotencyKey && this.isIdempotencyConflict(err)) {
+        const existing = await this.repo.findOne({
+          where: { createdBy: user.id, idempotencyKey },
+        });
+        if (existing) return existing;
+      }
+      throw err;
+    }
   }
 
   async update(idOrSlug: string, dto: UpdateProjectDtoImpl, user: RequestUser): Promise<ProjectEntity> {
