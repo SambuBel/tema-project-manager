@@ -313,6 +313,10 @@ export class TasksService {
   async create(dto: CreateTaskDto, user: RequestUser, source?: ChangeSource): Promise<TaskEntity> {
     const project = await this.findProjectOrThrow(dto.projectId);
 
+    if (project.archivedAt) {
+      throw new BadRequestException('No se pueden crear tareas en un proyecto archivado.');
+    }
+
     const allowed = await this.permissions.canCreateTask(user, project);
     if (!allowed) {
       throw new ForbiddenException('No podés crear tareas en este proyecto.');
@@ -521,6 +525,10 @@ export class TasksService {
   async update(id: string, dto: UpdateTaskDto, user: RequestUser, source?: ChangeSource): Promise<TaskEntity> {
     const task = await this.findTaskOrThrow(id);
 
+    if (task.project?.archivedAt) {
+      throw new BadRequestException('No se puede modificar una tarea de un proyecto archivado.');
+    }
+
     const allowed = await this.permissions.canEditTask(user, task, task.project);
     if (!allowed) {
       throw new ForbiddenException('No podés editar esta tarea.');
@@ -702,6 +710,10 @@ export class TasksService {
     mentions?: CommentMentionDto[],
   ): Promise<CommentEntity> {
     const task = await this.findTaskOrThrow(taskId);
+
+    if (task.project?.archivedAt) {
+      throw new BadRequestException('No se pueden agregar comentarios en un proyecto archivado.');
+    }
     // Escribir un comentario NO es ver la tarea: policy propia (OBSERVER ve pero no comenta).
     const allowed = await this.permissions.canCommentOnTask(user, task.project);
     if (!allowed) throw new ForbiddenException('No podés comentar en esta tarea.');
@@ -744,6 +756,10 @@ export class TasksService {
     mentions?: CommentMentionDto[],
   ): Promise<CommentEntity> {
     const task = await this.findTaskOrThrow(taskId);
+
+    if (task.project?.archivedAt) {
+      throw new BadRequestException('No se pueden agregar comentarios en un proyecto archivado.');
+    }
     const allowed = await this.permissions.canViewTask(user, task.project);
     if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
 
@@ -797,6 +813,10 @@ export class TasksService {
     user: RequestUser,
   ): Promise<{ success: boolean }> {
     const task = await this.findTaskOrThrow(taskId);
+
+    if (task.project?.archivedAt) {
+      throw new BadRequestException('No se pueden agregar comentarios en un proyecto archivado.');
+    }
     const allowed = await this.permissions.canViewTask(user, task.project);
     if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
 
@@ -820,6 +840,10 @@ export class TasksService {
 
   async getTimeline(taskId: string, user: RequestUser, page = 1, limit = 10) {
     const task = await this.findTaskOrThrow(taskId);
+
+    if (task.project?.archivedAt) {
+      throw new BadRequestException('No se pueden agregar comentarios en un proyecto archivado.');
+    }
     const allowed = await this.permissions.canViewTask(user, task.project);
     if (!allowed) throw new ForbiddenException('No podés acceder a esta tarea.');
 
@@ -881,6 +905,10 @@ export class TasksService {
 
   async archive(id: string, user: RequestUser): Promise<TaskEntity> {
     const task = await this.findTaskOrThrow(id);
+
+    if (task.project?.archivedAt) {
+      throw new BadRequestException('No se pueden archivar tareas de un proyecto archivado.');
+    }
 
     const allowed = this.permissions.canDeleteTask(user, task.project);
     if (!allowed) {
@@ -1038,6 +1066,10 @@ export class TasksService {
    */
   async updateStatus(id: string, dto: UpdateTaskStatusDto, user: RequestUser, source?: ChangeSource): Promise<TaskEntity> {
     const task = await this.findTaskOrThrow(id);
+
+    if (task.project?.archivedAt) {
+      throw new BadRequestException('No se puede cambiar el estado de una tarea en un proyecto archivado.');
+    }
 
     const allowed = await this.permissions.canEditTask(user, task, task.project);
     if (!allowed) {

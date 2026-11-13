@@ -459,6 +459,10 @@ export class ProjectsService {
         throw new ForbiddenException('No podés modificar este proyecto.');
       }
 
+      if (project.archivedAt) {
+        throw new BadRequestException('No se puede modificar un proyecto archivado.');
+      }
+
       // La moneda única del proyecto se cambia por su propio camino (lock + verificación de uso). NO entra en `changes`: nada
       // económico va a project_activities.
       if (dto.economicCurrency !== undefined) {
@@ -550,6 +554,10 @@ export class ProjectsService {
         throw new ForbiddenException('No podés modificar el estado de este proyecto.');
       }
 
+      if (project.archivedAt) {
+        throw new BadRequestException('No se puede cambiar el estado de un proyecto archivado.');
+      }
+
       if (project.status === dto.status) {
         return project;
       }
@@ -639,6 +647,10 @@ export class ProjectsService {
     return this.dataSource.transaction(async (manager) => {
       const project = await this.findProjectInTransaction(manager, id);
 
+      if (project.archivedAt) {
+        throw new BadRequestException('No se puede cambiar el líder de un proyecto archivado.');
+      }
+
       const newLeader = await this.getValidProjectLeader(manager, dto.newLeaderId);
 
       if (project.leaderId === newLeader.id) {
@@ -707,6 +719,10 @@ export class ProjectsService {
 
       if (!this.permissions.canManageProjectTeam(user, project)) {
         throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
+      }
+
+      if (project.archivedAt) {
+        throw new BadRequestException('No se pueden agregar miembros a un proyecto archivado.');
       }
 
       if (!dto.email.toLowerCase().endsWith('@gmail.com')) {
@@ -797,6 +813,10 @@ export class ProjectsService {
         throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
       }
 
+      if (project.archivedAt) {
+        throw new BadRequestException('No se pueden agregar miembros a un proyecto archivado.');
+      }
+
       const invitation = await manager.findOne(ProjectInvitationEntity, {
         where: { id: invitationId, projectId: project.id, status: 'PENDING' },
       });
@@ -867,6 +887,10 @@ export class ProjectsService {
 
       if (!this.permissions.canManageProjectTeam(user, project)) {
         throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
+      }
+
+      if (project.archivedAt) {
+        throw new BadRequestException('No se pueden agregar miembros a un proyecto archivado.');
       }
 
       const userExists = await this.usersService.findById(dto.userId);
@@ -959,6 +983,10 @@ export class ProjectsService {
         throw new ForbiddenException('No podés administrar el equipo de este proyecto.');
       }
 
+      if (project.archivedAt) {
+        throw new BadRequestException('No se pueden agregar miembros a un proyecto archivado.');
+      }
+
       const member = await manager.findOne(ProjectMemberEntity, {
         where: { id: memberId, projectId: project.id, removedAt: IsNull() },
         relations: ['user'],
@@ -998,6 +1026,10 @@ export class ProjectsService {
 
       if (!this.permissions.canManageProjectTeam(user, project)) {
         throw new ForbiddenException('No tenés permisos para administrar el equipo de este proyecto.');
+      }
+
+      if (project.archivedAt) {
+        throw new BadRequestException('No se pueden remover miembros de un proyecto archivado.');
       }
 
       const member = await manager.findOne(ProjectMemberEntity, {

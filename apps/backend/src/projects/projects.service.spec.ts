@@ -685,6 +685,17 @@ describe('ProjectsService - update / archive / changeStatus (canManageProject)',
       expect(manager.save).not.toHaveBeenCalled();
       expect(activityService.logEvent).not.toHaveBeenCalled();
     });
+
+    it('TC-023 / BUG-06: 400 si el proyecto está archivado (modo solo lectura)', async () => {
+      const manager = makeManager({ project: { id: '1', name: 'Archived', archivedAt: new Date() } });
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+      permissions.canManageProject.mockReturnValue(true);
+
+      await expect(
+        service.update('1', { description: 'Nueva descripción' }, makeUser('admin-1', [RoleName.ADMIN])),
+      ).rejects.toThrow(BadRequestException);
+      expect(manager.save).not.toHaveBeenCalled();
+    });
   });
 
   describe('archive', () => {
@@ -779,6 +790,22 @@ describe('ProjectsService - update / archive / changeStatus (canManageProject)',
       await expect(
         service.changeStatus('1', { status: ProjectStatus.IN_PROGRESS }, makeUser('observer-1', [RoleName.OBSERVER])),
       ).rejects.toThrow(ForbiddenException);
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('TC-023 / BUG-06: 400 si el proyecto está archivado (no puede pasar a IN_PROGRESS ni otro estado)', async () => {
+      const project = { id: '1', status: ProjectStatus.FINISHED, archivedAt: new Date() };
+      const manager = makeManager({ project });
+      mockDataSource.transaction.mockImplementation((fn) => fn(manager));
+      permissions.canManageProject.mockReturnValue(true);
+
+      await expect(
+        service.changeStatus(
+          '1',
+          { status: ProjectStatus.IN_PROGRESS },
+          makeUser('admin-1', [RoleName.ADMIN]),
+        ),
+      ).rejects.toThrow(BadRequestException);
       expect(manager.save).not.toHaveBeenCalled();
     });
   });

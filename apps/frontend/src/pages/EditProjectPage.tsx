@@ -39,6 +39,21 @@ export function EditProjectPage() {
     return <div className="p-8 text-red-600">No tenés permiso para editar este proyecto.</div>;
   }
 
+  if (project.archivedAt) {
+    return (
+      <div className="m-8 rounded-lg border border-amber-200 bg-amber-50 p-8 text-amber-900">
+        <h2 className="text-lg font-bold mb-1">Proyecto archivado</h2>
+        <p className="text-sm">No se puede editar un proyecto archivado porque se encuentra en modo solo lectura.</p>
+        <button
+          onClick={() => navigate(`/projects/${project.slug || project.id}`)}
+          className="mt-4 rounded bg-[#245B78] px-4 py-2 text-sm font-medium text-white hover:bg-[#1a445b]"
+        >
+          Volver al proyecto
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full max-w-6xl mx-auto py-8 px-4 relative">
       <div className="mb-8">
