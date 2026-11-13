@@ -34,6 +34,16 @@ const priorityColors: Record<TaskPriority, string> = {
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return 'No definida';
   try {
+    const parts = dateStr.split('T')[0]?.split('-');
+    if (parts && parts.length === 3) {
+      const [year, month, day] = parts;
+      const d = new Date(Number(year), Number(month) - 1, Number(day));
+      return d.toLocaleDateString('es-ES', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
+    }
     return new Date(dateStr).toLocaleDateString('es-ES', {
       day: '2-digit',
       month: 'short',
