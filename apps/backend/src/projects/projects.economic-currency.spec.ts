@@ -139,15 +139,21 @@ describe('ProjectsService - la moneda del proyecto es información económica (R
 
 describe('DTOs de proyecto - moneda', () => {
   const errorsOf = async (cls: new () => object, plain: object) => (await validate(plainToInstance(cls, plain) as object)).flatMap((e) => Object.keys(e.constraints ?? {}).map(() => e.property));
+  const validBase = {
+    name: 'x',
+    description: 'Objetivo de prueba',
+    startDate: '2026-10-01',
+    estimatedEndDate: '2026-10-31',
+  };
   it('create: acepta ARS/USD (normalizada), la omite y rechaza basura', async () => {
-    expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: ' usd ' })).toEqual([]);
-    expect(plainToInstance(CreateProjectDto, { name: 'x', economicCurrency: ' usd ' }).economicCurrency).toBe('USD');
-    expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: 'ARS' })).toEqual([]);
-    expect(await errorsOf(CreateProjectDto, { name: 'x' })).toEqual([]);
-    expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: 'DOLAR' })).toContain('economicCurrency');
-    expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: 'EUR' })).toContain('economicCurrency');
-    expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: 'XYZ' })).toContain('economicCurrency');
-    expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: 5 })).toContain('economicCurrency');
+    expect(await errorsOf(CreateProjectDto, { ...validBase, economicCurrency: ' usd ' })).toEqual([]);
+    expect(plainToInstance(CreateProjectDto, { ...validBase, economicCurrency: ' usd ' }).economicCurrency).toBe('USD');
+    expect(await errorsOf(CreateProjectDto, { ...validBase, economicCurrency: 'ARS' })).toEqual([]);
+    expect(await errorsOf(CreateProjectDto, { ...validBase })).toEqual([]);
+    expect(await errorsOf(CreateProjectDto, { ...validBase, economicCurrency: 'DOLAR' })).toContain('economicCurrency');
+    expect(await errorsOf(CreateProjectDto, { ...validBase, economicCurrency: 'EUR' })).toContain('economicCurrency');
+    expect(await errorsOf(CreateProjectDto, { ...validBase, economicCurrency: 'XYZ' })).toContain('economicCurrency');
+    expect(await errorsOf(CreateProjectDto, { ...validBase, economicCurrency: 5 })).toContain('economicCurrency');
   });
   it('update: igual', async () => {
     expect(await errorsOf(UpdateProjectDtoImpl, { economicCurrency: 'ars' })).toEqual([]);
