@@ -71,6 +71,30 @@ export interface ExportTaskFilters {
   search?: string;
 }
 
+/**
+ * Escapa el valor de una celda CSV.
+ * - Si inicia con caracteres de fórmula (=, +, -, @), se le antepone una comilla simple (')
+ *   para mitigar ataques de CSV / Formula Injection (CWE-1236) en hojas de cálculo (Excel, etc.).
+ * - Los números legítimos que inician con signo (+ o -) se preservan numéricamente si son válidos.
+ * - Si contiene comas, comillas dobles, o saltos de línea, se envuelve entre comillas dobles.
+ */
+export function escapeCsvCell(val: string | null | undefined): string {
+  if (val === null || val === undefined) return '';
+  let str = String(val);
+
+  if (/^\s*[=+\-@]/.test(str)) {
+    const isPureNumber = /^[+\-]?\d+(\.\d+)?$/.test(str.trim());
+    if (!isPureNumber) {
+      str = `'${str}`;
+    }
+  }
+
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
 @Injectable()
 export class ExportService {
   constructor(
@@ -911,10 +935,7 @@ async exportEconomicReportCsv(
   }
 
   private escapeCsv(val: string): string {
-    if (val.includes(',') || val.includes('"') || val.includes('\n') || val.includes('\r')) {
-      return `"${val.replace(/"/g, '""')}"`;
-    }
-    return val;
+    return escapeCsvCell(val);
   }
 
   private formatDate(date: Date): string {
