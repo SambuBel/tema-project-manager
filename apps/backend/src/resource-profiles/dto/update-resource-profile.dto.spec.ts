@@ -42,7 +42,7 @@ describe('UpdateResourceProfileDto', () => {
   it.each([
     ['name', ['', '   ', null, 5, 'x'.repeat(151)], /nombre/i],
     ['hourlyCost', ['-1', '1.234', '10000000000', 50, null, ''], /costo por hora/i],
-    ['currency', ['US', 'USDD', 5, null, ''], /moneda/i],
+    ['currency', ['US', 'USDD', 5, null, '', 'EUR', 'XYZ'], /moneda/i],
     ['active', ['true', 1, 'false', null, {}], /active/],
   ] as Array<[string, unknown[], RegExp]>)('%s: rechaza valores inválidos (y null, que NO es "sin cambio")', async (field, values, pattern) => {
     for (const value of values) expect(await messages({ expectedRevision: 1, [field]: value })).toMatch(pattern);

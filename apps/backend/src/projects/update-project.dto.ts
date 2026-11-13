@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
-import { IsString, IsOptional, IsDateString, Matches } from 'class-validator';
+import { IsString, IsOptional, IsDateString, IsIn } from 'class-validator';
 import type { UpdateProjectDto } from '@tema/shared-types';
+import { ALLOWED_CURRENCIES } from '../economy/project-currency';
 
 export class UpdateProjectDtoImpl implements UpdateProjectDto {
   @IsOptional()
@@ -26,6 +27,6 @@ export class UpdateProjectDtoImpl implements UpdateProjectDto {
   @IsOptional()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
   @IsString({ message: 'La moneda del proyecto debe ser texto' })
-  @Matches(/^[A-Z]{3}$/, { message: 'La moneda del proyecto debe ser un código de 3 letras (ej. ARS, USD)' })
+  @IsIn(ALLOWED_CURRENCIES, { message: 'La moneda del proyecto debe ser ARS o USD' })
   economicCurrency?: string;
 }

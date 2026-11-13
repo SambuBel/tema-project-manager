@@ -142,12 +142,18 @@ describe('DTOs de proyecto - moneda', () => {
   it('create: acepta ARS/USD (normalizada), la omite y rechaza basura', async () => {
     expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: ' usd ' })).toEqual([]);
     expect(plainToInstance(CreateProjectDto, { name: 'x', economicCurrency: ' usd ' }).economicCurrency).toBe('USD');
+    expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: 'ARS' })).toEqual([]);
     expect(await errorsOf(CreateProjectDto, { name: 'x' })).toEqual([]);
     expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: 'DOLAR' })).toContain('economicCurrency');
+    expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: 'EUR' })).toContain('economicCurrency');
+    expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: 'XYZ' })).toContain('economicCurrency');
     expect(await errorsOf(CreateProjectDto, { name: 'x', economicCurrency: 5 })).toContain('economicCurrency');
   });
   it('update: igual', async () => {
     expect(await errorsOf(UpdateProjectDtoImpl, { economicCurrency: 'ars' })).toEqual([]);
+    expect(await errorsOf(UpdateProjectDtoImpl, { economicCurrency: 'USD' })).toEqual([]);
     expect(await errorsOf(UpdateProjectDtoImpl, { economicCurrency: 'A1S' })).toContain('economicCurrency');
+    expect(await errorsOf(UpdateProjectDtoImpl, { economicCurrency: 'EUR' })).toContain('economicCurrency');
+    expect(await errorsOf(UpdateProjectDtoImpl, { economicCurrency: 'XYZ' })).toContain('economicCurrency');
   });
 });
