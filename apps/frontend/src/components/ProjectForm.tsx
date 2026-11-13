@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiRequestError } from '../lib/api';
@@ -92,11 +92,18 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
   const activeCandidates = (leaderCandidates ?? []).filter((u) => u.active);
   const selectedLeaderName = activeCandidates.find((u) => u.id === leaderId)?.name ?? (leaderId === user?.id ? user?.name : undefined);
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
+
   const create = useMutation({
     mutationFn: (data: CreateProjectDto) => api.createProject(data),
     onSuccess: (newProject) => {
       void qc.invalidateQueries({ queryKey: ['projects'] });
       navigate(`/projects/${newProject.slug || newProject.id}`);
+    },
+    onError: () => {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
     },
   });
 
@@ -151,7 +158,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || datesInvalid) return;
+    if (!user || datesInvalid || isSubmittingRef.current || isPending) return;
     
     const payload = {
       name: formData.name.trim(),
@@ -175,14 +182,31 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
           return;
         }
       }
-      await doUpdateProject(payload);
+      isSubmittingRef.current = true;
+      setIsSubmitting(true);
+      try {
+        await doUpdateProject(payload);
+      } finally {
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
+      }
     } else {
-      create.mutate(payload);
+      isSubmittingRef.current = true;
+      setIsSubmitting(true);
+      create.mutate(payload, {
+        onError: () => {
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
+        },
+      });
     }
   };
 
   const handleConfirmProjectDates = async () => {
+    if (isSubmittingRef.current || isPending) return;
     setShowDatesWarning(false);
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
     const payload = {
       name: formData.name.trim(),
       description: formData.description.trim() || undefined,
@@ -191,11 +215,16 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
       ...(canChooseLeader && leaderId ? { leaderId } : {}),
       ...currencyPayload(),
     };
-    await doUpdateProject(payload);
+    try {
+      await doUpdateProject(payload);
+    } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+    }
   };
 
   const isFormDisabled = !user;
-  const isPending = create.isPending || update.isPending || updateStatus.isPending;
+  const isPending = isSubmitting || create.isPending || update.isPending || updateStatus.isPending;
   const isError = create.isError || update.isError || updateStatus.isError;
 
   return (
@@ -409,7 +438,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
             className="rounded-md bg-sidebar-card px-6 py-2.5 text-sm font-medium text-white hover:bg-sidebar-hover focus:outline-none disabled:opacity-50 transition-colors"
             disabled={isFormDisabled || isPending || leaderMissing || datesInvalid || !formData.name.trim() || !formData.description.trim() || !formData.startDate || !formData.estimatedEndDate}
           >
-            {isPending ? 'Guardando...' : (isEditing ? 'Guardar proyecto' : 'Crear proyecto')}
+            {isPending ? (isEditing ? 'Guardando...' : 'Creando proyecto...') : (isEditing ? 'Guardar proyecto' : 'Crear proyecto')}
           </button>
         </div>
       </div>

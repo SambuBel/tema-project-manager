@@ -131,3 +131,28 @@ describe('ProjectForm - moneda del proyecto (edición)', () => {
     expect(currencySelect().value).toBe('EUR');
   });
 });
+
+describe('ProjectForm - prevención de doble envío (BUG-03 / TC-016)', () => {
+  it('el doble clic o doble submit en "Crear proyecto" solo llama una vez a la API', async () => {
+    let resolveApi: (value: unknown) => void;
+    api.createProject.mockImplementation(() => new Promise((resolve) => { resolveApi = resolve; }));
+
+    renderForm();
+    await screen.findByLabelText('Moneda del proyecto');
+    fillCreate();
+
+    submit();
+    submit();
+
+    await waitFor(() => expect(api.createProject).toHaveBeenCalledTimes(1));
+    const submitBtn = screen.getByRole('button', { name: 'Creando proyecto...' }) as HTMLButtonElement;
+    expect(submitBtn).toBeTruthy();
+    expect(submitBtn.disabled).toBe(true);
+
+    // Un tercer intento tampoco dispara otra llamada
+    submit();
+    expect(api.createProject).toHaveBeenCalledTimes(1);
+
+    resolveApi!({ id: 'p9', slug: 'nuevo' });
+  });
+});
