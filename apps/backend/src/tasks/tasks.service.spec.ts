@@ -75,6 +75,8 @@ interface Deps {
   commentRepo: { create: jest.Mock; save: jest.Mock; find: jest.Mock; findOne: jest.Mock };
   commentMentionRepo: { create: jest.Mock; save: jest.Mock; delete: jest.Mock; find: jest.Mock };
   taskSlugHistoryRepo: { findOne: jest.Mock; find: jest.Mock; create: jest.Mock; save: jest.Mock; delete: jest.Mock<any, [any]> };
+  dependencyRepo: { createQueryBuilder: jest.Mock };
+  depQb: { innerJoin: jest.Mock; where: jest.Mock; andWhere: jest.Mock; select: jest.Mock; getOne: jest.Mock };
 }
 
 function makeService(
@@ -129,6 +131,16 @@ function makeService(
     save: jest.fn(async (h: unknown) => h),
     delete: jest.fn(async (_criteria: unknown) => ({ affected: 1 })),
   };
+  const depQb = {
+    innerJoin: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    select: jest.fn().mockReturnThis(),
+    getOne: jest.fn(async () => null),
+  };
+  const dependencyRepo = {
+    createQueryBuilder: jest.fn(() => depQb),
+  };
   const permissions = makePermissions(members);
   const activityService = { logEvent: jest.fn() };
 
@@ -157,6 +169,8 @@ function makeService(
     activityService as never,
     subtaskRepo as unknown as import('typeorm').Repository<SubtaskEntity>,
     taskSlugHistoryRepo as never,
+    undefined,
+    dependencyRepo as never,
   );
 
   return {
@@ -171,6 +185,8 @@ function makeService(
     commentRepo,
     commentMentionRepo,
     taskSlugHistoryRepo,
+    dependencyRepo,
+    depQb,
   };
 }
 
@@ -1466,11 +1482,38 @@ describe('TasksService - updateStatus (transiciones de estado)', () => {
     );
   });
 
-  it('8. RN-13: cuando el módulo de dependencias esté implementado, bloqueará paso a En curso o Completada', () => {
-    // RN-13: "una tarea con predecesoras sin completar no puede pasar a En curso ni Completada."
-    // Nota: El módulo de dependencias de tareas (Gantt) aún no está implementado en la capa de servicios.
-    // Esta prueba documenta el requisito pendiente de integración con dicho módulo.
-    expect(true).toBe(true);
+  it('8. RN-13 (BUG-05 / TC-056): una tarea con predecesoras sin completar no puede pasar a En curso ni Completada', async () => {
+    const { service, taskRepo, depQb } = makeService([]);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.PENDING }),
+    );
+    depQb.getOne.mockResolvedValue({ id: 'dep-1' });
+
+    for (const status of [TaskStatus.IN_PROGRESS, TaskStatus.IN_REVIEW, TaskStatus.COMPLETED]) {
+      await expect(
+        service.updateStatus('task-1', { status }, makeUser('admin-1', [RoleName.ADMIN])),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'No se puede avanzar ni completar la tarea: tiene dependencias predecesoras pendientes sin completar.',
+        ),
+      );
+    }
+  });
+
+  it('8b. RN-13 (BUG-05 / TC-056): update rechaza avanzar la tarea si tiene predecesoras pendientes', async () => {
+    const { service, taskRepo, depQb } = makeService([]);
+    taskRepo.findOne.mockResolvedValue(
+      makeTask({ project: makeProject(), status: TaskStatus.PENDING }),
+    );
+    depQb.getOne.mockResolvedValue({ id: 'dep-1' });
+
+    await expect(
+      service.update('task-1', { status: TaskStatus.IN_PROGRESS }, makeUser('admin-1', [RoleName.ADMIN])),
+    ).rejects.toThrow(
+      new BadRequestException(
+        'No se puede avanzar ni completar la tarea: tiene dependencias predecesoras pendientes sin completar.',
+      ),
+    );
   });
 
   it('9. registro correcto en el historial de actividad (RF-TA-10 / CU-06)', async () => {

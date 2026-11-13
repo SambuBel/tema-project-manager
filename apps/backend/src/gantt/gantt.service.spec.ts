@@ -197,4 +197,12 @@ describe('GanttService - blocked derivado', () => {
   it('sin dependencias nadie está bloqueado', async () => {
     expect(await run([task({ id: 'A' }), task({ id: 'B' })], [])).toEqual({ A: false, B: false });
   });
+
+  it('sucesora COMPLETED nunca figura como blocked aunque su predecesora esté pendiente (BUG-05 / TC-056)', async () => {
+    const tasks = [
+      task({ id: 'A', status: TaskStatus.PENDING }),
+      task({ id: 'B', status: TaskStatus.COMPLETED }),
+    ];
+    expect(await run(tasks, [dep('d1', 'A', 'B')])).toEqual({ A: false, B: false });
+  });
 });

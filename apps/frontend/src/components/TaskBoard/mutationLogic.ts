@@ -58,6 +58,7 @@ export function getMutationOptions(
       qc.invalidateQueries({ queryKey: ['milestones-upcoming', projectId] });
       qc.invalidateQueries({ queryKey: ['milestone-detail'] });
       qc.invalidateQueries({ queryKey: ['gantt'] });
+      qc.invalidateQueries({ queryKey: ['blocked-task-ids', projectId] });
     },
   };
 }

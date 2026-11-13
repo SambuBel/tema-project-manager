@@ -119,6 +119,11 @@ export class GanttService {
     const statusById = new Map(tasks.map((task) => [task.id, task.status]));
     const blocked = new Set<string>();
     for (const dep of dependencies) {
+      const successorStatus = statusById.get(dep.successorTaskId);
+      // BUG-05 / TC-056: una tarea que ya está COMPLETED nunca figura como bloqueada
+      if (successorStatus === TaskStatus.COMPLETED) {
+        continue;
+      }
       const predecessorStatus = statusById.get(dep.predecessorTaskId);
       if (predecessorStatus !== undefined && predecessorStatus !== TaskStatus.COMPLETED) {
         blocked.add(dep.successorTaskId);

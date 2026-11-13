@@ -11,6 +11,7 @@ import { UsersModule } from '../users/users.module';
 import { AuthModule } from '../auth/auth.module';
 import { SubtaskEntity } from '../subtasks/subtask.entity';
 import { TaskSlugHistoryEntity } from './task-slug-history.entity';
+import { TaskDependencyEntity } from '../database/entities/task-dependency.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 
 
@@ -23,6 +24,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
       CommentMentionEntity,
       SubtaskEntity,
       TaskSlugHistoryEntity,
+      TaskDependencyEntity,
     ]),
     UsersModule,
     AuthModule,
