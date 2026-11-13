@@ -1,25 +1,27 @@
 import { Transform } from 'class-transformer';
-import { IsDateString, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsDateString, IsIn, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import type { CreateProjectDto as ICreateProjectDto } from '@tema/shared-types';
 import { IsNotBefore } from '../tasks/dto/is-not-before.validator';
 import { ALLOWED_CURRENCIES } from '../economy/project-currency';
 
 export class CreateProjectDto implements ICreateProjectDto {
-  @IsString()
-  @MinLength(1)
-  @MaxLength(200)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString({ message: 'El nombre es obligatorio' })
+  @IsNotEmpty({ message: 'El nombre no puede estar vacío' })
+  @MaxLength(200, { message: 'El nombre no puede superar los 200 caracteres' })
   name!: string;
 
-  @IsOptional()
-  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString({ message: 'El objetivo es obligatorio' })
+  @IsNotEmpty({ message: 'El objetivo no puede estar vacío' })
   description?: string;
 
-  @IsOptional()
-  @IsDateString()
+  @IsNotEmpty({ message: 'La fecha de inicio es obligatoria' })
+  @IsDateString({ strict: true }, { message: 'La fecha de inicio debe ser una fecha válida (formato AAAA-MM-DD)' })
   startDate?: string;
 
-  @IsOptional()
-  @IsDateString()
+  @IsNotEmpty({ message: 'La fecha de entrega es obligatoria' })
+  @IsDateString({ strict: true }, { message: 'La fecha de entrega debe ser una fecha válida (formato AAAA-MM-DD)' })
   @IsNotBefore('startDate', { message: 'La fecha de entrega no puede ser anterior a la de inicio' })
   estimatedEndDate?: string;
 

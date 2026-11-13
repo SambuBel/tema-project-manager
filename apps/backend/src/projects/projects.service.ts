@@ -401,6 +401,12 @@ export class ProjectsService {
       throw new ForbiddenException('Solo ADMIN o PROGRAM_MANAGER pueden asignar a otro usuario como líder del proyecto.');
     }
 
+    const trimmedName = projectData.name ? projectData.name.trim() : '';
+    if (!trimmedName) {
+      throw new BadRequestException('El nombre del proyecto no puede estar vacío');
+    }
+    projectData.name = trimmedName;
+
     if (projectData.startDate && projectData.estimatedEndDate && projectData.estimatedEndDate < projectData.startDate) {
       throw new BadRequestException('La fecha de entrega no puede ser anterior a la de inicio');
     }
@@ -476,10 +482,14 @@ export class ProjectsService {
       }
 
       const changes: Record<string, { old: unknown; new: unknown }> = {};
-      if (dto.name !== undefined && dto.name.trim() !== project.name) {
+      if (dto.name !== undefined) {
         const trimmedName = dto.name.trim();
-        const oldSlug = project.slug;
-        const candidateBaseSlug = slugify(trimmedName);
+        if (!trimmedName) {
+          throw new BadRequestException('El nombre del proyecto no puede estar vacío');
+        }
+        if (trimmedName !== project.name) {
+          const oldSlug = project.slug;
+          const candidateBaseSlug = slugify(trimmedName);
         if (candidateBaseSlug && candidateBaseSlug !== project.slug) {
           const newSlug = await this.generateUniqueSlug(trimmedName, manager, project.id);
           if (newSlug !== project.slug) {
@@ -508,7 +518,8 @@ export class ProjectsService {
         changes.name = { old: project.name, new: trimmedName };
         project.name = trimmedName;
       }
-      if (dto.description !== undefined && dto.description !== project.description) {
+    }
+    if (dto.description !== undefined && dto.description !== project.description) {
         changes.description = { old: project.description, new: dto.description };
         project.description = dto.description ?? null;
       }
