@@ -30,7 +30,6 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
     initialData
       ? {
           name: initialData.name,
-          client: 'TEMA Consulting',
           responsable: initialData.leader?.name || '',
           description: initialData.description || '',
           startDate: initialData.startDate?.split('T')[0] || '',
@@ -40,7 +39,6 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
         }
       : {
           name: '',
-          client: 'TEMA Consulting',
           responsable: '',
           description: '',
           startDate: '',
@@ -54,7 +52,6 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
     if (initialData) {
       setFormData({
         name: initialData.name,
-        client: 'TEMA Consulting',
         responsable: initialData.leader?.name || '',
         description: initialData.description || '',
         startDate: initialData.startDate?.split('T')[0] || '',
@@ -242,41 +239,30 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="client" className="text-sm font-medium text-gray-700">Cliente *</label>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="responsable" className="text-sm font-medium text-gray-700">Responsable *</label>
+                {canChooseLeader ? (
+                  <select
+                    id="responsable"
+                    required
+                    className="rounded-md border border-gray-300 px-3 py-2.5 bg-white focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card"
+                    value={leaderId}
+                    onChange={(e) => setChosenLeaderId(e.target.value)}
+                  >
+                    <option value="">Elegí un líder…</option>
+                    {activeCandidates.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
+                    ))}
+                  </select>
+                ) : (
                   <input
-                    id="client"
-                    className="rounded-md border border-gray-300 px-3 py-2.5 focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card"
-                    value={formData.client}
-                    onChange={(e) => setFormData({ ...formData, client: e.target.value })}
+                    id="responsable"
+                    readOnly={!isEditing}
+                    className="rounded-md border border-gray-300 px-3 py-2.5 focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card read-only:bg-gray-50"
+                    value={formData.responsable}
+                    onChange={(e) => setFormData({ ...formData, responsable: e.target.value })}
                   />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label htmlFor="responsable" className="text-sm font-medium text-gray-700">Responsable *</label>
-                  {canChooseLeader ? (
-                    <select
-                      id="responsable"
-                      required
-                      className="rounded-md border border-gray-300 px-3 py-2.5 bg-white focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card"
-                      value={leaderId}
-                      onChange={(e) => setChosenLeaderId(e.target.value)}
-                    >
-                      <option value="">Elegí un líder…</option>
-                      {activeCandidates.map((candidate) => (
-                        <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      id="responsable"
-                      readOnly={!isEditing}
-                      className="rounded-md border border-gray-300 px-3 py-2.5 focus:border-sidebar-card focus:outline-none focus:ring-1 focus:ring-sidebar-card read-only:bg-gray-50"
-                      value={formData.responsable}
-                      onChange={(e) => setFormData({ ...formData, responsable: e.target.value })}
-                    />
-                  )}
-                </div>
+                )}
               </div>
 
               <div className="flex flex-col gap-1.5">
