@@ -96,9 +96,10 @@ export function canChangeLeaderUI(user: AuthenticatedUser): boolean {
  */
 export function canCreateTaskUI(
   user: AuthenticatedUser,
-  project: Pick<Project, 'leaderId'>,
+  project: Pick<Project, 'leaderId'> & { archivedAt?: string | null },
   membership: Pick<ProjectMember, 'projectRole'> | null,
 ): boolean {
+  if (project.archivedAt) return false;
   if (isAdminPmOrLeader(user, project)) return true;
   return membership?.projectRole === 'COLLABORATOR';
 }
@@ -160,9 +161,10 @@ export function canManageResourceProfilesUI(user: AuthenticatedUser): boolean {
 export function canEditTaskUI(
   user: AuthenticatedUser,
   task: Pick<Task, 'createdBy' | 'assignedToId'>,
-  project: Pick<Project, 'leaderId'>,
+  project: Pick<Project, 'leaderId'> & { archivedAt?: string | null },
   membership: Pick<ProjectMember, 'projectRole'> | null,
 ): boolean {
+  if (project.archivedAt) return false;
   if (isAdminPmOrLeader(user, project)) return true;
   if (membership?.projectRole !== 'COLLABORATOR') return false;
   return task.createdBy === user.id || task.assignedToId === user.id;

@@ -184,6 +184,13 @@ describe('TasksService - create (canCreateTask)', () => {
     await expect(service.create(dto, makeUser('u1'))).rejects.toThrow(NotFoundException);
   });
 
+  it('TC-023 / BUG-06: 400 si el proyecto está archivado (modo solo lectura)', async () => {
+    const { service, projectRepo } = makeService([]);
+    projectRepo.findOneBy.mockResolvedValue(makeProject({ archivedAt: new Date() }));
+
+    await expect(service.create(dto, makeUser('admin-1', [RoleName.ADMIN]))).rejects.toThrow(BadRequestException);
+  });
+
   it('ADMIN sin ser miembro: permitido', async () => {
     const { service, taskRepo } = makeService([]);
     const result = await service.create(dto, makeUser('admin-1', [RoleName.ADMIN]));

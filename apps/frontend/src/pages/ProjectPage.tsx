@@ -212,10 +212,20 @@ export function ProjectPage() {
             <span className="rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600">
               {statusLabels[project.status]}
             </span>
+            {project.archivedAt && (
+              <span className="rounded bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">
+                Archivado
+              </span>
+            )}
           </div>
           <p className="mt-2 text-sm text-[#607185]">
             TEMA Consulting · Responsable: {leaderName}
           </p>
+          {project.archivedAt && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-800">
+              Este proyecto se encuentra archivado y está en modo solo lectura. No se pueden realizar modificaciones ni agregar nuevas tareas.
+            </div>
+          )}
         </div>
       )}
 
@@ -250,12 +260,14 @@ export function ProjectPage() {
         {/* Acciones: solo visibles en Resumen, y solo para quien puede administrar el proyecto */}
         {view === 'resumen' && canManage && (
           <div className="flex gap-2">
-            <button
-              className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
-              onClick={() => navigate('/projects/' + (project.slug || project.id) + '/edit')}
-            >
-              Editar proyecto
-            </button>
+            {!project.archivedAt && (
+              <button
+                className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] hover:bg-gray-50"
+                onClick={() => navigate('/projects/' + (project.slug || project.id) + '/edit')}
+              >
+                Editar proyecto
+              </button>
+            )}
             <button
               className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#245B78] hover:bg-[#EAF2F7] disabled:opacity-50"
                 disabled={isExportingHistory}
