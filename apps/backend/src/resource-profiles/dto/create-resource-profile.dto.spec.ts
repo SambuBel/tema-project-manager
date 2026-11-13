@@ -58,10 +58,10 @@ describe('CreateResourceProfileDto', () => {
   });
 
   describe('currency', () => {
-    it.each([['USD', 'USD'], [' ars ', 'ARS'], ['eur', 'EUR']])('trim + mayúsculas: %j → %s', async (input, expected) => {
+    it.each([['USD', 'USD'], [' ars ', 'ARS']])('trim + mayúsculas: %j → %s', async (input, expected) => {
       expect((await parse({ ...valid, currency: input })).currency).toBe(expected);
     });
-    it.each(['', 'US', 'USDD', 'U$D', '123', 'ÑAU', ' ', 'US D', 5, null])('rechaza %j', async (input) => {
+    it.each(['', 'US', 'USDD', 'U$D', '123', 'ÑAU', ' ', 'US D', 5, null, 'EUR', 'XYZ'])('rechaza %j', async (input) => {
       expect(await messages({ ...valid, currency: input })).toMatch(/moneda/i);
     });
     it('es obligatoria', async () => {

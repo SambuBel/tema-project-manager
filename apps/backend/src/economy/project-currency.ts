@@ -5,6 +5,10 @@ import { BadRequestException } from '@nestjs/common';
  * expresan en ella; los DTO conservan `currency` solo por compatibilidad de contrato y, si viene, tiene que ser IGUAL. Nunca se
  * convierte ni se elige "la más probable".
  */
+/** Monedas permitidas en el sistema (catálogo ARS / USD). */
+export const ALLOWED_CURRENCIES = ['ARS', 'USD'] as const;
+export type AllowedCurrency = (typeof ALLOWED_CURRENCIES)[number];
+
 /** Moneda con la que nace un proyecto si no se indica otra (el default de la columna). Se puede cambiar mientras no haya datos. */
 export const DEFAULT_PROJECT_CURRENCY = 'ARS';
 

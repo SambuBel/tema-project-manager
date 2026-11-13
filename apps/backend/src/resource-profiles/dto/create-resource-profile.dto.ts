@@ -1,7 +1,8 @@
 import { Transform } from 'class-transformer';
-import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator';
+import { IsIn, IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator';
 import type { CreateResourceProfileDto as ICreateResourceProfileDto } from '@tema/shared-types';
 import { HOURLY_COST_PATTERN, normalizeHourlyCost } from './hourly-cost';
+import { ALLOWED_CURRENCIES } from '../../economy/project-currency';
 
 export const MAX_PROFILE_NAME_LENGTH = 150;
 
@@ -27,9 +28,9 @@ export class CreateResourceProfileDto implements ICreateResourceProfileDto {
   @Matches(HOURLY_COST_PATTERN, { message: 'El costo por hora debe ser un monto sin signo, con hasta 10 enteros y 2 decimales' })
   hourlyCost!: string;
 
-  /** trim + mayúsculas, luego exactamente 3 letras. Sin catálogo ISO ni conversiones. El catálogo es GLOBAL: un perfil solo se puede asignar a proyectos de su misma moneda. */
+  /** trim + mayúsculas, catálogo ARS o USD. El catálogo es GLOBAL: un perfil solo se puede asignar a proyectos de su misma moneda. */
   @Transform(normalizedCurrency)
   @IsString({ message: 'La moneda debe ser texto' })
-  @Matches(/^[A-Z]{3}$/, { message: 'La moneda debe ser un código de 3 letras (ej. ARS, USD)' })
+  @IsIn(ALLOWED_CURRENCIES, { message: 'La moneda debe ser ARS o USD' })
   currency!: string;
 }

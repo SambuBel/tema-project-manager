@@ -1,8 +1,9 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsInt, IsNotEmpty, IsString, Matches, MaxLength, Min, ValidateIf } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsString, Matches, MaxLength, Min, ValidateIf } from 'class-validator';
 import type { UpdateResourceProfileDto as IUpdateResourceProfileDto } from '@tema/shared-types';
 import { HOURLY_COST_PATTERN } from './hourly-cost';
 import { MAX_PROFILE_NAME_LENGTH, normalizedCurrency, normalizedHourlyCost, trimmedText } from './create-resource-profile.dto';
+import { ALLOWED_CURRENCIES } from '../../economy/project-currency';
 
 /** Un campo editable es opcional (omitido = no cambia) pero, si viene, NO puede ser null. */
 const whenPresent = (_object: unknown, value: unknown) => value !== undefined;
@@ -33,7 +34,7 @@ export class UpdateResourceProfileDto implements IUpdateResourceProfileDto {
   @ValidateIf(whenPresent)
   @Transform(normalizedCurrency)
   @IsString({ message: 'La moneda debe ser texto' })
-  @Matches(/^[A-Z]{3}$/, { message: 'La moneda debe ser un código de 3 letras (ej. ARS, USD)' })
+  @IsIn(ALLOWED_CURRENCIES, { message: 'La moneda debe ser ARS o USD' })
   currency?: string;
 
   /** true = reactivar, false = desactivar. Un booleano real (no "true"). */
