@@ -39,4 +39,15 @@ export class CreateProjectDto implements ICreateProjectDto {
   @IsString({ message: 'La moneda del proyecto debe ser texto' })
   @Matches(/^[A-Z]{3}$/, { message: 'La moneda del proyecto debe ser un código de 3 letras (ej. ARS, USD)' })
   economicCurrency?: string;
+
+  /**
+   * Clave de idempotencia opcional generada por el cliente para evitar crear proyectos duplicados
+   * si el mismo envío llega más de una vez (doble clic o reintento de red).
+   */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString({ message: 'idempotencyKey debe ser texto' })
+  @MinLength(1, { message: 'idempotencyKey no puede estar vacío' })
+  @MaxLength(100, { message: 'idempotencyKey no puede superar los 100 caracteres' })
+  idempotencyKey?: string;
 }

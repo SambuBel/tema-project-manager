@@ -92,8 +92,17 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
   const activeCandidates = (leaderCandidates ?? []).filter((u) => u.active);
   const selectedLeaderName = activeCandidates.find((u) => u.id === leaderId)?.name ?? (leaderId === user?.id ? user?.name : undefined);
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
+  const getIdempotencyKey = () => {
+    if (!idempotencyKeyRef.current) {
+      idempotencyKeyRef.current =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    return idempotencyKeyRef.current;
+  };
 
   const create = useMutation({
     mutationFn: (data: CreateProjectDto) => api.createProject(data),
@@ -103,7 +112,6 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
     },
     onError: () => {
       isSubmittingRef.current = false;
-      setIsSubmitting(false);
     },
   });
 
@@ -158,7 +166,7 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || datesInvalid || isSubmittingRef.current || isPending) return;
+    if (!user || datesInvalid || isPending || isSubmittingRef.current) return;
     
     const payload = {
       name: formData.name.trim(),
@@ -183,21 +191,16 @@ export function ProjectForm({ initialData }: ProjectFormProps) {
         }
       }
       isSubmittingRef.current = true;
-      setIsSubmitting(true);
       try {
         await doUpdateProject(payload);
       } finally {
         isSubmittingRef.current = false;
-        setIsSubmitting(false);
       }
     } else {
       isSubmittingRef.current = true;
-      setIsSubmitting(true);
-      create.mutate(payload, {
-        onError: () => {
-          isSubmittingRef.current = false;
-          setIsSubmitting(false);
-        },
+      create.mutate({
+        ...payload,
+        idempotencyKey: getIdempotencyKey(),
       });
     }
   };
