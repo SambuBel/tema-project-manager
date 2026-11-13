@@ -10,7 +10,7 @@ import { In, Repository } from 'typeorm';
 import { TaskDependencyEntity } from '../database/entities/task-dependency.entity';
 import { TaskEntity } from '../tasks/task.entity';
 import { ProjectEntity } from '../projects/project.entity';
-import { DependencyType } from '../database/enums';
+import { DependencyType, TaskStatus } from '../database/enums';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { CreateDependencyDto } from './dto/create-dependency.dto';
@@ -245,6 +245,7 @@ export class DependenciesService {
       .andWhere('succ.projectId = :projectId', { projectId })
       .andWhere('pred.archivedAt IS NULL')
       .andWhere('succ.archivedAt IS NULL')
+      .andWhere('succ.status != :completedStatus', { completedStatus: TaskStatus.COMPLETED })
       .andWhere('dep.dependencyType = :type', { type: DependencyType.FINISH_START })
       .select(['dep.predecessorTaskId', 'dep.successorTaskId'])
       .getMany();
@@ -280,7 +281,7 @@ export class DependenciesService {
 
     return affectedIds
       .map((id) => taskMap.get(id))
-      .filter((t): t is TaskEntity => !!t)
+      .filter((t): t is TaskEntity => !!t && t.status !== TaskStatus.COMPLETED)
       .map((t) => ({
         taskId: t.id,
         title: t.title,

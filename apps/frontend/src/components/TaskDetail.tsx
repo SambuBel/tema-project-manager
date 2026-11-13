@@ -19,6 +19,7 @@ import { SubtaskCreateModal } from './SubtaskCreateModal';
 import { MilestoneStatusBadge } from './milestones/MilestoneStatusBadge';
 
 import { TaskStatusDropdown } from './TaskStatusDropdown';
+import { useBlockedTasks } from '../hooks/useBlockedTasks';
 import { TaskTimeline } from './TaskTimeline';
 import { taskLoadErrorMessage } from '../lib/loadErrors';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
@@ -77,6 +78,8 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
   });
 
   const { membership } = useMyMembership(task?.projectId);
+  const { blockedIds } = useBlockedTasks(task?.projectId ?? '');
+  const isBlocked = Boolean(task && blockedIds.has(task.id));
 
   const { data: projectMilestones, isLoading: loadingMilestones } = useQuery({
     queryKey: ['milestones', task?.projectId],
@@ -225,7 +228,16 @@ export function TaskDetail({ taskId, projectId, onBack }: TaskDetailProps) {
             currentStatus={task.status}
             canChange={canEdit}
             taskTitle={task.title}
+            isBlocked={isBlocked}
           />
+          {isBlocked && (
+            <span
+              className="shrink-0 rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-red-700"
+              title="Bloqueada por dependencia: tiene predecesoras sin completar"
+            >
+              🔒 Bloqueada
+            </span>
+          )}
           <span className={'rounded-full px-3 py-1 text-xs font-medium ' + priorityColors[task.priority]}>
             {taskPriorityLabels[task.priority]}
           </span>

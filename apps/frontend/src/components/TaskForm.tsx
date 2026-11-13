@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../lib/api';
 import { useCurrentUser } from '../hooks/useCurrentUser';
+import { useBlockedTasks } from '../hooks/useBlockedTasks';
 import { canManageMilestonesUI, canManageTaskPlanningUI } from '../lib/permissions';
 import { formatLocalDate } from '../lib/dates';
 import { isTaskExceedingProjectEnd } from '../lib/projectDates';
@@ -69,6 +70,8 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
   const isSubtask = Boolean(parentTaskId || initialData?.parentTaskId);
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { blockedIds } = useBlockedTasks(projectId);
+  const isBlocked = isEditing && Boolean(initialData && blockedIds.has(initialData.id));
   const [form, setForm] = useState(() =>
     initialData
       ? {
@@ -378,10 +381,22 @@ export function TaskForm({ projectId, initialData, parentTaskId, onCreated }: Ta
               value={form.status}
               onChange={(e) => setForm({ ...form, status: e.target.value as TaskStatus })}
             >
-              {STATUS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
+              {STATUS_OPTIONS.map((o) => {
+                const isOptionBlocked =
+                  isBlocked &&
+                  (o.value === 'IN_PROGRESS' || o.value === 'IN_REVIEW' || o.value === 'COMPLETED');
+                return (
+                  <option key={o.value} value={o.value} disabled={isOptionBlocked}>
+                    {o.label} {isOptionBlocked ? '(Bloqueada por dependencias)' : ''}
+                  </option>
+                );
+              })}
             </select>
+            {isBlocked && (
+              <p className="text-xs text-amber-700">
+                🔒 Esta tarea tiene dependencias predecesoras pendientes sin completar. No puede pasar a En curso, En revisión ni Completada.
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col gap-2">

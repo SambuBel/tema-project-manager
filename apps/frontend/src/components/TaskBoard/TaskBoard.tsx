@@ -71,6 +71,13 @@ export function TaskBoard({
   const handleDragEnd = (result: DropResult) => {
     handleDragEndLogic(result, {
       onValidDrop: (taskId, destStatus) => {
+        if (
+          blockedIds.has(taskId) &&
+          (destStatus === 'IN_PROGRESS' || destStatus === 'IN_REVIEW' || destStatus === 'COMPLETED')
+        ) {
+          setToast('No se puede avanzar ni completar la tarea: tiene dependencias predecesoras pendientes sin completar.');
+          return;
+        }
         if (destStatus === 'COMPLETED') {
           const targetTask = tasks?.find((t) => t.id === taskId);
           const pendingSubs = targetTask

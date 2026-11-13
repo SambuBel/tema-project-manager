@@ -30,6 +30,7 @@ interface TaskStatusDropdownProps {
   /** canEditTaskUI del usuario actual. Sin permiso se muestra solo el badge, sin control interactivo. */
   canChange: boolean;
   taskTitle?: string;
+  isBlocked?: boolean;
 }
 
 /**
@@ -40,6 +41,7 @@ export function TaskStatusDropdown({
   currentStatus,
   canChange,
   taskTitle,
+  isBlocked = false,
 }: TaskStatusDropdownProps) {
   const [open, setOpen] = useState(false);
   const [showCompleteSubtasksModal, setShowCompleteSubtasksModal] = useState(false);
@@ -68,6 +70,7 @@ export function TaskStatusDropdown({
     void qc.invalidateQueries({ queryKey: ['milestones-upcoming'] });
     void qc.invalidateQueries({ queryKey: ['milestone-detail'] });
     void qc.invalidateQueries({ queryKey: ['gantt'] });
+    void qc.invalidateQueries({ queryKey: ['blocked-task-ids'] });
   };
 
   const mutation = useMutation({
@@ -169,16 +172,38 @@ export function TaskStatusDropdown({
           <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#607185]">
             Cambiar estado a
           </p>
-          {validTargets.map((target) => (
-            <button
-              key={target}
-              onClick={() => mutation.mutate(target)}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-[#172B42] transition-colors hover:bg-[#EAF2F7]"
-            >
-              <span className={`inline-block h-2 w-2 rounded-full ${statusDotColors[target]}`} />
-              {taskStatusLabels[target]}
-            </button>
-          ))}
+          {validTargets.map((target) => {
+            const isTargetBlocked =
+              isBlocked &&
+              (target === 'IN_PROGRESS' || target === 'IN_REVIEW' || target === 'COMPLETED');
+
+            return (
+              <button
+                key={target}
+                disabled={isTargetBlocked}
+                title={
+                  isTargetBlocked
+                    ? 'Bloqueada: tiene dependencias predecesoras pendientes sin completar'
+                    : undefined
+                }
+                onClick={() => {
+                  if (isTargetBlocked) return;
+                  mutation.mutate(target);
+                }}
+                className={`flex w-full items-center justify-between px-3 py-2 text-sm transition-colors ${
+                  isTargetBlocked
+                    ? 'cursor-not-allowed text-gray-400 opacity-60 bg-gray-50'
+                    : 'text-[#172B42] hover:bg-[#EAF2F7]'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className={`inline-block h-2 w-2 rounded-full ${statusDotColors[target]}`} />
+                  {taskStatusLabels[target]}
+                </div>
+                {isTargetBlocked && <span className="text-xs text-red-500 font-normal">🔒 Bloqueada</span>}
+              </button>
+            );
+          })}
         </div>
       )}
 

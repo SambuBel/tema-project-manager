@@ -10,9 +10,10 @@ import { CommentEntity } from '../database/entities/comment.entity';
 import { CommentMentionEntity } from '../database/entities/comment-mention.entity';
 import { CommentMentionDto } from './dto/comment-mention.dto';
 import { ProjectActivityService } from '../projects/project-activity.service';
-import { AuditOrigin, ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
+import { AuditOrigin, DependencyType, ProjectActivityAction, ProjectActivityEntityType } from '../database/enums';
 import { ProjectActivityEntity } from '../database/entities/project-activity.entity';
 import { ProjectMemberRole, TaskPriority, TaskStatus } from '../database/enums';
+import { TaskDependencyEntity } from '../database/entities/task-dependency.entity';
 import { UsersService } from '../users/users.service';
 import { PermissionsService } from '../auth/permissions.service';
 import { RequestUser } from '../auth/types/authenticated-request-user';
@@ -71,6 +72,7 @@ export class TasksService {
     @InjectRepository(TaskSlugHistoryEntity)
     private readonly taskSlugHistoryRepo: Repository<TaskSlugHistoryEntity>,
     @Optional() private readonly notificationEvents?: NotificationEventsService,
+    @Optional() @InjectRepository(TaskDependencyEntity) private readonly dependencyRepo?: Repository<TaskDependencyEntity>,
   ) {}
 
   /**
@@ -552,6 +554,14 @@ export class TasksService {
     // Validar transición de estado si se está cambiando el status
     if (dto.status !== undefined && dto.status !== task.status) {
       this.validateTransition(task.status, dto.status);
+
+      if (
+        dto.status === TaskStatus.IN_PROGRESS ||
+        dto.status === TaskStatus.IN_REVIEW ||
+        dto.status === TaskStatus.COMPLETED
+      ) {
+        await this.assertNotBlockedByDependency(task.id);
+      }
     }
 
     // no se puede completar una tarea si tiene subtareas sin completar (salvo confirmación explícita completeSubtasks: true).
@@ -1082,6 +1092,14 @@ export class TasksService {
 
     this.validateTransition(task.status, dto.status);
 
+    if (
+      dto.status === TaskStatus.IN_PROGRESS ||
+      dto.status === TaskStatus.IN_REVIEW ||
+      dto.status === TaskStatus.COMPLETED
+    ) {
+      await this.assertNotBlockedByDependency(task.id);
+    }
+
     if (dto.status === TaskStatus.COMPLETED && !dto.completeSubtasks) {
       const pendingSubtasks = await this.subtaskRepo.count({
         where: { taskId: task.id, completed: false },
@@ -1174,6 +1192,36 @@ export class TasksService {
       throw new BadRequestException(
         `No se puede pasar de "${fromLabel}" a "${toLabel}". ` +
           `Transiciones permitidas desde "${fromLabel}": ${allowedLabels}.`,
+      );
+    }
+  }
+
+  /**
+   * BUG-05 / TC-056: Si la tarea tiene predecesoras FINISH_START pendientes (no completadas
+   * y no archivadas), no puede avanzar a IN_PROGRESS, IN_REVIEW ni COMPLETED.
+   */
+  private async assertNotBlockedByDependency(taskId: string): Promise<void> {
+    const depRepo =
+      this.dependencyRepo ??
+      (typeof this.repo.manager?.getRepository === 'function'
+        ? this.repo.manager.getRepository(TaskDependencyEntity)
+        : undefined);
+    if (!depRepo) return;
+
+    const blockedDep = await depRepo
+      .createQueryBuilder('dep')
+      .innerJoin('dep.predecessorTask', 'pred')
+      .innerJoin('dep.successorTask', 'succ')
+      .where('succ.id = :taskId', { taskId })
+      .andWhere('dep.dependencyType = :type', { type: DependencyType.FINISH_START })
+      .andWhere('pred.archivedAt IS NULL')
+      .andWhere('pred.status != :completedStatus', { completedStatus: TaskStatus.COMPLETED })
+      .select(['dep.id'])
+      .getOne();
+
+    if (blockedDep) {
+      throw new BadRequestException(
+        'No se puede avanzar ni completar la tarea: tiene dependencias predecesoras pendientes sin completar.',
       );
     }
   }

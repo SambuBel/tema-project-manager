@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '../../lib/api';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import { useMyMembership } from '../../hooks/useMyMembership';
+import { useBlockedTasks } from '../../hooks/useBlockedTasks';
 import { canEditTaskUI } from '../../lib/permissions';
 import { taskStatusLabels } from '../../types/task';
 import type { TaskStatus } from '../../types/task';
@@ -57,6 +58,7 @@ export function MilestoneDetailModal({
 }: MilestoneDetailModalProps) {
   const qc = useQueryClient();
   const { user } = useCurrentUser();
+  const { blockedIds } = useBlockedTasks(projectId);
   const { membership } = useMyMembership(projectId);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -183,6 +185,13 @@ export function MilestoneDetailModal({
     const nextStatus: TaskStatus = task.status === 'COMPLETED' ? 'PENDING' : 'COMPLETED';
     setActionError(null);
     setActionSuccess(null);
+
+    if (nextStatus === 'COMPLETED' && blockedIds.has(task.id)) {
+      setActionError(
+        'No se puede avanzar ni completar la tarea: tiene dependencias predecesoras pendientes sin completar.',
+      );
+      return;
+    }
 
     const pendingSubtasksOfTask = Math.max(0, (task.subtaskCount ?? 0) - (task.completedSubtaskCount ?? 0));
     if (nextStatus === 'COMPLETED' && pendingSubtasksOfTask > 0) {
@@ -562,6 +571,7 @@ export function MilestoneDetailModal({
                         const isToggling = Boolean(togglingTaskIds[task.id]);
                         const canToggle = canUserToggleTask(task);
                         const isCompleted = task.status === 'COMPLETED';
+                        const isBlocked = blockedIds.has(task.id) && !isCompleted;
                         const statusLabel = taskStatusLabels[task.status] ?? task.status;
                         const statusStyle =
                           TASK_STATUS_BADGE_STYLES[task.status] ?? TASK_STATUS_BADGE_STYLES.PENDING;
@@ -583,14 +593,16 @@ export function MilestoneDetailModal({
                                   id={`milestone-task-checkbox-${task.id}`}
                                   aria-label={`Marcar tarea ${task.title} como completada`}
                                   checked={isCompleted}
-                                  disabled={!canToggle || isToggling || isDisassociating}
+                                  disabled={!canToggle || isToggling || isDisassociating || isBlocked}
                                   onChange={() => void handleToggleTaskCheckbox(task)}
                                   title={
                                     !canToggle
                                       ? 'No tenés permisos para cambiar el estado de esta tarea'
-                                      : isCompleted
-                                        ? 'Desmarcar para volver a Pendiente'
-                                        : 'Marcar como Completada'
+                                      : isBlocked
+                                        ? 'Bloqueada por dependencia: tiene predecesoras pendientes sin completar'
+                                        : isCompleted
+                                          ? 'Desmarcar para volver a Pendiente'
+                                          : 'Marcar como Completada'
                                   }
                                   className="h-4 w-4 rounded border-[#DEE5EC] text-[#245B78] focus:ring-[#245B78] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                                 />
@@ -625,6 +637,15 @@ export function MilestoneDetailModal({
                                   >
                                     {statusLabel}
                                   </span>
+
+                                  {isBlocked && (
+                                    <span
+                                      className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-700"
+                                      title="Bloqueada por dependencia: tiene predecesoras sin completar"
+                                    >
+                                      🔒 Bloqueada
+                                    </span>
+                                  )}
 
                                   {/* Progreso de subtareas cuando corresponda (KAN-248) */}
                                   {hasSubtasks && (
