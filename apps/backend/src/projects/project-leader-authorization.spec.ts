@@ -89,10 +89,11 @@ describe('ProjectsService - líder real vs leaderId histórico', () => {
     const actor = user([RoleName.PROJECT_LEADER]);
     await expect(writes(actor).editar()).resolves.toBeDefined();
     await expect(writes(actor).estado()).resolves.toBeDefined();
-    current = project({ status: ProjectStatus.FINISHED });
-    await expect(writes(actor).archivar()).resolves.toBeDefined();
     await expect(writes(actor).agregarMiembro()).resolves.toBeDefined();
     await expect(writes(actor).verInvitaciones()).resolves.toBeDefined();
+    // Archivar va al final: un proyecto archivado ya no admite agregar miembros (BUG-06).
+    current = project({ status: ProjectStatus.FINISHED });
+    await expect(writes(actor).archivar()).resolves.toBeDefined();
   });
 
   it('PROJECT_LEADER que NO es el leaderId (y sin membership): no administra ni ve nada de este proyecto', async () => {

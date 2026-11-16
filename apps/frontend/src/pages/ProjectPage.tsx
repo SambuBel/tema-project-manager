@@ -43,8 +43,6 @@ const TABS = [
   { key: 'ACTIVIDAD', label: 'Actividad', view: 'actividad' as ProjectView },
 ] as const;
 
-const DISABLED_TABS = ['Archivos'];
-
 /* Componente */
 
 /**
@@ -242,15 +240,6 @@ export function ProjectPage() {
                   : 'border border-[#DEE5EC] bg-white text-[#172B42] hover:bg-[#EAF2F7]')
               }
               onClick={() => setView(tabView)}
-            >
-              {label}
-            </button>
-          ))}
-          {DISABLED_TABS.map((label) => (
-            <button
-              key={label}
-              disabled
-              className="rounded-lg border border-[#DEE5EC] bg-white px-4 py-2 text-sm font-medium text-[#172B42] opacity-50 cursor-not-allowed"
             >
               {label}
             </button>

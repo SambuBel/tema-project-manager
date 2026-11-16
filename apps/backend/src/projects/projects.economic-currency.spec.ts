@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { ALLOWED_CURRENCIES, DEFAULT_PROJECT_CURRENCY, PROJECT_CURRENCY_MISMATCH, resolveProjectCurrency } from '../economy/project-currency';
 import { validate } from 'class-validator';
 import { getMetadataArgsStorage } from 'typeorm';
 import { plainToInstance } from 'class-transformer';
@@ -161,5 +162,46 @@ describe('DTOs de proyecto - moneda', () => {
     expect(await errorsOf(UpdateProjectDtoImpl, { economicCurrency: 'A1S' })).toContain('economicCurrency');
     expect(await errorsOf(UpdateProjectDtoImpl, { economicCurrency: 'EUR' })).toContain('economicCurrency');
     expect(await errorsOf(UpdateProjectDtoImpl, { economicCurrency: 'XYZ' })).toContain('economicCurrency');
+  });
+});
+
+describe('resolveProjectCurrency (moneda única por proyecto)', () => {
+  it('sin moneda pedida (undefined) usa la del proyecto', () => {
+    expect(resolveProjectCurrency(undefined, 'USD', 'El costo')).toBe('USD');
+  });
+
+  it('con moneda null usa la del proyecto', () => {
+    expect(resolveProjectCurrency(null, 'ARS', 'El presupuesto')).toBe('ARS');
+  });
+
+  it('si la moneda pedida coincide con la del proyecto la devuelve', () => {
+    expect(resolveProjectCurrency('USD', 'USD', 'El costo')).toBe('USD');
+  });
+
+  it('ignora mayúsculas/minúsculas y espacios de la moneda pedida', () => {
+    expect(resolveProjectCurrency(' usd ', 'USD', 'El costo')).toBe('USD');
+  });
+
+  it('si la moneda pedida es otra lanza 400 PROJECT_CURRENCY_MISMATCH con la moneda del proyecto', () => {
+    try {
+      resolveProjectCurrency('USD', 'ARS', 'El costo');
+      throw new Error('Se esperaba un 400');
+    } catch (error) {
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({ code: PROJECT_CURRENCY_MISMATCH, projectCurrency: 'ARS' });
+    }
+  });
+
+  it('el mensaje del error nombra al presupuesto cuando se trata de un presupuesto', () => {
+    expect(() => resolveProjectCurrency('USD', 'ARS', 'El presupuesto')).toThrow(/El presupuesto debe expresarse en la moneda del proyecto \(ARS\)/);
+  });
+
+  it('el mensaje del error nombra al costo cuando se trata de un costo', () => {
+    expect(() => resolveProjectCurrency('ARS', 'USD', 'El costo')).toThrow(/El costo debe expresarse en la moneda del proyecto \(USD\)/);
+  });
+
+  it('el catálogo permite solo ARS y USD, y la moneda por defecto pertenece al catálogo', () => {
+    expect([...ALLOWED_CURRENCIES]).toEqual(['ARS', 'USD']);
+    expect(ALLOWED_CURRENCIES).toContain(DEFAULT_PROJECT_CURRENCY);
   });
 });

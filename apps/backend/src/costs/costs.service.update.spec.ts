@@ -7,6 +7,8 @@ import { ProjectEntity } from '../projects/project.entity';
 import { AuditEntityType, AuditOrigin, RoleName } from '../database/enums';
 import { RequestUser } from '../auth/types/authenticated-request-user';
 import { UpdateCostDto } from './dto/update-cost.dto';
+import { resolveNextState } from './cost-rules';
+import { CurrentCost } from './cost-types';
 
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
 const COST_ID = '99999999-9999-4999-8999-999999999999';
@@ -501,5 +503,60 @@ describe('CostsService.getOne', () => {
   it('no devuelve deletedAt', async () => {
     const { service } = buildOne();
     expect(Object.keys(await service.getOne(PROJECT_ID, COST_ID, admin))).not.toContain('deletedAt');
+  });
+});
+
+describe('resolveNextState (estado resultante de editar un costo)', () => {
+  const CURRENT: CurrentCost = {
+    id: COST_ID,
+    taskId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    costCategoryId: CAT_LIC,
+    categoryName: 'Licencias',
+    amount: '1500.00',
+    currency: 'USD',
+    costDate: '2026-03-10',
+    description: 'Licencia anual',
+    revision: 1,
+  };
+  const dto = (data: Record<string, unknown>) => data as unknown as UpdateCostDto;
+
+  it('un DTO vacío conserva todos los campos del costo actual', () => {
+    expect(resolveNextState(CURRENT, dto({}))).toEqual({
+      costDate: '2026-03-10',
+      amount: '1500.00',
+      currency: 'USD',
+      costCategoryId: CAT_LIC,
+      description: 'Licencia anual',
+      taskId: CURRENT.taskId,
+    });
+  });
+
+  it('recorta los espacios de la fecha enviada', () => {
+    expect(resolveNextState(CURRENT, dto({ costDate: ' 2026-04-01 ' })).costDate).toBe('2026-04-01');
+  });
+
+  it('normaliza el importe a dos decimales (sin float)', () => {
+    expect(resolveNextState(CURRENT, dto({ amount: '2000' })).amount).toBe('2000.00');
+    expect(resolveNextState(CURRENT, dto({ amount: '7.5' })).amount).toBe('7.50');
+  });
+
+  it('pasa a minúsculas el id del rubro enviado', () => {
+    expect(resolveNextState(CURRENT, dto({ costCategoryId: CAT_RRHH.toUpperCase() })).costCategoryId).toBe(CAT_RRHH);
+  });
+
+  it('recorta los espacios de la descripción', () => {
+    expect(resolveNextState(CURRENT, dto({ description: '  Nueva descripción  ' })).description).toBe('Nueva descripción');
+  });
+
+  it('taskId null desvincula la tarea del costo', () => {
+    expect(resolveNextState(CURRENT, dto({ taskId: null })).taskId).toBeNull();
+  });
+
+  it('taskId enviado se guarda en minúsculas', () => {
+    expect(resolveNextState(CURRENT, dto({ taskId: 'DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD' })).taskId).toBe('dddddddd-dddd-4ddd-8ddd-dddddddddddd');
+  });
+
+  it('la moneda nunca se edita: siempre es la del costo actual', () => {
+    expect(resolveNextState(CURRENT, dto({ currency: 'ARS' })).currency).toBe('USD');
   });
 });
