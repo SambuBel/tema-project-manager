@@ -87,14 +87,14 @@ describe('ProjectPage (resumen): botones de edición', () => {
     expect(render(user('u1', ['PROJECT_LEADER']), DETAIL)).toContain('Editar proyecto');
   });
 
-  it('las pestañas Gantt y Tablero están habilitadas; Archivos sigue deshabilitada', () => {
+  it('las pestañas Gantt y Tablero están habilitadas; la pestaña residual Archivos fue eliminada', () => {
     const html = render(user('u1', ['PROJECT_LEADER']), DETAIL);
     const tab = (label: string) => new RegExp(`<button[^>]*>${label}</button>`).exec(html)?.[0] ?? '';
     expect(tab('Gantt')).not.toBe('');
     expect(tab('Gantt')).not.toContain('disabled');
     expect(tab('Tablero')).not.toBe('');
     expect(tab('Tablero')).not.toContain('disabled');
-    expect(tab('Archivos')).toContain('disabled');
+    expect(html).not.toContain('Archivos');
   });
 
   it('permite acceder al detalle utilizando una URL con slug histórico', () => {

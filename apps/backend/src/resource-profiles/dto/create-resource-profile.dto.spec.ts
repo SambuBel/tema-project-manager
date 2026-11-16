@@ -1,5 +1,6 @@
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { CreateResourceProfileDto } from './create-resource-profile.dto';
+import { HOURLY_COST_PATTERN, normalizeHourlyCost } from './hourly-cost';
 
 const pipe = new ValidationPipe({ whitelist: true, transform: true });
 const parse = (body: Record<string, unknown>) => pipe.transform(body, { type: 'body', metatype: CreateResourceProfileDto }) as Promise<CreateResourceProfileDto>;
@@ -72,5 +73,27 @@ describe('CreateResourceProfileDto', () => {
   it('descarta lo que no se acepta (id, active, revision, createdAt, updatedAt)', async () => {
     const parsed = (await parse({ ...valid, id: 'x', active: false, revision: 9, createdAt: 'x', updatedAt: 'x' })) as unknown as Record<string, unknown>;
     expect(Object.keys(parsed).sort()).toEqual(['currency', 'hourlyCost', 'name']);
+  });
+});
+
+describe('normalizeHourlyCost (costo por hora como texto)', () => {
+  it('completa los decimales: "50" → "50.00" y "12.5" → "12.50"', () => {
+    expect(normalizeHourlyCost('50')).toBe('50.00');
+    expect(normalizeHourlyCost('12.5')).toBe('12.50');
+  });
+
+  it('quita ceros a la izquierda: "007.5" → "7.50"', () => {
+    expect(normalizeHourlyCost('007.5')).toBe('7.50');
+  });
+
+  it('devuelve el mismo texto si no es válido (lo rechaza la validación, no la función)', () => {
+    expect(normalizeHourlyCost('abc')).toBe('abc');
+    expect(normalizeHourlyCost('1.234')).toBe('1.234');
+    expect(normalizeHourlyCost('-5')).toBe('-5');
+  });
+
+  it('admite hasta 10 dígitos enteros y rechaza 11', () => {
+    expect(HOURLY_COST_PATTERN.test('9999999999.99')).toBe(true);
+    expect(HOURLY_COST_PATTERN.test('10000000000')).toBe(false);
   });
 });
